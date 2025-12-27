@@ -13,6 +13,7 @@ import {
 
 interface DashboardProps {
   printerNames: string[];
+  onReportIssue?: () => void;
 }
 
 // Mock data for demonstration
@@ -36,7 +37,7 @@ const mockPlanData = [
   },
 ];
 
-export const Dashboard: React.FC<DashboardProps> = ({ printerNames }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ printerNames, onReportIssue }) => {
   const { t } = useLanguage();
   
   return (
@@ -53,7 +54,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ printerNames }) => {
             </h1>
           </div>
         </div>
-        <Button variant="outline" className="gap-2">
+        <Button variant="outline" className="gap-2" onClick={onReportIssue}>
           <AlertTriangle className="w-4 h-4" />
           {t('dashboard.reportIssue')}
         </Button>
