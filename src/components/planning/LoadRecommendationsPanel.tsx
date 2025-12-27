@@ -222,25 +222,32 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
   const spools = getSpools();
   const suggestedSpools = spools.filter(s => recommendation.suggestedSpoolIds.includes(s.id));
 
-  const handleClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleClick = () => {
     alert('CLICKED: ' + recommendation.printerName);
     console.log('[RecommendationCard] Navigating to printers for:', recommendation.printerId);
     onClick?.();
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handleClick();
+    }
+  };
+
   return (
-    <button 
-      type="button"
+    <div 
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
       className={cn(
-        "w-full text-left p-3 rounded-lg border transition-colors",
+        "w-full text-left p-3 rounded-lg border transition-colors select-none",
         recommendation.priority === 'high' && "border-warning/50 bg-warning/5",
         recommendation.priority === 'medium' && "border-muted bg-muted/30",
         recommendation.priority === 'low' && "border-border bg-background",
         "cursor-pointer hover:bg-accent/50 focus:outline-none focus:ring-2 focus:ring-primary"
       )}
-      onClick={handleClick}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -297,9 +304,9 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
       </div>
       
       <div className="mt-2 text-[10px] opacity-50">
-        BUILD_STAMP: RA_CLICK_V7
+        BUILD_STAMP: RA_CLICK_V8
       </div>
-    </button>
+    </div>
   );
 };
 
