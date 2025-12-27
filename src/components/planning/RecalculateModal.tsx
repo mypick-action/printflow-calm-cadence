@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   Dialog,
@@ -12,9 +12,11 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { RefreshCw, Calendar, Lock, AlertCircle } from 'lucide-react';
+import { RefreshCw, Calendar, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { RecalculateScope, recalculatePlan, getPlannedCycles } from '@/services/storage';
 import { cancelPendingAutoReplan } from '@/services/autoReplan';
+import { detectChanges, saveSnapshotAfterPlan, ChangeSummary } from '@/services/planningSnapshot';
+import { ChangeSummaryPanel } from './ChangeSummaryPanel';
 import { toast } from 'sonner';
 
 interface RecalculateModalProps {
@@ -32,6 +34,19 @@ export const RecalculateModal: React.FC<RecalculateModalProps> = ({
   const [scope, setScope] = useState<RecalculateScope>('from_now');
   const [lockStarted, setLockStarted] = useState(true);
   const [isRecalculating, setIsRecalculating] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [changeSummary, setChangeSummary] = useState<ChangeSummary | null>(null);
+  const [changePanelOpen, setChangePanelOpen] = useState(true);
+  const [cyclesModified, setCyclesModified] = useState(0);
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (open) {
+      setShowResults(false);
+      setChangeSummary(null);
+      setChangePanelOpen(true);
+    }
+  }, [open]);
 
   // Calculate stats for summary
   const cycles = getPlannedCycles();
@@ -44,6 +59,10 @@ export const RecalculateModal: React.FC<RecalculateModalProps> = ({
     // Cancel any pending auto-replan since user is manually recalculating
     cancelPendingAutoReplan();
     
+    // Detect changes before recalculation
+    const changes = detectChanges();
+    setChangeSummary(changes);
+    
     // Simulate a small delay for UX
     await new Promise(resolve => setTimeout(resolve, 500));
     
@@ -52,12 +71,18 @@ export const RecalculateModal: React.FC<RecalculateModalProps> = ({
     setIsRecalculating(false);
     
     if (result.success) {
+      // Save snapshot after successful plan
+      saveSnapshotAfterPlan();
+      
+      setCyclesModified(result.cyclesModified);
+      setShowResults(true);
+      
       toast.success(
         language === 'he' 
           ? `התוכנית חושבה מחדש - ${result.cyclesModified} מחזורים עודכנו`
           : `Plan recalculated - ${result.cyclesModified} cycles updated`
       );
-      onOpenChange(false);
+      
       onRecalculated?.();
     } else {
       toast.error(
@@ -66,6 +91,11 @@ export const RecalculateModal: React.FC<RecalculateModalProps> = ({
           : 'Error recalculating plan'
       );
     }
+  };
+
+  const handleClose = () => {
+    setShowResults(false);
+    onOpenChange(false);
   };
 
   const scopeOptions = [
@@ -91,6 +121,42 @@ export const RecalculateModal: React.FC<RecalculateModalProps> = ({
         : 'Recalculate the entire week',
     },
   ];
+
+  // Results view after successful recalculation
+  if (showResults && changeSummary) {
+    return (
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-success">
+              <CheckCircle2 className="w-5 h-5" />
+              {language === 'he' ? 'התכנון עודכן בהצלחה' : 'Plan Updated Successfully'}
+            </DialogTitle>
+            <DialogDescription>
+              {language === 'he'
+                ? `${cyclesModified} מחזורים עודכנו בתכנון`
+                : `${cyclesModified} cycles updated in the plan`}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            <ChangeSummaryPanel
+              changes={changeSummary.changes}
+              hasChanges={changeSummary.hasChanges}
+              isOpen={changePanelOpen}
+              onOpenChange={setChangePanelOpen}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button onClick={handleClose} className="w-full">
+              {language === 'he' ? 'סגור' : 'Close'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
