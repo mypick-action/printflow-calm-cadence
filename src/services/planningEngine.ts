@@ -409,8 +409,11 @@ const scheduleCyclesForDay = (
           const transitionMinutes = settings.transitionMinutes;
           const cycleEndTime = addHours(slot.currentTime, cycleHours);
           
-          // Check if cycle fits in day
-          if (cycleEndTime > slot.endOfDayTime) continue;
+          // ============= RULE B: Operating hours control START time only =============
+          // A cycle can START during operating hours and RUN past closing time (unattended)
+          // Only check if the START time is within operating hours, not the end time
+          // This maximizes printer utilization without requiring human presence overnight
+          if (slot.currentTime >= slot.endOfDayTime) continue; // Can't start new cycle after hours
           
           // Calculate material needs
           const gramsNeeded = getGramsPerCycle(state.product, state.preset);
