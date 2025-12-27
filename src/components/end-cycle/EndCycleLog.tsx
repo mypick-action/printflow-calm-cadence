@@ -13,14 +13,20 @@ import {
   XCircle,
   ChevronRight,
   Send,
-  RotateCcw
+  RotateCcw,
+  ArrowRight,
+  Package,
+  Minus,
+  Plus
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { 
   getPrinters, 
   getActiveCycleForPrinter, 
   getProject,
+  getProduct,
   logCycle,
+  recalculatePlan,
   Printer as PrinterType,
   PlannedCycle
 } from '@/services/storage';
@@ -30,10 +36,17 @@ type WasteMethod = 'quick' | 'estimate' | 'manual';
 
 interface CycleWithProject extends PlannedCycle {
   projectName: string;
+  productName: string;
   color: string;
+  gramsPerUnit: number;
 }
 
-export const EndCycleLog: React.FC = () => {
+interface EndCycleLogProps {
+  preSelectedPrinterId?: string;
+  onComplete?: () => void;
+}
+
+export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, onComplete }) => {
   const { language } = useLanguage();
   const [printers, setPrinters] = useState<PrinterType[]>([]);
   const [printerCycles, setPrinterCycles] = useState<Record<string, CycleWithProject | null>>({});
@@ -45,8 +58,25 @@ export const EndCycleLog: React.FC = () => {
   const [wasteMethod, setWasteMethod] = useState<WasteMethod>('quick');
   const [wastedGrams, setWastedGrams] = useState(0);
   const [quickPickGrams, setQuickPickGrams] = useState<number | null>(null);
+  const [isConfirmed, setIsConfirmed] = useState(false);
 
   useEffect(() => {
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    // Auto-select printer if pre-selected
+    if (preSelectedPrinterId && printers.length > 0) {
+      const cycle = printerCycles[preSelectedPrinterId];
+      if (cycle) {
+        setSelectedPrinter(preSelectedPrinterId);
+        setActiveCycle(cycle);
+        // Don't auto-advance to step 2, let user confirm first
+      }
+    }
+  }, [preSelectedPrinterId, printers, printerCycles]);
+
+  const loadData = () => {
     const allPrinters = getPrinters().filter(p => p.active);
     setPrinters(allPrinters);
     
@@ -56,56 +86,92 @@ export const EndCycleLog: React.FC = () => {
       const cycle = getActiveCycleForPrinter(printer.id);
       if (cycle) {
         const project = getProject(cycle.projectId);
+        const product = project ? getProduct(project.productId) : null;
         cyclesMap[printer.id] = {
           ...cycle,
           projectName: project?.name || 'Unknown Project',
+          productName: product?.name || project?.productName || 'Unknown Product',
           color: project?.color || '',
+          gramsPerUnit: product?.gramsPerUnit || 0,
         };
       } else {
         cyclesMap[printer.id] = null;
       }
     });
     setPrinterCycles(cyclesMap);
-  }, []);
+  };
 
   const handlePrinterSelect = (printerId: string) => {
     setSelectedPrinter(printerId);
     const cycle = printerCycles[printerId];
     setActiveCycle(cycle);
-    if (cycle) {
-      setStep(2);
-    }
+    setIsConfirmed(false);
+  };
+
+  const handleConfirmCycle = () => {
+    setIsConfirmed(true);
+    setStep(2);
   };
 
   const handleResultSelect = (resultValue: CycleResult) => {
     setResult(resultValue);
     if (resultValue === 'completed') {
-      handleSubmit();
+      // For completed, go directly to submit
+      handleSubmitWithResult('completed');
     } else {
       setStep(3);
     }
   };
 
-  const handleSubmit = () => {
-    if (activeCycle) {
-      logCycle({
-        printerId: selectedPrinter,
-        projectId: activeCycle.projectId,
-        plannedCycleId: activeCycle.id,
-        result: result as CycleResult || 'completed',
-        unitsCompleted: result === 'failed' ? 0 : activeCycle.unitsPlanned - scrapUnits,
-        unitsScrap: scrapUnits,
-        gramsWasted: wastedGrams,
-      });
+  const handleSubmitWithResult = (resultType: CycleResult) => {
+    if (!activeCycle) return;
+
+    let unitsCompleted = activeCycle.unitsPlanned;
+    let unitsScrap = 0;
+    let gramsWasted = 0;
+
+    if (resultType === 'completed_with_scrap') {
+      unitsCompleted = activeCycle.unitsPlanned - scrapUnits;
+      unitsScrap = scrapUnits;
+      // Auto-calculate grams wasted from scrap units
+      gramsWasted = scrapUnits * activeCycle.gramsPerUnit;
+    } else if (resultType === 'failed') {
+      unitsCompleted = 0;
+      unitsScrap = 0;
+      gramsWasted = wastedGrams;
     }
+
+    logCycle({
+      printerId: selectedPrinter,
+      projectId: activeCycle.projectId,
+      plannedCycleId: activeCycle.id,
+      result: resultType,
+      unitsCompleted,
+      unitsScrap,
+      gramsWasted,
+    });
+
+    // Trigger planning recalculation
+    recalculatePlan('from_now', true);
     
     toast({
-      title: language === 'he' ? 'דיווח נשלח בהצלחה' : 'Report submitted successfully',
+      title: language === 'he' ? 'המחזור עודכן' : 'Cycle Updated',
       description: language === 'he' 
-        ? `מחזור של ${activeCycle?.projectName} דווח`
-        : `Cycle for ${activeCycle?.projectName} reported`,
+        ? 'התכנון עודכן בהתאם.'
+        : 'Planning updated accordingly.',
     });
-    handleReset();
+
+    if (onComplete) {
+      onComplete();
+    } else {
+      handleReset();
+    }
+  };
+
+  const handleSubmit = () => {
+    if (result) {
+      handleSubmitWithResult(result);
+    }
   };
 
   const handleReset = () => {
@@ -117,7 +183,12 @@ export const EndCycleLog: React.FC = () => {
     setWasteMethod('quick');
     setWastedGrams(0);
     setQuickPickGrams(null);
+    setIsConfirmed(false);
+    loadData();
   };
+
+  // Calculate wasted grams from scrap units automatically
+  const calculatedWastedGrams = scrapUnits * (activeCycle?.gramsPerUnit || 0);
 
   const resultOptions = [
     {
@@ -131,15 +202,15 @@ export const EndCycleLog: React.FC = () => {
     {
       value: 'completed_with_scrap' as CycleResult,
       icon: AlertTriangle,
-      label: language === 'he' ? 'הושלם עם פסולת' : 'Completed with Scrap',
-      description: language === 'he' ? 'חלק מהיחידות נפסלו' : 'Some units were scrapped',
+      label: language === 'he' ? 'הושלם עם נפלים' : 'Completed with Defects',
+      description: language === 'he' ? 'המחזור הסתיים אך חלק מהיחידות פסולות' : 'Cycle finished but some units are defective',
       color: 'text-warning',
       bgColor: 'bg-warning/10 border-warning/30 hover:bg-warning/20',
     },
     {
       value: 'failed' as CycleResult,
       icon: XCircle,
-      label: language === 'he' ? 'נכשל / הופסק' : 'Failed / Stopped',
+      label: language === 'he' ? 'נתקע / נעצר באמצע' : 'Stopped / Failed',
       description: language === 'he' ? 'המחזור לא הושלם' : 'Cycle did not complete',
       color: 'text-error',
       bgColor: 'bg-error/10 border-error/30 hover:bg-error/20',
@@ -147,6 +218,9 @@ export const EndCycleLog: React.FC = () => {
   ];
 
   const quickPickOptions = [50, 100, 200];
+
+  const printersWithCycles = printers.filter(p => printerCycles[p.id] !== null);
+  const printersWithoutCycles = printers.filter(p => printerCycles[p.id] === null);
 
   return (
     <div className="max-w-lg mx-auto space-y-6">
@@ -156,10 +230,10 @@ export const EndCycleLog: React.FC = () => {
           <ClipboardCheck className="w-8 h-8 text-primary" />
         </div>
         <h1 className="text-2xl font-bold text-foreground">
-          {language === 'he' ? 'דיווח סיום מחזור' : 'End-Cycle Report'}
+          {language === 'he' ? 'דיווח סיום מחזור' : 'End Cycle Report'}
         </h1>
         <p className="text-muted-foreground">
-          {language === 'he' ? 'דווחו מה קרה בסוף מחזור ההדפסה' : 'Report what happened at the end of the print cycle'}
+          {language === 'he' ? 'דווחו על תוצאת מחזור ההדפסה' : 'Report the result of the print cycle'}
         </p>
       </div>
 
@@ -176,7 +250,7 @@ export const EndCycleLog: React.FC = () => {
       </div>
 
       {/* Step 1: Select Printer */}
-      {step === 1 && (
+      {step === 1 && !isConfirmed && (
         <Card variant="elevated" className="animate-fade-in">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
@@ -188,39 +262,105 @@ export const EndCycleLog: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {printers.map((printer) => {
-              const cycle = printerCycles[printer.id];
+            {/* Printers with active cycles */}
+            {printersWithCycles.map((printer) => {
+              const cycle = printerCycles[printer.id]!;
+              const isSelected = selectedPrinter === printer.id;
               return (
                 <button
                   key={printer.id}
                   onClick={() => handlePrinterSelect(printer.id)}
-                  disabled={!cycle}
                   className={`
                     w-full p-4 rounded-xl border-2 text-start transition-all duration-200
-                    ${cycle 
-                      ? 'border-border hover:border-primary hover:bg-accent cursor-pointer' 
-                      : 'border-border/50 bg-muted/30 cursor-not-allowed opacity-60'
+                    ${isSelected 
+                      ? 'border-primary bg-primary/5 ring-2 ring-primary/20' 
+                      : 'border-border hover:border-primary/50 hover:bg-accent cursor-pointer'
                     }
                   `}
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="font-semibold text-foreground">{printer.name}</div>
-                      {cycle ? (
-                        <div className="text-sm text-muted-foreground mt-1">
-                          {cycle.projectName} • {cycle.unitsPlanned} {language === 'he' ? 'יחידות' : 'units'}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-muted-foreground mt-1">
-                          {language === 'he' ? 'אין מחזור פעיל' : 'No active cycle'}
-                        </div>
-                      )}
+                      <div className="text-sm text-muted-foreground mt-1">
+                        {cycle.projectName} • {cycle.unitsPlanned} {language === 'he' ? 'יחידות' : 'units'}
+                      </div>
                     </div>
-                    {cycle && <ChevronRight className="w-5 h-5 text-muted-foreground" />}
+                    <ChevronRight className="w-5 h-5 text-muted-foreground" />
                   </div>
                 </button>
               );
             })}
+
+            {/* Printers without active cycles */}
+            {printersWithoutCycles.map((printer) => (
+              <div
+                key={printer.id}
+                className="w-full p-4 rounded-xl border-2 border-border/50 bg-muted/30 opacity-60"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold text-foreground">{printer.name}</div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      {language === 'he' ? 'אין מחזור פעיל' : 'No active cycle'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {printersWithCycles.length === 0 && (
+              <div className="text-center py-8 text-muted-foreground">
+                <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p>{language === 'he' ? 'אין מחזורים פעילים כרגע' : 'No active cycles at the moment'}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Confirmation Card */}
+      {step === 1 && selectedPrinter && activeCycle && !isConfirmed && (
+        <Card variant="elevated" className="animate-fade-in border-primary/30">
+          <CardHeader>
+            <CardTitle className="text-lg">
+              {language === 'he' ? 'אישור מחזור' : 'Confirm Cycle'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="p-4 bg-muted/50 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'פרויקט:' : 'Project:'}
+                </span>
+                <span className="font-medium text-foreground">{activeCycle.projectName}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'מוצר:' : 'Product:'}
+                </span>
+                <span className="font-medium text-foreground">{activeCycle.productName}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'יחידות מתוכננות:' : 'Planned Units:'}
+                </span>
+                <span className="font-medium text-foreground">{activeCycle.unitsPlanned}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'צבע:' : 'Color:'}
+                </span>
+                <span className="font-medium text-foreground">{activeCycle.color}</span>
+              </div>
+            </div>
+            
+            <Button 
+              onClick={handleConfirmCycle} 
+              className="w-full h-14 text-lg gap-2"
+            >
+              {language === 'he' ? 'המשך לדיווח' : 'Continue to Report'}
+              <ArrowRight className="w-5 h-5" />
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -233,15 +373,9 @@ export const EndCycleLog: React.FC = () => {
               <CardTitle className="text-lg">
                 {language === 'he' ? 'מה קרה?' : 'What happened?'}
               </CardTitle>
-              <Button variant="ghost" size="sm" onClick={() => setStep(1)}>
+              <Button variant="ghost" size="sm" onClick={() => { setStep(1); setIsConfirmed(false); }}>
                 {language === 'he' ? 'חזרה' : 'Back'}
               </Button>
-            </div>
-            <div className="p-3 bg-muted rounded-lg mt-2">
-              <div className="font-medium text-foreground">{activeCycle.projectName}</div>
-              <div className="text-sm text-muted-foreground">
-                {activeCycle.unitsPlanned} {language === 'he' ? 'יחידות' : 'units'} • {activeCycle.color}
-              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -280,8 +414,8 @@ export const EndCycleLog: React.FC = () => {
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">
                 {result === 'completed_with_scrap' 
-                  ? (language === 'he' ? 'פרטי הפסולת' : 'Scrap Details')
-                  : (language === 'he' ? 'פרטי הכשל' : 'Failure Details')
+                  ? (language === 'he' ? 'כמה יחידות נפלו?' : 'How many units failed?')
+                  : (language === 'he' ? 'כמה חומר בוזבז?' : 'How much material was wasted?')
                 }
               </CardTitle>
               <Button variant="ghost" size="sm" onClick={() => setStep(2)}>
@@ -294,7 +428,7 @@ export const EndCycleLog: React.FC = () => {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label className="text-base">
-                    {language === 'he' ? 'כמה יחידות נפסלו?' : 'How many units were scrapped?'}
+                    {language === 'he' ? 'מספר יחידות פסולות' : 'Number of defective units'}
                   </Label>
                   <div className="flex items-center gap-4">
                     <Button
@@ -303,24 +437,36 @@ export const EndCycleLog: React.FC = () => {
                       onClick={() => setScrapUnits(Math.max(0, scrapUnits - 1))}
                       className="h-14 w-14 text-xl"
                     >
-                      -
+                      <Minus className="w-5 h-5" />
                     </Button>
                     <div className="flex-1 text-center">
                       <div className="text-4xl font-bold text-foreground">{scrapUnits}</div>
                       <div className="text-sm text-muted-foreground">
-                        {language === 'he' ? 'יחידות' : 'units'}
+                        {language === 'he' ? `מתוך ${activeCycle?.unitsPlanned} יחידות` : `of ${activeCycle?.unitsPlanned} units`}
                       </div>
                     </div>
                     <Button
                       variant="outline"
                       size="lg"
-                      onClick={() => setScrapUnits(scrapUnits + 1)}
+                      onClick={() => setScrapUnits(Math.min(activeCycle?.unitsPlanned || 0, scrapUnits + 1))}
                       className="h-14 w-14 text-xl"
                     >
-                      +
+                      <Plus className="w-5 h-5" />
                     </Button>
                   </div>
                 </div>
+
+                {/* Auto-calculated grams */}
+                {scrapUnits > 0 && activeCycle?.gramsPerUnit && activeCycle.gramsPerUnit > 0 && (
+                  <div className="p-3 bg-muted/50 rounded-lg text-center">
+                    <span className="text-sm text-muted-foreground">
+                      {language === 'he' ? 'חומר שבוזבז:' : 'Material wasted:'}
+                    </span>
+                    <span className="font-bold text-foreground ms-2">
+                      {calculatedWastedGrams}g
+                    </span>
+                  </div>
+                )}
                 
                 <Button 
                   onClick={handleSubmit} 
@@ -328,7 +474,7 @@ export const EndCycleLog: React.FC = () => {
                   disabled={scrapUnits === 0}
                 >
                   <Send className="w-5 h-5" />
-                  {language === 'he' ? 'שלח דיווח' : 'Submit Report'}
+                  {language === 'he' ? 'אישור' : 'Confirm'}
                 </Button>
               </div>
             )}
@@ -336,9 +482,11 @@ export const EndCycleLog: React.FC = () => {
             {result === 'failed' && (
               <div className="space-y-6">
                 <div className="space-y-3">
-                  <Label className="text-base">
-                    {language === 'he' ? 'כמה חומר בוזבז?' : 'How much material was wasted?'}
-                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {language === 'he' 
+                      ? 'אם לא ידוע בדיוק – הערכה מספיקה' 
+                      : "If exact amount is unknown – an estimate is fine"}
+                  </p>
                   
                   <RadioGroup 
                     value={wasteMethod} 
@@ -428,7 +576,7 @@ export const EndCycleLog: React.FC = () => {
                   disabled={wastedGrams === 0}
                 >
                   <Send className="w-5 h-5" />
-                  {language === 'he' ? 'שלח דיווח' : 'Submit Report'}
+                  {language === 'he' ? 'אישור' : 'Confirm'}
                 </Button>
               </div>
             )}
@@ -441,7 +589,7 @@ export const EndCycleLog: React.FC = () => {
         <Button 
           variant="ghost" 
           onClick={handleReset}
-          className="w-full gap-2 text-muted-foreground"
+          className="w-full gap-2 text-muted-foreground hover:text-foreground"
         >
           <RotateCcw className="w-4 h-4" />
           {language === 'he' ? 'התחל מחדש' : 'Start Over'}

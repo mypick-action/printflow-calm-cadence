@@ -23,6 +23,7 @@ const PrintFlowApp: React.FC = () => {
   const [factoryData, setFactoryData] = useState<OnboardingData | null>(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
+  const [endCyclePrinterId, setEndCyclePrinterId] = useState<string | undefined>(undefined);
   
   useEffect(() => {
     if (isOnboardingComplete()) {
@@ -54,6 +55,11 @@ const PrintFlowApp: React.FC = () => {
     return <OnboardingWizard onComplete={handleOnboardingComplete} />;
   }
   
+  const handleEndCycle = (printerId: string) => {
+    setEndCyclePrinterId(printerId);
+    setCurrentPage('endCycleLog');
+  };
+
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
@@ -61,6 +67,7 @@ const PrintFlowApp: React.FC = () => {
           <Dashboard 
             printerNames={factoryData?.printerNames || []} 
             onReportIssue={() => setReportIssueOpen(true)}
+            onEndCycle={handleEndCycle}
           />
         );
       case 'projects':
@@ -72,7 +79,15 @@ const PrintFlowApp: React.FC = () => {
       case 'inventory':
         return <InventoryPage />;
       case 'endCycleLog':
-        return <EndCycleLog />;
+        return (
+          <EndCycleLog 
+            preSelectedPrinterId={endCyclePrinterId}
+            onComplete={() => {
+              setEndCyclePrinterId(undefined);
+              setCurrentPage('dashboard');
+            }}
+          />
+        );
       case 'quoteCheck':
         return <QuoteCheckPage />;
       case 'planning':

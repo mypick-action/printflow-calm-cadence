@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Info,
   Calendar,
+  ClipboardCheck,
 } from 'lucide-react';
 import { getPlanningMeta } from '@/services/storage';
 import { 
@@ -38,9 +39,10 @@ import { format } from 'date-fns';
 interface DashboardProps {
   printerNames?: string[];
   onReportIssue?: () => void;
+  onEndCycle?: (printerId: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle }) => {
   const { language } = useLanguage();
   const [recalculateModalOpen, setRecalculateModalOpen] = useState(false);
   const [planningMeta, setPlanningMeta] = useState(getPlanningMeta());
@@ -88,7 +90,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue }) => {
     );
   };
 
-  const renderCycleCard = (cycle: DashboardCycle, index: number) => {
+  const renderCycleCard = (cycle: DashboardCycle, printerId: string, index: number) => {
     const isActive = cycle.status === 'in_progress';
     const isCompleted = cycle.status === 'completed';
     
@@ -96,7 +98,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue }) => {
       <div 
         key={cycle.id}
         className={`
-          flex items-center gap-4 p-3 rounded-xl border transition-all
+          p-3 rounded-xl border transition-all
           ${cycle.isEndOfDay 
             ? 'bg-primary/5 border-primary/30' 
             : isActive
@@ -107,49 +109,64 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue }) => {
           }
         `}
       >
-        <SpoolIcon color={getSpoolColor(cycle.color)} size={36} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Clock className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground font-mono">
-              {cycle.startTime} - {cycle.endTime}
-            </span>
-            {cycle.isEndOfDay && (
-              <Badge variant="outline" className="gap-1 bg-primary/10 text-primary border-primary/20">
-                <Moon className="w-3 h-3" />
-                {language === 'he' ? 'מחזור סוף יום' : 'End of day'}
-              </Badge>
-            )}
-            {cycle.isRisky && (
-              <Badge variant="outline" className="gap-1 bg-warning/10 text-warning border-warning/20">
-                <AlertTriangle className="w-3 h-3" />
-                {language === 'he' ? 'סיכון' : 'Risky'}
-              </Badge>
-            )}
-            {cycle.hasAMS && (
-              <Badge variant="outline" className="gap-1 bg-success/10 text-success border-success/20">
-                AMS
-              </Badge>
-            )}
-            {isActive && (
-              <Badge className="bg-success text-success-foreground">
-                {language === 'he' ? 'פעיל' : 'Active'}
-              </Badge>
-            )}
+        <div className="flex items-center gap-4">
+          <SpoolIcon color={getSpoolColor(cycle.color)} size={36} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground font-mono">
+                {cycle.startTime} - {cycle.endTime}
+              </span>
+              {cycle.isEndOfDay && (
+                <Badge variant="outline" className="gap-1 bg-primary/10 text-primary border-primary/20">
+                  <Moon className="w-3 h-3" />
+                  {language === 'he' ? 'מחזור סוף יום' : 'End of day'}
+                </Badge>
+              )}
+              {cycle.isRisky && (
+                <Badge variant="outline" className="gap-1 bg-warning/10 text-warning border-warning/20">
+                  <AlertTriangle className="w-3 h-3" />
+                  {language === 'he' ? 'סיכון' : 'Risky'}
+                </Badge>
+              )}
+              {cycle.hasAMS && (
+                <Badge variant="outline" className="gap-1 bg-success/10 text-success border-success/20">
+                  AMS
+                </Badge>
+              )}
+              {isActive && (
+                <Badge className="bg-success text-success-foreground">
+                  {language === 'he' ? 'פעיל' : 'Active'}
+                </Badge>
+              )}
+            </div>
+            <div className="font-medium text-foreground mt-1">
+              {cycle.projectName}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {cycle.productName} • {cycle.color}
+            </div>
           </div>
-          <div className="font-medium text-foreground mt-1">
-            {cycle.projectName}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {cycle.productName} • {cycle.color}
+          <div className="text-center flex-shrink-0">
+            <div className="text-lg font-bold text-foreground">{cycle.units}</div>
+            <div className="text-xs text-muted-foreground">
+              {language === 'he' ? 'יחידות' : 'units'}
+            </div>
           </div>
         </div>
-        <div className="text-center flex-shrink-0">
-          <div className="text-lg font-bold text-foreground">{cycle.units}</div>
-          <div className="text-xs text-muted-foreground">
-            {language === 'he' ? 'יחידות' : 'units'}
-          </div>
-        </div>
+        
+        {/* End Cycle Button - show for active or planned cycles */}
+        {isActive && !isCompleted && onEndCycle && (
+          <Button 
+            size="sm" 
+            variant="outline"
+            onClick={() => onEndCycle(printerId)}
+            className="w-full mt-3 gap-2 border-success/30 text-success hover:bg-success/10"
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            {language === 'he' ? 'סיים מחזור' : 'End Cycle'}
+          </Button>
+        )}
       </div>
     );
   };
@@ -182,7 +199,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue }) => {
         <CardContent className="space-y-3">
           {hasCycles ? (
             <>
-              {plan.cycles.map((cycle, idx) => renderCycleCard(cycle, idx))}
+              {plan.cycles.map((cycle, idx) => renderCycleCard(cycle, plan.printer.id, idx))}
               
               {/* Leave spool instruction */}
               {plan.lastColor && (
