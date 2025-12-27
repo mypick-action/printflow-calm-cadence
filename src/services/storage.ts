@@ -45,8 +45,13 @@ export interface Project {
 
 export interface Printer {
   id: string;
+  printerNumber: number;
   name: string;
   active: boolean;
+  status: 'active' | 'out_of_service' | 'archived';
+  disableReason?: 'breakdown' | 'maintenance' | 'retired';
+  disabledAt?: string;
+  expectedReturnDate?: string;
   currentColor?: string;
   currentMaterial?: string;
   hasAMS: boolean;
@@ -471,8 +476,10 @@ const getInitialPrinters = (): Printer[] => {
   const settings = getFactorySettings();
   return Array.from({ length: settings?.printerCount || 3 }, (_, i) => ({
     id: `printer-${i + 1}`,
+    printerNumber: i + 1,
     name: `Printer ${i + 1}`,
     active: true,
+    status: 'active' as const,
     currentColor: i === 0 ? 'Black' : i === 1 ? 'White' : undefined,
     hasAMS: false,
   }));
@@ -636,11 +643,31 @@ export const getPrinters = (): Printer[] => {
     setItem(KEYS.PRINTERS, initial);
     return initial;
   }
-  return printers;
+  // Migrate old printers without new fields
+  const migratedPrinters = printers.map((p, idx) => ({
+    ...p,
+    printerNumber: p.printerNumber ?? idx + 1,
+    status: p.status ?? (p.active ? 'active' : 'out_of_service') as Printer['status'],
+  }));
+  if (migratedPrinters.some((p, i) => p !== printers[i])) {
+    setItem(KEYS.PRINTERS, migratedPrinters);
+  }
+  return migratedPrinters;
+};
+
+export const getActivePrinters = (): Printer[] => {
+  return getPrinters().filter(p => p.status === 'active');
 };
 
 export const getPrinter = (id: string): Printer | undefined => {
   return getPrinters().find(p => p.id === id);
+};
+
+export const createPrinter = (printer: Omit<Printer, 'id'>): Printer => {
+  const newPrinter: Printer = { ...printer, id: generateId() };
+  const printers = getPrinters();
+  setItem(KEYS.PRINTERS, [...printers, newPrinter]);
+  return newPrinter;
 };
 
 export const updatePrinter = (id: string, updates: Partial<Printer>): Printer | undefined => {
@@ -651,6 +678,12 @@ export const updatePrinter = (id: string, updates: Partial<Printer>): Printer | 
   printers[index] = { ...printers[index], ...updates };
   setItem(KEYS.PRINTERS, printers);
   return printers[index];
+};
+
+export const getNextPrinterNumber = (): number => {
+  const printers = getPrinters();
+  const maxNumber = printers.reduce((max, p) => Math.max(max, p.printerNumber || 0), 0);
+  return maxNumber + 1;
 };
 
 // ============= PLANNED CYCLES =============
@@ -765,8 +798,10 @@ export const saveFactorySettings = (settings: FactorySettings): void => {
     const existing = existingPrinters[i];
     return existing || {
       id: `printer-${i + 1}`,
+      printerNumber: i + 1,
       name: `Printer ${i + 1}`,
       active: true,
+      status: 'active' as const,
       hasAMS: settings.hasAMS || false,
     };
   });
