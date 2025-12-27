@@ -137,7 +137,12 @@ const getWorkingHoursForDay = (schedule: DaySchedule | null): number => {
   const end = parseTime(schedule.endTime);
   
   const startMinutes = start.hours * 60 + start.minutes;
-  const endMinutes = end.hours * 60 + end.minutes;
+  let endMinutes = end.hours * 60 + end.minutes;
+  
+  // Handle cross-midnight shifts (e.g., 17:30 -> 02:00 = 8.5 hours)
+  if (endMinutes < startMinutes) {
+    endMinutes += 24 * 60; // Add 24 hours worth of minutes
+  }
   
   return Math.max(0, (endMinutes - startMinutes) / 60);
 };
@@ -701,10 +706,12 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   const days: DayPlan[] = [];
   let workingProjectStates = [...projectStates];
   let workingMaterialTracker = new Map(materialTracker);
-  // Track spool assignments per color -> set of printer IDs (for 1 spool = 1 printer rule)
-  let workingSpoolAssignments = new Map<string, Set<string>>();
   
   for (let dayOffset = 0; dayOffset < daysToPlane; dayOffset++) {
+    // CRITICAL FIX: Reset spool assignments at the START of each day
+    // This ensures sequential cycles on same printer are allowed
+    // Spool-limit only restricts CONCURRENT usage across printers, not across time
+    const workingSpoolAssignments = new Map<string, Set<string>>();
     const planDate = new Date(startDate);
     planDate.setDate(planDate.getDate() + dayOffset);
     planDate.setHours(0, 0, 0, 0);
@@ -750,7 +757,7 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     days.push(dayPlan);
     workingProjectStates = updatedProjectStates;
     workingMaterialTracker = updatedMaterialTracker;
-    workingSpoolAssignments = updatedSpoolAssignments;
+    // NOTE: workingSpoolAssignments NOT carried over - reset fresh each day (line 709)
     
     // If all projects are scheduled, no need to continue
     if (workingProjectStates.length === 0) break;

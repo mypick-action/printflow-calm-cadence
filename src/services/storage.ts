@@ -202,6 +202,8 @@ export interface PriorityRules {
   criticalDaysThreshold: number; // Days below which it becomes critical (default 7)
 }
 
+export type SchedulingStrategy = 'compress' | 'balance';
+
 export interface FactorySettings {
   printerCount: number;
   weeklySchedule: WeeklySchedule;
@@ -216,6 +218,8 @@ export interface FactorySettings {
   transitionMinutes: number;
   priorityRules: PriorityRules;
   hasAMS: boolean; // simple flag from onboarding
+  // Scheduling strategy: compress = finish ASAP, balance = spread load
+  schedulingStrategy?: SchedulingStrategy;
 }
 
 export interface TemporaryScheduleOverride {
