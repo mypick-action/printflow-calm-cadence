@@ -11,6 +11,7 @@ import {
   getProduct,
   getDayScheduleForDate,
   calculateDaysRemaining,
+  calculatePriorityFromDueDate,
   PlannedCycle,
   Printer,
   Project,
@@ -248,10 +249,15 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
   });
   
   // Check for attention items
+  // CRITICAL FIX: Calculate urgency dynamically based on current days remaining
+  // Don't rely on stored project.urgency which may be outdated
   activeProjects.forEach(project => {
     const days = calculateDaysRemaining(project.dueDate);
     
-    if (project.urgency === 'critical') {
+    // Calculate current urgency based on days remaining
+    const currentUrgency = calculatePriorityFromDueDate(project.dueDate);
+    
+    if (currentUrgency === 'critical') {
       attentionItems.push({
         type: 'critical',
         message: `פרויקט קריטי: ${project.name} (${days} ימים ליעד)`,
@@ -259,7 +265,7 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
         projectId: project.id,
         severity: 'error',
       });
-    } else if (project.urgency === 'urgent') {
+    } else if (currentUrgency === 'urgent') {
       attentionItems.push({
         type: 'urgent',
         message: `פרויקט דחוף: ${project.name} (${days} ימים ליעד)`,
