@@ -59,7 +59,7 @@ export const LoadSpoolDialog: React.FC<LoadSpoolDialogProps> = ({
   const [printer, setPrinter] = useState<Printer | null>(null);
 
   useEffect(() => {
-    if (open) {
+    if (open && printerId) {
       const printers = getPrinters();
       const foundPrinter = printers.find(p => p.id === printerId);
       setPrinter(foundPrinter || null);
@@ -175,133 +175,139 @@ export const LoadSpoolDialog: React.FC<LoadSpoolDialogProps> = ({
     onSuccess?.();
   };
 
-  if (!printer) return null;
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md z-[100]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Package className="w-5 h-5 text-primary" />
-            {language === 'he' ? 'טעינת גליל' : 'Load Spool'}
-            <span className="text-muted-foreground font-normal">
-              → {printer.name}
-              {slotIndex !== null && ` (Slot ${slotIndex + 1})`}
-            </span>
-          </DialogTitle>
-        </DialogHeader>
-        
-        <div className="space-y-4 py-4">
-          {/* Mode Selection */}
-          <div className="space-y-2">
-            <Label>{language === 'he' ? 'בחר לפי' : 'Select by'}</Label>
-            <RadioGroup
-              value={loadSpoolMode}
-              onValueChange={(v) => setLoadSpoolMode(v as 'color' | 'spool')}
-              className="flex gap-4"
-            >
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <RadioGroupItem value="color" id="dialog-mode-color" />
-                <Label htmlFor="dialog-mode-color" className="cursor-pointer">
-                  {language === 'he' ? 'צבע בלבד' : 'Color only'}
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <RadioGroupItem value="spool" id="dialog-mode-spool" />
-                <Label htmlFor="dialog-mode-spool" className="cursor-pointer">
-                  {language === 'he' ? 'גליל מהמלאי' : 'Spool from inventory'}
-                </Label>
-              </div>
-            </RadioGroup>
+        {!printer ? (
+          <div className="p-8 text-center text-muted-foreground">
+            {language === 'he' ? 'טוען...' : 'Loading...'}
           </div>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Package className="w-5 h-5 text-primary" />
+                {language === 'he' ? 'טעינת גליל' : 'Load Spool'}
+                <span className="text-muted-foreground font-normal">
+                  → {printer.name}
+                  {slotIndex !== null && ` (Slot ${slotIndex + 1})`}
+                </span>
+              </DialogTitle>
+            </DialogHeader>
+            
+            <div className="space-y-4 py-4">
+              {/* Mode Selection */}
+              <div className="space-y-2">
+                <Label>{language === 'he' ? 'בחר לפי' : 'Select by'}</Label>
+                <RadioGroup
+                  value={loadSpoolMode}
+                  onValueChange={(v) => setLoadSpoolMode(v as 'color' | 'spool')}
+                  className="flex gap-4"
+                >
+                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                    <RadioGroupItem value="color" id="dialog-mode-color" />
+                    <Label htmlFor="dialog-mode-color" className="cursor-pointer">
+                      {language === 'he' ? 'צבע בלבד' : 'Color only'}
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                    <RadioGroupItem value="spool" id="dialog-mode-spool" />
+                    <Label htmlFor="dialog-mode-spool" className="cursor-pointer">
+                      {language === 'he' ? 'גליל מהמלאי' : 'Spool from inventory'}
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
 
-          {/* Color Selection */}
-          <div className="space-y-2">
-            <Label>{language === 'he' ? 'צבע' : 'Color'}</Label>
-            <Select value={selectedColor} onValueChange={setSelectedColor}>
-              <SelectTrigger>
-                <SelectValue placeholder={language === 'he' ? 'בחר צבע' : 'Select color'} />
-              </SelectTrigger>
-              <SelectContent className="bg-popover z-[150]">
-                {availableColors.filter(c => c && c.trim()).map(c => (
-                  <SelectItem key={c} value={c}>
-                    <div className="flex items-center gap-2">
-                      <SpoolIcon color={getSpoolColor(c)} size={16} />
-                      {c}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Spool Selection (if mode is spool) */}
-          {loadSpoolMode === 'spool' && selectedColor && (
-            <div className="space-y-2">
-              <Label>{language === 'he' ? 'בחר גליל מהמלאי' : 'Select spool from inventory'}</Label>
-              {getAvailableSpools().length > 0 ? (
-                <Select value={selectedSpoolId} onValueChange={setSelectedSpoolId}>
+              {/* Color Selection */}
+              <div className="space-y-2">
+                <Label>{language === 'he' ? 'צבע' : 'Color'}</Label>
+                <Select value={selectedColor} onValueChange={setSelectedColor}>
                   <SelectTrigger>
-                    <SelectValue placeholder={language === 'he' ? 'בחר גליל' : 'Select spool'} />
+                    <SelectValue placeholder={language === 'he' ? 'בחר צבע' : 'Select color'} />
                   </SelectTrigger>
                   <SelectContent className="bg-popover z-[150]">
-                    {getAvailableSpools().map(s => (
-                      <SelectItem key={s.id} value={s.id}>
+                    {availableColors.filter(c => c && c.trim()).map(c => (
+                      <SelectItem key={c} value={c}>
                         <div className="flex items-center gap-2">
-                          <SpoolIcon color={getSpoolColor(s.color)} size={16} />
-                          <span>{s.color}</span>
-                          <span className="text-muted-foreground">
-                            {s.gramsRemainingEst}g • {s.material}
-                          </span>
+                          <SpoolIcon color={getSpoolColor(c)} size={16} />
+                          {c}
                         </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              ) : (
-                <div className="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning">
-                  {language === 'he' 
-                    ? `אין גלילים ${selectedColor} זמינים במלאי`
-                    : `No ${selectedColor} spools available in inventory`}
+              </div>
+
+              {/* Spool Selection (if mode is spool) */}
+              {loadSpoolMode === 'spool' && selectedColor && (
+                <div className="space-y-2">
+                  <Label>{language === 'he' ? 'בחר גליל מהמלאי' : 'Select spool from inventory'}</Label>
+                  {getAvailableSpools().length > 0 ? (
+                    <Select value={selectedSpoolId} onValueChange={setSelectedSpoolId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder={language === 'he' ? 'בחר גליל' : 'Select spool'} />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover z-[150]">
+                        {getAvailableSpools().map(s => (
+                          <SelectItem key={s.id} value={s.id}>
+                            <div className="flex items-center gap-2">
+                              <SpoolIcon color={getSpoolColor(s.color)} size={16} />
+                              <span>{s.color}</span>
+                              <span className="text-muted-foreground">
+                                {s.gramsRemainingEst}g • {s.material}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning">
+                      {language === 'he' 
+                        ? `אין גלילים ${selectedColor} זמינים במלאי`
+                        : `No ${selectedColor} spools available in inventory`}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Show selected spool info from inventory */}
+              {loadSpoolMode === 'spool' && selectedSpoolId && (
+                <div className="space-y-2">
+                  <Label>{language === 'he' ? 'גליל נבחר' : 'Selected spool'}</Label>
+                  {(() => {
+                    const spool = spools.find(s => s.id === selectedSpoolId);
+                    if (!spool) return null;
+                    return (
+                      <div className="p-3 rounded-lg bg-primary/5 border border-primary/30">
+                        <div className="flex items-center gap-3">
+                          <SpoolIcon color={getSpoolColor(spool.color)} size={32} />
+                          <div>
+                            <span className="font-medium">{spool.color}</span>
+                            <div className="text-sm text-muted-foreground">
+                              {spool.gramsRemainingEst}g • {spool.material || 'PLA'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
-          )}
 
-          {/* Show selected spool info from inventory */}
-          {loadSpoolMode === 'spool' && selectedSpoolId && (
-            <div className="space-y-2">
-              <Label>{language === 'he' ? 'גליל נבחר' : 'Selected spool'}</Label>
-              {(() => {
-                const spool = spools.find(s => s.id === selectedSpoolId);
-                if (!spool) return null;
-                return (
-                  <div className="p-3 rounded-lg bg-primary/5 border border-primary/30">
-                    <div className="flex items-center gap-3">
-                      <SpoolIcon color={getSpoolColor(spool.color)} size={32} />
-                      <div>
-                        <span className="font-medium">{spool.color}</span>
-                        <div className="text-sm text-muted-foreground">
-                          {spool.gramsRemainingEst}g • {spool.material || 'PLA'}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {language === 'he' ? 'ביטול' : 'Cancel'}
-          </Button>
-          <Button onClick={handleLoadSpool} disabled={!selectedColor}>
-            <ArrowRight className="w-4 h-4 mr-1" />
-            {language === 'he' ? 'טען גליל' : 'Load Spool'}
-          </Button>
-        </DialogFooter>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                {language === 'he' ? 'ביטול' : 'Cancel'}
+              </Button>
+              <Button onClick={handleLoadSpool} disabled={!selectedColor}>
+                <ArrowRight className="w-4 h-4 mr-1" />
+                {language === 'he' ? 'טען גליל' : 'Load Spool'}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
