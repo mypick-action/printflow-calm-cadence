@@ -13,21 +13,44 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Printer as PrinterIcon, Settings2, CircleDot, Box, Layers } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Printer as PrinterIcon, Settings2, CircleDot, Box, Layers, Plus, AlertTriangle, Power, PowerOff, RefreshCw } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { format } from 'date-fns';
 import { 
   getPrinters, 
   updatePrinter,
+  createPrinter,
   getSpools,
+  getPlannedCycles,
+  updatePlannedCycle,
+  getNextPrinterNumber,
+  getFactorySettings,
   Printer, 
   Spool,
-  getFactorySettings,
+  PlannedCycle,
 } from '@/services/storage';
 
 export const PrintersPage: React.FC = () => {
@@ -37,15 +60,39 @@ export const PrintersPage: React.FC = () => {
   const [editingPrinter, setEditingPrinter] = useState<Printer | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [availableColors, setAvailableColors] = useState<string[]>([]);
+  
+  // Add printer dialog
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [newPrinter, setNewPrinter] = useState({
+    printerNumber: 1,
+    name: '',
+    hasAMS: false,
+    amsSlots: 4,
+    amsMode: 'backup_same_color' as 'backup_same_color' | 'multi_color',
+  });
+  
+  // Disable printer dialog
+  const [disableDialogOpen, setDisableDialogOpen] = useState(false);
+  const [printerToDisable, setPrinterToDisable] = useState<Printer | null>(null);
+  const [disableReason, setDisableReason] = useState<'breakdown' | 'maintenance' | 'retired'>('maintenance');
+  const [expectedReturnDate, setExpectedReturnDate] = useState('');
+  
+  // Cycle reassignment alert
+  const [cycleAlertOpen, setCycleAlertOpen] = useState(false);
+  const [affectedCycles, setAffectedCycles] = useState<PlannedCycle[]>([]);
 
   useEffect(() => {
+    refreshData();
+  }, []);
+
+  const refreshData = () => {
     setPrinters(getPrinters());
     setSpools(getSpools());
     const settings = getFactorySettings();
     if (settings?.colors) {
       setAvailableColors(settings.colors);
     }
-  }, []);
+  };
 
   const handleEditPrinter = (printer: Printer) => {
     setEditingPrinter({ ...printer });
@@ -56,13 +103,125 @@ export const PrintersPage: React.FC = () => {
     if (!editingPrinter) return;
     
     updatePrinter(editingPrinter.id, editingPrinter);
-    setPrinters(getPrinters());
+    refreshData();
     setSheetOpen(false);
     setEditingPrinter(null);
     
     toast({
       title: language === 'he' ? 'מדפסת עודכנה' : 'Printer updated',
       description: editingPrinter.name,
+    });
+  };
+
+  const handleOpenAddDialog = () => {
+    const nextNumber = getNextPrinterNumber();
+    setNewPrinter({
+      printerNumber: nextNumber,
+      name: language === 'he' ? `מדפסת ${nextNumber}` : `Printer ${nextNumber}`,
+      hasAMS: false,
+      amsSlots: 4,
+      amsMode: 'backup_same_color',
+    });
+    setAddDialogOpen(true);
+  };
+
+  const handleAddPrinter = () => {
+    const printer = createPrinter({
+      printerNumber: newPrinter.printerNumber,
+      name: newPrinter.name || (language === 'he' ? `מדפסת ${newPrinter.printerNumber}` : `Printer ${newPrinter.printerNumber}`),
+      active: true,
+      status: 'active',
+      hasAMS: newPrinter.hasAMS,
+      amsSlots: newPrinter.hasAMS ? newPrinter.amsSlots : undefined,
+      amsMode: newPrinter.hasAMS ? newPrinter.amsMode : undefined,
+    });
+    
+    refreshData();
+    setAddDialogOpen(false);
+    
+    toast({
+      title: language === 'he' ? 'מדפסת נוספה' : 'Printer added',
+      description: printer.name,
+    });
+  };
+
+  const handleOpenDisableDialog = (printer: Printer) => {
+    setPrinterToDisable(printer);
+    setDisableReason('maintenance');
+    setExpectedReturnDate('');
+    
+    // Check for planned cycles
+    const cycles = getPlannedCycles().filter(
+      c => c.printerId === printer.id && (c.status === 'planned' || c.status === 'in_progress')
+    );
+    
+    if (cycles.length > 0) {
+      setAffectedCycles(cycles);
+      setCycleAlertOpen(true);
+    } else {
+      setDisableDialogOpen(true);
+    }
+  };
+
+  const handleConfirmDisable = (reassignCycles: boolean) => {
+    if (!printerToDisable) return;
+    
+    // Disable the printer
+    updatePrinter(printerToDisable.id, {
+      status: 'out_of_service',
+      active: false,
+      disableReason,
+      disabledAt: new Date().toISOString(),
+      expectedReturnDate: expectedReturnDate || undefined,
+    });
+    
+    // Handle cycles if needed
+    if (reassignCycles && affectedCycles.length > 0) {
+      const activePrinters = printers.filter(
+        p => p.id !== printerToDisable.id && p.status === 'active'
+      );
+      
+      affectedCycles.forEach((cycle, idx) => {
+        if (activePrinters.length > 0) {
+          const targetPrinter = activePrinters[idx % activePrinters.length];
+          updatePlannedCycle(cycle.id, { printerId: targetPrinter.id });
+        }
+      });
+      
+      toast({
+        title: language === 'he' ? 'מחזורים הועברו' : 'Cycles reassigned',
+        description: language === 'he' 
+          ? `${affectedCycles.length} מחזורים הועברו למדפסות אחרות`
+          : `${affectedCycles.length} cycles moved to other printers`,
+      });
+    }
+    
+    refreshData();
+    setDisableDialogOpen(false);
+    setCycleAlertOpen(false);
+    setPrinterToDisable(null);
+    setAffectedCycles([]);
+    
+    toast({
+      title: language === 'he' ? 'מדפסת הושבתה' : 'Printer disabled',
+      description: printerToDisable.name,
+    });
+  };
+
+  const handleReactivatePrinter = (printer: Printer) => {
+    updatePrinter(printer.id, {
+      status: 'active',
+      active: true,
+      disableReason: undefined,
+      disabledAt: undefined,
+      expectedReturnDate: undefined,
+    });
+    
+    refreshData();
+    
+    toast({
+      title: language === 'he' ? 'מדפסת הופעלה מחדש' : 'Printer reactivated',
+      description: printer.name,
     });
   };
 
@@ -92,46 +251,98 @@ export const PrintersPage: React.FC = () => {
     );
   };
 
+  const getStatusBadge = (printer: Printer) => {
+    const config = {
+      active: { 
+        label: language === 'he' ? 'פעילה' : 'Active', 
+        className: 'bg-success/10 text-success border-success/20' 
+      },
+      out_of_service: { 
+        label: language === 'he' ? 'מושבתת' : 'Out of Service', 
+        className: 'bg-error/10 text-error border-error/20' 
+      },
+      archived: { 
+        label: language === 'he' ? 'בארכיון' : 'Archived', 
+        className: 'bg-muted text-muted-foreground' 
+      },
+    };
+    const status = printer.status || 'active';
+    return <Badge variant="outline" className={config[status].className}>{config[status].label}</Badge>;
+  };
+
+  const getDisableReasonLabel = (reason?: string) => {
+    const labels = {
+      breakdown: language === 'he' ? 'תקלה' : 'Breakdown',
+      maintenance: language === 'he' ? 'תחזוקה' : 'Maintenance',
+      retired: language === 'he' ? 'יצא משימוש' : 'Retired',
+    };
+    return reason ? labels[reason as keyof typeof labels] || reason : '';
+  };
+
+  const activePrinters = printers.filter(p => p.status === 'active');
+  const inactivePrinters = printers.filter(p => p.status !== 'active');
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-primary/10 rounded-xl">
-          <PrinterIcon className="w-6 h-6 text-primary" />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-primary/10 rounded-xl">
+            <PrinterIcon className="w-6 h-6 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">
+              {language === 'he' ? 'מדפסות' : 'Printers'}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {language === 'he' 
+                ? `${activePrinters.length} פעילות, ${inactivePrinters.length} מושבתות`
+                : `${activePrinters.length} active, ${inactivePrinters.length} inactive`}
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">
-            {language === 'he' ? 'מדפסות' : 'Printers'}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {language === 'he' ? 'ניהול והגדרות מדפסות' : 'Manage printer settings'}
-          </p>
-        </div>
+        
+        <Button onClick={handleOpenAddDialog} className="gap-2">
+          <Plus className="w-4 h-4" />
+          {language === 'he' ? 'הוסף מדפסת' : 'Add Printer'}
+        </Button>
       </div>
 
-      {/* Printers List */}
+      {/* Active Printers */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {printers.map((printer) => {
+        {activePrinters.map((printer) => {
           const assignedSpools = getAssignedSpools(printer.id);
           
           return (
-            <Card 
-              key={printer.id} 
-              className={`cursor-pointer transition-all hover:shadow-md ${!printer.active ? 'opacity-60' : ''}`}
-              onClick={() => handleEditPrinter(printer)}
-            >
+            <Card key={printer.id} className="cursor-pointer transition-all hover:shadow-md">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg flex items-center gap-2">
                     <PrinterIcon className="w-5 h-5 text-primary" />
                     {printer.name}
                   </CardTitle>
-                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                    <Settings2 className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-8 w-8 p-0"
+                      onClick={() => handleEditPrinter(printer)}
+                    >
+                      <Settings2 className="w-4 h-4" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-8 w-8 p-0 text-error hover:text-error"
+                      onClick={() => handleOpenDisableDialog(printer)}
+                      title={language === 'he' ? 'השבת מדפסת' : 'Disable printer'}
+                    >
+                      <PowerOff className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-3" onClick={() => handleEditPrinter(printer)}>
                 {/* Current color/material */}
                 <div className="flex items-center gap-2">
                   <CircleDot className="w-4 h-4 text-muted-foreground" />
@@ -170,18 +381,262 @@ export const PrintersPage: React.FC = () => {
 
                 {/* Status badge */}
                 <div className="pt-2 border-t">
-                  <Badge variant={printer.active ? 'default' : 'secondary'}>
-                    {printer.active 
-                      ? (language === 'he' ? 'פעילה' : 'Active')
-                      : (language === 'he' ? 'לא פעילה' : 'Inactive')
-                    }
-                  </Badge>
+                  {getStatusBadge(printer)}
                 </div>
               </CardContent>
             </Card>
           );
         })}
       </div>
+
+      {activePrinters.length === 0 && (
+        <Card className="p-8 text-center">
+          <PrinterIcon className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+          <h3 className="font-semibold mb-2">
+            {language === 'he' ? 'אין מדפסות פעילות' : 'No active printers'}
+          </h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            {language === 'he' ? 'הוסיפו מדפסת חדשה או הפעילו מחדש מדפסת קיימת' : 'Add a new printer or reactivate an existing one'}
+          </p>
+          <Button onClick={handleOpenAddDialog}>
+            <Plus className="w-4 h-4 mr-2" />
+            {language === 'he' ? 'הוסף מדפסת' : 'Add Printer'}
+          </Button>
+        </Card>
+      )}
+
+      {/* Inactive Printers Section */}
+      {inactivePrinters.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold text-muted-foreground">
+            {language === 'he' ? 'מדפסות לא פעילות' : 'Inactive Printers'}
+          </h2>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {inactivePrinters.map((printer) => (
+              <Card key={printer.id} className="opacity-70 border-dashed">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg flex items-center gap-2 text-muted-foreground">
+                      <PrinterIcon className="w-5 h-5" />
+                      {printer.name}
+                    </CardTitle>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="gap-1"
+                      onClick={() => handleReactivatePrinter(printer)}
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      {language === 'he' ? 'הפעל' : 'Reactivate'}
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    {getStatusBadge(printer)}
+                    {printer.disableReason && (
+                      <span className="text-sm text-muted-foreground">
+                        ({getDisableReasonLabel(printer.disableReason)})
+                      </span>
+                    )}
+                  </div>
+                  {printer.disabledAt && (
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'he' ? 'הושבת ב-' : 'Disabled on '}
+                      {format(new Date(printer.disabledAt), 'dd/MM/yyyy')}
+                    </p>
+                  )}
+                  {printer.expectedReturnDate && (
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'he' ? 'צפי לחזרה: ' : 'Expected return: '}
+                      {format(new Date(printer.expectedReturnDate), 'dd/MM/yyyy')}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Add Printer Dialog */}
+      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5 text-primary" />
+              {language === 'he' ? 'הוסף מדפסת חדשה' : 'Add New Printer'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>{language === 'he' ? 'מספר מדפסת' : 'Printer Number'}</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={newPrinter.printerNumber}
+                  onChange={(e) => setNewPrinter({ ...newPrinter, printerNumber: parseInt(e.target.value) || 1 })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>{language === 'he' ? 'שם (אופציונלי)' : 'Name (optional)'}</Label>
+                <Input
+                  value={newPrinter.name}
+                  onChange={(e) => setNewPrinter({ ...newPrinter, name: e.target.value })}
+                  placeholder={language === 'he' ? `מדפסת ${newPrinter.printerNumber}` : `Printer ${newPrinter.printerNumber}`}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+              <div className="flex items-center justify-between">
+                <Label>AMS</Label>
+                <Switch
+                  checked={newPrinter.hasAMS}
+                  onCheckedChange={(v) => setNewPrinter({ ...newPrinter, hasAMS: v })}
+                />
+              </div>
+
+              {newPrinter.hasAMS && (
+                <>
+                  <div className="space-y-2">
+                    <Label>{language === 'he' ? 'מספר משבצות' : 'AMS Slots'}</Label>
+                    <Select 
+                      value={String(newPrinter.amsSlots)} 
+                      onValueChange={(v) => setNewPrinter({ ...newPrinter, amsSlots: parseInt(v) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-background border shadow-lg">
+                        <SelectItem value="4">4 slots</SelectItem>
+                        <SelectItem value="8">8 slots</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{language === 'he' ? 'מצב AMS' : 'AMS Mode'}</Label>
+                    <Select 
+                      value={newPrinter.amsMode} 
+                      onValueChange={(v) => setNewPrinter({ ...newPrinter, amsMode: v as typeof newPrinter.amsMode })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-background border shadow-lg">
+                        <SelectItem value="backup_same_color">
+                          {language === 'he' ? 'גיבוי אותו צבע' : 'Backup same-color'}
+                        </SelectItem>
+                        <SelectItem value="multi_color">
+                          {language === 'he' ? 'רב-צבעי' : 'Multi-color'}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </Button>
+            <Button onClick={handleAddPrinter}>
+              {language === 'he' ? 'הוסף מדפסת' : 'Add Printer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Disable Printer Dialog */}
+      <Dialog open={disableDialogOpen} onOpenChange={setDisableDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-error">
+              <PowerOff className="w-5 h-5" />
+              {language === 'he' ? 'השבתת מדפסת' : 'Disable Printer'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              {language === 'he' 
+                ? `המדפסת "${printerToDisable?.name}" תוסר מהתכנון והדשבורד.`
+                : `Printer "${printerToDisable?.name}" will be removed from planning and dashboard.`}
+            </p>
+            
+            <div className="space-y-2">
+              <Label>{language === 'he' ? 'סיבת השבתה' : 'Reason'}</Label>
+              <Select value={disableReason} onValueChange={(v) => setDisableReason(v as typeof disableReason)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-background border shadow-lg">
+                  <SelectItem value="breakdown">{language === 'he' ? 'תקלה' : 'Breakdown'}</SelectItem>
+                  <SelectItem value="maintenance">{language === 'he' ? 'תחזוקה' : 'Maintenance'}</SelectItem>
+                  <SelectItem value="retired">{language === 'he' ? 'יצא משימוש' : 'Retired'}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>{language === 'he' ? 'תאריך חזרה צפוי (אופציונלי)' : 'Expected Return (optional)'}</Label>
+              <Input
+                type="date"
+                value={expectedReturnDate}
+                onChange={(e) => setExpectedReturnDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDisableDialogOpen(false)}>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </Button>
+            <Button variant="destructive" onClick={() => handleConfirmDisable(false)}>
+              {language === 'he' ? 'השבת מדפסת' : 'Disable Printer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cycle Reassignment Alert */}
+      <AlertDialog open={cycleAlertOpen} onOpenChange={setCycleAlertOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-warning" />
+              {language === 'he' ? 'מחזורים מתוכננים' : 'Planned Cycles'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {language === 'he' 
+                ? `למדפסת זו יש ${affectedCycles.length} מחזורים מתוכננים. מה לעשות איתם?`
+                : `This printer has ${affectedCycles.length} planned cycles. What should happen to them?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </AlertDialogCancel>
+            <Button 
+              variant="outline"
+              onClick={() => {
+                setCycleAlertOpen(false);
+                setDisableDialogOpen(true);
+              }}
+            >
+              {language === 'he' ? 'השאר לא מוקצים' : 'Leave unassigned'}
+            </Button>
+            <AlertDialogAction onClick={() => {
+              setCycleAlertOpen(false);
+              setDisableDialogOpen(true);
+              // Will reassign on confirm
+              setTimeout(() => handleConfirmDisable(true), 100);
+            }}>
+              {language === 'he' ? 'העבר למדפסות אחרות' : 'Reassign to other printers'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Edit Printer Sheet */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
@@ -204,27 +659,19 @@ export const PrintersPage: React.FC = () => {
                 />
               </div>
 
-              {/* Active Toggle */}
-              <div className="flex items-center justify-between">
-                <Label>{language === 'he' ? 'מדפסת פעילה' : 'Printer Active'}</Label>
-                <Switch
-                  checked={editingPrinter.active}
-                  onCheckedChange={(v) => setEditingPrinter({ ...editingPrinter, active: v })}
-                />
-              </div>
-
               {/* Current Color */}
               <div className="space-y-2">
                 <Label>{language === 'he' ? 'צבע נוכחי' : 'Current Color'}</Label>
                 <Select 
-                  value={editingPrinter.currentColor || ''} 
-                  onValueChange={(v) => setEditingPrinter({ ...editingPrinter, currentColor: v })}
+                  value={editingPrinter.currentColor || 'none'} 
+                  onValueChange={(v) => setEditingPrinter({ ...editingPrinter, currentColor: v === 'none' ? undefined : v })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder={language === 'he' ? 'בחר צבע' : 'Select color'} />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg">
-                    {availableColors.map((color) => (
+                    <SelectItem value="none">{language === 'he' ? 'לא מוגדר' : 'Not set'}</SelectItem>
+                    {availableColors.filter(c => c && c.trim()).map((color) => (
                       <SelectItem key={color} value={color}>{color}</SelectItem>
                     ))}
                   </SelectContent>
@@ -235,13 +682,14 @@ export const PrintersPage: React.FC = () => {
               <div className="space-y-2">
                 <Label>{language === 'he' ? 'חומר נוכחי' : 'Current Material'}</Label>
                 <Select 
-                  value={editingPrinter.currentMaterial || ''} 
-                  onValueChange={(v) => setEditingPrinter({ ...editingPrinter, currentMaterial: v })}
+                  value={editingPrinter.currentMaterial || 'none'} 
+                  onValueChange={(v) => setEditingPrinter({ ...editingPrinter, currentMaterial: v === 'none' ? undefined : v })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder={language === 'he' ? 'בחר חומר' : 'Select material'} />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg">
+                    <SelectItem value="none">{language === 'he' ? 'לא מוגדר' : 'Not set'}</SelectItem>
                     <SelectItem value="PLA">PLA</SelectItem>
                     <SelectItem value="PETG">PETG</SelectItem>
                     <SelectItem value="ABS">ABS</SelectItem>
@@ -257,7 +705,6 @@ export const PrintersPage: React.FC = () => {
                   AMS {language === 'he' ? 'הגדרות' : 'Settings'}
                 </h3>
                 
-                {/* Has AMS Toggle */}
                 <div className="flex items-center justify-between">
                   <Label>{language === 'he' ? 'יש AMS?' : 'Has AMS?'}</Label>
                   <Switch
@@ -273,7 +720,6 @@ export const PrintersPage: React.FC = () => {
 
                 {editingPrinter.hasAMS && (
                   <>
-                    {/* AMS Slots */}
                     <div className="space-y-2">
                       <Label>{language === 'he' ? 'מספר משבצות' : 'Number of Slots'}</Label>
                       <Select 
@@ -290,7 +736,6 @@ export const PrintersPage: React.FC = () => {
                       </Select>
                     </div>
 
-                    {/* AMS Mode */}
                     <div className="space-y-2">
                       <Label>{language === 'he' ? 'מצב AMS' : 'AMS Mode'}</Label>
                       <Select 
@@ -305,26 +750,15 @@ export const PrintersPage: React.FC = () => {
                         </SelectTrigger>
                         <SelectContent className="bg-background border shadow-lg">
                           <SelectItem value="backup_same_color">
-                            <div className="flex flex-col">
-                              <span>{language === 'he' ? 'גיבוי אותו צבע' : 'Backup same-color'}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {language === 'he' ? 'מילוי אוטומטי כשנגמר' : 'Auto-refill when empty'}
-                              </span>
-                            </div>
+                            {language === 'he' ? 'גיבוי אותו צבע' : 'Backup same-color'}
                           </SelectItem>
                           <SelectItem value="multi_color">
-                            <div className="flex flex-col">
-                              <span>{language === 'he' ? 'הדפסה רב-צבעית' : 'Multi-color printing'}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {language === 'he' ? 'צבעים שונים בהדפסה אחת' : 'Different colors in one print'}
-                              </span>
-                            </div>
+                            {language === 'he' ? 'הדפסה רב-צבעית' : 'Multi-color printing'}
                           </SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
 
-                    {/* Assigned Spools for backup mode */}
                     {editingPrinter.amsMode === 'backup_same_color' && (
                       <div className="space-y-2 pt-2 border-t">
                         <Label className="text-sm">
@@ -387,11 +821,6 @@ export const PrintersPage: React.FC = () => {
                     <SelectItem value="5000">5kg</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  {language === 'he' 
-                    ? 'גודל הגליל המקסימלי שהמדפסת תומכת בו'
-                    : 'Maximum spool size the printer supports'}
-                </p>
               </div>
 
               {/* Save Button */}
@@ -407,18 +836,6 @@ export const PrintersPage: React.FC = () => {
           )}
         </SheetContent>
       </Sheet>
-
-      {printers.length === 0 && (
-        <Card className="p-8 text-center">
-          <PrinterIcon className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="font-semibold mb-2">
-            {language === 'he' ? 'אין מדפסות' : 'No printers'}
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {language === 'he' ? 'הגדירו מדפסות בתהליך ההתחלה' : 'Set up printers in the onboarding process'}
-          </p>
-        </Card>
-      )}
     </div>
   );
 };
