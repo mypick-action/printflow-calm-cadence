@@ -979,6 +979,13 @@ export const markCapacityChanged = (reason: string): void => {
   });
 };
 
+// Trigger planning recalculation (marks capacity as changed to prompt recalculation)
+export const triggerPlanningRecalculation = (reason: string): void => {
+  markCapacityChanged(reason);
+  // Perform automatic recalculation from now
+  recalculatePlan('from_now', true);
+};
+
 export const recalculatePlan = (
   scope: RecalculateScope,
   lockStarted: boolean = true
