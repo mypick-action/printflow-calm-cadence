@@ -187,11 +187,12 @@ export const generateLoadRecommendations = (
     // RULE A.1: Skip if printer is currently running a cycle (not actionable now)
     if (printersWithRunningCycle.has(printerId)) continue;
     
-    // Skip if we already have a recommendation for this printer
+    // Skip if we already have a recommendation for this printer (ONE per printer max)
     if (printersWithRecommendation.has(printerId)) continue;
 
-    // Only process cycles that are waiting for a spool
-    if (cycle.readinessState !== 'waiting_for_spool') continue;
+    // Only process cycles that need a spool action
+    if (cycle.readinessState === 'ready') continue;
+    if (cycle.status !== 'planned') continue; // Only planned, not in_progress
 
     const printer = allPrinters.find(p => p.id === printerId);
     if (!printer) continue;
@@ -209,9 +210,11 @@ export const generateLoadRecommendations = (
       isSameColorMounted = normalizeColor(printer.mountedColor) === colorKey;
     }
     
-    // If same color is mounted, this cycle is actually ready (shouldn't be waiting_for_spool)
-    // This handles the case where sequential same-color cycles don't need action
-    if (isSameColorMounted) continue;
+    // If same color is mounted, no action needed - mark printer as handled and skip
+    if (isSameColorMounted) {
+      printersWithRecommendation.add(printerId); // No more recommendations for this printer
+      continue;
+    }
 
     // Find suitable spools from inventory using normalized color matching
     const suitableSpools = allSpools.filter(s =>
