@@ -241,6 +241,7 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
+      style={{ position: 'relative', zIndex: 50, pointerEvents: 'auto' }}
       className={cn(
         "w-full text-left p-3 rounded-lg border transition-colors select-none",
         recommendation.priority === 'high' && "border-warning/50 bg-warning/5",
@@ -304,7 +305,7 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
       </div>
       
       <div className="mt-2 text-[10px] opacity-50">
-        BUILD_STAMP: RA_CLICK_V8
+        BUILD_STAMP: RA_CLICK_V9
       </div>
     </div>
   );
