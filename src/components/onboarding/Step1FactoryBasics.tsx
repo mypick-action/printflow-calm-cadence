@@ -33,6 +33,17 @@ export const Step1FactoryBasics: React.FC<Step1Props> = ({ data, updateData }) =
   
   const handlePrinterCountChange = (delta: number) => {
     const newCount = Math.max(1, Math.min(20, data.printerCount + delta));
+    updatePrinterCount(newCount);
+  };
+
+  const handlePrinterCountInput = (value: string) => {
+    const parsed = parseInt(value, 10);
+    if (isNaN(parsed)) return;
+    const newCount = Math.max(1, Math.min(20, parsed));
+    updatePrinterCount(newCount);
+  };
+
+  const updatePrinterCount = (newCount: number) => {
     const newNames = Array.from({ length: newCount }, (_, i) => {
       const defaultName = language === 'he' ? `מדפסת ${i + 1}` : `Printer ${i + 1}`;
       return data.printerNames[i] || defaultName;
@@ -70,21 +81,30 @@ export const Step1FactoryBasics: React.FC<Step1Props> = ({ data, updateData }) =
             </Tooltip>
           </TooltipProvider>
         </div>
-        <div className="flex items-center gap-4" dir="ltr">
+        <div className="flex items-center gap-2" dir="ltr">
           <Button
             variant="outline"
             size="icon"
             onClick={() => handlePrinterCountChange(-1)}
             disabled={data.printerCount <= 1}
+            className="h-10 w-10"
           >
             <Minus className="w-4 h-4" />
           </Button>
-          <span className="text-2xl font-semibold w-12 text-center">{data.printerCount}</span>
+          <Input
+            type="number"
+            min={1}
+            max={20}
+            value={data.printerCount}
+            onChange={(e) => handlePrinterCountInput(e.target.value)}
+            className="w-20 text-center text-xl font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
           <Button
             variant="outline"
             size="icon"
             onClick={() => handlePrinterCountChange(1)}
             disabled={data.printerCount >= 20}
+            className="h-10 w-10"
           >
             <Plus className="w-4 h-4" />
           </Button>
