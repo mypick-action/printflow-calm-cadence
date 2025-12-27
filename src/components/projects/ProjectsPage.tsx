@@ -139,10 +139,6 @@ export const ProjectsPage: React.FC = () => {
     return project.status !== 'completed' && new Date(project.dueDate) < new Date();
   };
 
-  const isOverdue = (project: Project) => {
-    return project.status !== 'completed' && new Date(project.dueDate) < new Date();
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
