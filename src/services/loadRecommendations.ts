@@ -133,6 +133,8 @@ const calculateMaterialShortages = (): MaterialShortage[] => {
 
 /**
  * Generate load recommendations based on planned cycles that need spool loading
+ * CRITICAL: Only show the NEXT actionable load per printer (not future queue)
+ * This ensures the panel is an operational checklist, not a roadmap
  */
 export const generateLoadRecommendations = (
   cycles?: PlannedCycle[],
@@ -155,52 +157,34 @@ export const generateLoadRecommendations = (
   const cyclesWaitingForSpool = activeCycles.filter(c => c.readinessState === 'waiting_for_spool').length;
   const cyclesBlockedInventory = activeCycles.filter(c => c.readinessState === 'blocked_inventory').length;
 
-  // Group cycles needing spools by printer and color
-  const needsByPrinterColor = new Map<string, {
-    printerId: string;
-    printerName: string;
-    color: string;
-    gramsNeeded: number;
-    cycles: PlannedCycle[];
-    projectNames: Set<string>;
-  }>();
+  // CRITICAL FIX: For each printer, find only the FIRST cycle that needs a spool
+  // Sort by start time to ensure we get the earliest one
+  const sortedActiveCycles = [...activeCycles].sort((a, b) => {
+    const aTime = new Date(a.startTime).getTime();
+    const bTime = new Date(b.startTime).getTime();
+    return aTime - bTime;
+  });
 
-  for (const cycle of activeCycles) {
+  // Track which printers we've already added a recommendation for
+  const printersWithRecommendation = new Set<string>();
+  const recommendations: LoadRecommendation[] = [];
+
+  for (const cycle of sortedActiveCycles) {
+    // Skip if we already have a recommendation for this printer
+    if (printersWithRecommendation.has(cycle.printerId)) continue;
+
+    // Only process cycles that are waiting for a spool
     if (cycle.readinessState !== 'waiting_for_spool') continue;
 
     const printer = allPrinters.find(p => p.id === cycle.printerId);
     if (!printer) continue;
 
-    const color = cycle.requiredColor?.toLowerCase() || '';
-    const key = `${cycle.printerId}:${color}`;
+    const colorKey = normalizeColor(cycle.requiredColor);
+    const color = cycle.requiredColor || '';
 
-    const existing = needsByPrinterColor.get(key) || {
-      printerId: cycle.printerId,
-      printerName: printer.name,
-      color: cycle.requiredColor || '',
-      gramsNeeded: 0,
-      cycles: [],
-      projectNames: new Set<string>(),
-    };
-
-    existing.gramsNeeded += cycle.requiredGrams || cycle.gramsPlanned;
-    existing.cycles.push(cycle);
-
-    const project = allProjects.find(p => p.id === cycle.projectId);
-    if (project) {
-      existing.projectNames.add(project.name);
-    }
-
-    needsByPrinterColor.set(key, existing);
-  }
-
-  // Generate load recommendations
-  const recommendations: LoadRecommendation[] = [];
-
-  for (const [, need] of needsByPrinterColor) {
-    // Find suitable spools from inventory
+    // Find suitable spools from inventory using normalized color matching
     const suitableSpools = allSpools.filter(s =>
-      s.color.toLowerCase() === need.color.toLowerCase() &&
+      normalizeColor(s.color) === colorKey &&
       s.state !== 'empty' &&
       s.location !== 'printer' && // Not already mounted
       s.gramsRemainingEst > 0
@@ -210,22 +194,28 @@ export const generateLoadRecommendations = (
     suitableSpools.sort((a, b) => b.gramsRemainingEst - a.gramsRemainingEst);
 
     const suggestedSpoolIds = suitableSpools.slice(0, 3).map(s => s.id);
-    const projectNamesArr = Array.from(need.projectNames);
+    
+    const project = allProjects.find(p => p.id === cycle.projectId);
+    const projectName = project?.name || 'Unknown';
 
+    // Create recommendation for just this ONE cycle (the next actionable one)
     recommendations.push({
       id: generateId(),
-      printerId: need.printerId,
-      printerName: need.printerName,
+      printerId: cycle.printerId,
+      printerName: printer.name,
       action: 'load_spool',
-      priority: need.cycles.length > 3 ? 'high' : need.cycles.length > 1 ? 'medium' : 'low',
-      color: need.color,
-      gramsNeeded: need.gramsNeeded,
+      priority: 'high', // First cycle is always high priority
+      color,
+      gramsNeeded: cycle.requiredGrams || cycle.gramsPlanned,
       suggestedSpoolIds,
-      affectedCycleIds: need.cycles.map(c => c.id),
-      affectedProjectNames: projectNamesArr,
-      message: `טען גליל ${need.color} על ${need.printerName} (נדרש ${Math.ceil(need.gramsNeeded)}g עבור ${need.cycles.length} מחזורים)`,
-      messageEn: `Load ${need.color} spool on ${need.printerName} (need ${Math.ceil(need.gramsNeeded)}g for ${need.cycles.length} cycles)`,
+      affectedCycleIds: [cycle.id], // Only this cycle
+      affectedProjectNames: [projectName],
+      message: `טען גליל ${color} על ${printer.name} (${projectName})`,
+      messageEn: `Load ${color} spool on ${printer.name} (${projectName})`,
     });
+
+    // Mark this printer as having a recommendation - no more for this printer
+    printersWithRecommendation.add(cycle.printerId);
   }
 
   // Sort recommendations by priority
