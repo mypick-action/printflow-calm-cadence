@@ -115,7 +115,6 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
         updatePrinter(p.id, {
           mountedSpoolId: null,
           mountedColor: undefined,
-          mountedEstimate: undefined,
           amsSlotStates: p.hasAMS ? [] : undefined,
         });
       });
@@ -195,11 +194,10 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
           currentColor: amsSlotStates[0]?.color,
         });
       } else {
-        // Save single spool state
+        // Save single spool state - v2: require spoolId
         updatePrinter(printerId, {
           mountedSpoolId: state.spoolId || null,
           mountedColor: state.color || undefined,
-          mountedEstimate: state.estimate,
           currentColor: state.color || undefined,
         });
       }

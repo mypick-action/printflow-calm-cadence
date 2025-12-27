@@ -50,15 +50,17 @@ export interface AMSModes {
   multiColor: boolean; // Multi-color printing
 }
 
-// Estimate of how much filament is left on a mounted spool
+// DEPRECATED: FilamentEstimate removed in v2 - inventory grams is single source of truth
+// Kept for backward compatibility during migration, will be removed from data
 export type FilamentEstimate = 'unknown' | 'low' | 'medium' | 'high';
 
 // AMS slot state for loaded spools tracking
+// NOTE: In v2, spoolId is REQUIRED for execution. color alone = needs_spool state.
 export interface AMSSlotState {
   slotIndex: number;
-  spoolId?: string | null; // null if user just picked color without spool
-  color?: string; // direct color selection if no spoolId
-  estimate: FilamentEstimate;
+  spoolId?: string | null; // Required for "ready" state - must reference inventory spool
+  color?: string; // Derived from spool, or legacy color-only (needs migration)
+  // estimate field REMOVED in v2 - use spool.gramsRemainingEst instead
 }
 
 export interface Printer {
@@ -79,9 +81,10 @@ export interface Printer {
   amsMode?: 'backup_same_color' | 'multi_color';
   maxSpoolWeight?: number; // max spool size printer supports (1000, 2000, 5000g)
   // Loaded spools state (for non-AMS printers)
-  mountedSpoolId?: string | null;
-  mountedColor?: string; // color if user didn't pick specific spool
-  mountedEstimate?: FilamentEstimate;
+  // NOTE: In v2, mountedSpoolId is REQUIRED for "ready" state
+  mountedSpoolId?: string | null; // Required for ready - must reference inventory spool
+  mountedColor?: string; // Derived from mounted spool, or legacy value (needs migration)
+  // mountedEstimate field REMOVED in v2 - use spool.gramsRemainingEst instead
   // AMS slots state (for AMS printers)
   amsSlotStates?: AMSSlotState[];
 }
@@ -1247,76 +1250,94 @@ export const needsLoadedSpoolsSetup = (): boolean => {
 };
 
 /**
- * Mount a spool on a printer (helper function for future integration)
+ * Mount a spool on a printer from inventory
+ * In v2, spoolId is REQUIRED - we don't support color-only mounting anymore
+ * @param printerId - The printer to mount on
+ * @param spoolId - REQUIRED: The spool ID from inventory
  */
 export const mountSpool = (
   printerId: string, 
-  spoolId: string | null, 
-  color: string,
-  estimate: FilamentEstimate
+  spoolId: string
 ): Printer | undefined => {
   const printer = getPrinter(printerId);
   if (!printer) return undefined;
   
   if (printer.hasAMS) {
-    // For AMS, this would update a specific slot - not implemented here
     console.warn('Use updateAMSSlot for AMS printers');
     return printer;
   }
   
-  // Update spool location if we have a spoolId
-  if (spoolId) {
-    const spools = getSpools();
-    // First, unmount any spool currently on this printer
-    spools.forEach(s => {
-      if (s.assignedPrinterId === printerId && s.location === 'printer') {
-        updateSpool(s.id, { location: 'stock', assignedPrinterId: undefined }, true);
-      }
-    });
-    // Mount the new spool
-    updateSpool(spoolId, { location: 'printer', assignedPrinterId: printerId }, true);
+  // Get the spool to derive color
+  const spool = getSpools().find(s => s.id === spoolId);
+  if (!spool) {
+    console.error(`Spool ${spoolId} not found in inventory`);
+    return undefined;
   }
   
+  // First, unmount any spool currently on this printer
+  const allSpools = getSpools();
+  allSpools.forEach(s => {
+    if (s.assignedPrinterId === printerId && s.location === 'printer') {
+      updateSpool(s.id, { location: 'stock', assignedPrinterId: undefined }, true);
+    }
+  });
+  
+  // Mount the new spool
+  updateSpool(spoolId, { location: 'printer', assignedPrinterId: printerId }, true);
+  
+  // Update printer - color derived from spool
   return updatePrinter(printerId, {
     mountedSpoolId: spoolId,
-    mountedColor: color,
-    mountedEstimate: estimate,
-    currentColor: color,
+    mountedColor: spool.color, // Derived from spool
+    currentColor: spool.color,
   });
 };
 
 /**
  * Update AMS slot state
+ * In v2, spoolId is REQUIRED - we don't support color-only mounting anymore
+ * @param printerId - The printer to update
+ * @param slotIndex - The AMS slot index
+ * @param spoolId - REQUIRED: The spool ID from inventory
  */
 export const updateAMSSlot = (
   printerId: string,
   slotIndex: number,
-  spoolId: string | null,
-  color: string,
-  estimate: FilamentEstimate
+  spoolId: string
 ): Printer | undefined => {
   const printer = getPrinter(printerId);
   if (!printer || !printer.hasAMS) return undefined;
   
+  // Get the spool to derive color
+  const spool = getSpools().find(s => s.id === spoolId);
+  if (!spool) {
+    console.error(`Spool ${spoolId} not found in inventory`);
+    return undefined;
+  }
+  
   const currentSlots = printer.amsSlotStates || [];
   const slotExists = currentSlots.findIndex(s => s.slotIndex === slotIndex);
+  
+  const newSlotData: AMSSlotState = { 
+    slotIndex, 
+    spoolId, 
+    color: spool.color 
+  };
   
   let newSlots: AMSSlotState[];
   if (slotExists >= 0) {
     newSlots = [...currentSlots];
-    newSlots[slotExists] = { slotIndex, spoolId, color, estimate };
+    newSlots[slotExists] = newSlotData;
   } else {
-    newSlots = [...currentSlots, { slotIndex, spoolId, color, estimate }];
+    newSlots = [...currentSlots, newSlotData];
   }
   
-  // Update spool location if we have a spoolId
-  if (spoolId) {
-    updateSpool(spoolId, { 
-      location: 'ams', 
-      assignedPrinterId: printerId,
-      amsSlotIndex: slotIndex 
-    }, true);
-  }
+  // Update spool location
+  updateSpool(spoolId, { 
+    location: 'ams', 
+    assignedPrinterId: printerId,
+    amsSlotIndex: slotIndex 
+  }, true);
   
   return updatePrinter(printerId, { amsSlotStates: newSlots });
 };
@@ -1333,8 +1354,7 @@ export const clearPrinterMountedState = (printerId: string): Printer | undefined
   } else {
     return updatePrinter(printerId, { 
       mountedSpoolId: null, 
-      mountedColor: undefined, 
-      mountedEstimate: undefined 
+      mountedColor: undefined,
     });
   }
 };
