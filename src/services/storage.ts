@@ -336,6 +336,9 @@ const generateId = (): string => {
 const getItem = <T>(key: string, defaultValue: T): T => {
   try {
     const item = localStorage.getItem(key);
+    if (key === KEYS.PLANNED_CYCLES) {
+      console.log(`[storage] getItem(${key}) from origin: ${window.location.origin}, found: ${item ? JSON.parse(item).length : 0} items`);
+    }
     return item ? JSON.parse(item) : defaultValue;
   } catch {
     return defaultValue;
@@ -343,6 +346,9 @@ const getItem = <T>(key: string, defaultValue: T): T => {
 };
 
 const setItem = <T>(key: string, value: T): void => {
+  if (key === KEYS.PLANNED_CYCLES) {
+    console.log(`[storage] setItem(${key}) on origin: ${window.location.origin}, writing: ${Array.isArray(value) ? value.length : 'N/A'} items`);
+  }
   localStorage.setItem(key, JSON.stringify(value));
 };
 
