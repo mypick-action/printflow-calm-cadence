@@ -150,8 +150,13 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     missingData.push({ type: 'printers', message: 'אין מדפסות פעילות', messageEn: 'No active printers' });
   }
   
-  // Get in-progress projects only
-  const activeProjects = allProjects.filter(p => p.status === 'in_progress');
+  // Get projects that are either in_progress OR pending with planned cycles
+  // This ensures we show projects that are scheduled for execution
+  const projectIdsWithCycles = new Set(plannedCycles.map(c => c.projectId));
+  const activeProjects = allProjects.filter(p => 
+    p.status === 'in_progress' || 
+    (p.status === 'pending' && projectIdsWithCycles.has(p.id))
+  );
   
   // Build product lookup
   const productMap = new Map<string, Product>();
