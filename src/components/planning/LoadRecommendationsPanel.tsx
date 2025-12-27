@@ -295,6 +295,10 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
           <span> • {recommendation.affectedProjectNames.slice(0, 2).join(', ')}</span>
         )}
       </div>
+      
+      <div className="mt-2 text-[10px] opacity-50">
+        BUILD_STAMP: RA_CLICK_V7
+      </div>
     </button>
   );
 };
