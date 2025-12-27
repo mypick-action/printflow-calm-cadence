@@ -22,7 +22,7 @@ import {
 import { toast } from '@/hooks/use-toast';
 import { 
   getPrinters, 
-  getActiveCycleForPrinter, 
+  getPlannedCycles,
   getProject,
   getProduct,
   logCycleWithMaterialConsumption,
@@ -80,9 +80,24 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     setPrinters(allPrinters);
     
     // Build printer cycles map with project info
+    // FIXED: Show cycles that are in_progress OR the next scheduled/ready cycle per printer
+    // This allows completing cycles outside working hours (overnight printing)
     const cyclesMap: Record<string, CycleWithProject | null> = {};
+    const allCycles = getPlannedCycles();
+    
     allPrinters.forEach(printer => {
-      const cycle = getActiveCycleForPrinter(printer.id);
+      // First check for in_progress cycles (highest priority)
+      let cycle = allCycles.find(c => c.printerId === printer.id && c.status === 'in_progress');
+      
+      // If no in_progress cycle, find the next planned cycle for this printer
+      // This allows users to start/complete cycles even outside normal working hours
+      if (!cycle) {
+        const pendingCycles = allCycles
+          .filter(c => c.printerId === printer.id && c.status === 'planned')
+          .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+        cycle = pendingCycles[0];
+      }
+      
       if (cycle) {
         const project = getProject(cycle.projectId);
         const product = project ? getProduct(project.productId) : null;
