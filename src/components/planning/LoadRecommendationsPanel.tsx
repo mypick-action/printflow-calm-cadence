@@ -145,7 +145,10 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
                   key={rec.id} 
                   recommendation={rec} 
                   language={language}
-                  onClick={() => navigateTo('printers', { openPrinterId: rec.printerId, focusField: 'mountColor' })}
+                  onClick={() => {
+                    console.log('[LoadRecommendationsPanel] Card clicked:', rec.printerId);
+                    navigateTo('printers', { openPrinterId: rec.printerId, focusField: 'mountColor' });
+                  }}
                 />
               ))}
             </div>
