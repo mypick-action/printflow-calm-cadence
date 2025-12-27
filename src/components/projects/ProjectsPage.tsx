@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,95 +30,64 @@ import {
 } from '@/components/ui/select';
 import { Plus, FolderKanban, Calendar, Package, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
-
-export interface Project {
-  id: string;
-  name: string;
-  product: string;
-  quantityTarget: number;
-  quantityGood: number;
-  quantityScrap: number;
-  dueDate: Date;
-  urgency: 'normal' | 'urgent' | 'critical';
-  status: 'pending' | 'in_progress' | 'completed' | 'on_hold';
-  color: string;
-}
-
-// Mock products for selection
-const mockProducts = [
-  { id: '1', name: 'Phone Stand', gramsPerUnit: 45 },
-  { id: '2', name: 'Cable Organizer', gramsPerUnit: 12 },
-  { id: '3', name: 'Pen Holder', gramsPerUnit: 85 },
-  { id: '4', name: 'Wall Hook', gramsPerUnit: 18 },
-  { id: '5', name: 'Coaster Set', gramsPerUnit: 32 },
-];
-
-// Mock initial projects
-const initialProjects: Project[] = [
-  {
-    id: '1',
-    name: 'Phone Stands - Batch A',
-    product: 'Phone Stand',
-    quantityTarget: 100,
-    quantityGood: 65,
-    quantityScrap: 3,
-    dueDate: new Date('2025-01-02'),
-    urgency: 'normal',
-    status: 'in_progress',
-    color: 'Black',
-  },
-  {
-    id: '2',
-    name: 'Cable Organizers - Client B',
-    product: 'Cable Organizer',
-    quantityTarget: 250,
-    quantityGood: 180,
-    quantityScrap: 8,
-    dueDate: new Date('2024-12-30'),
-    urgency: 'urgent',
-    status: 'in_progress',
-    color: 'White',
-  },
-  {
-    id: '3',
-    name: 'Pen Holders - Office Supply',
-    product: 'Pen Holder',
-    quantityTarget: 50,
-    quantityGood: 50,
-    quantityScrap: 2,
-    dueDate: new Date('2024-12-25'),
-    urgency: 'normal',
-    status: 'completed',
-    color: 'Gray',
-  },
-  {
-    id: '4',
-    name: 'Wall Hooks - Custom Order',
-    product: 'Wall Hook',
-    quantityTarget: 200,
-    quantityGood: 0,
-    quantityScrap: 0,
-    dueDate: new Date('2025-01-15'),
-    urgency: 'critical',
-    status: 'pending',
-    color: 'Blue',
-  },
-];
+import { 
+  getProjects, 
+  getProducts, 
+  createProject, 
+  Project, 
+  Product,
+  getFactorySettings 
+} from '@/services/storage';
 
 const availableColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
 
 export const ProjectsPage: React.FC = () => {
-  const { t, language } = useLanguage();
-  const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const { language } = useLanguage();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newProject, setNewProject] = useState({
     name: '',
-    product: '',
+    productId: '',
     quantityTarget: 100,
     dueDate: '',
     urgency: 'normal' as 'normal' | 'urgent' | 'critical',
     color: 'Black',
   });
+
+  useEffect(() => {
+    setProjects(getProjects());
+    setProducts(getProducts());
+  }, []);
+
+  const handleAddProject = () => {
+    if (!newProject.name || !newProject.productId || !newProject.dueDate) return;
+    
+    const product = products.find(p => p.id === newProject.productId);
+    if (!product) return;
+    
+    createProject({
+      name: newProject.name,
+      productId: newProject.productId,
+      productName: product.name,
+      quantityTarget: newProject.quantityTarget,
+      dueDate: newProject.dueDate,
+      urgency: newProject.urgency,
+      status: 'pending',
+      color: newProject.color,
+    });
+    
+    setProjects(getProjects());
+    setDialogOpen(false);
+    setNewProject({
+      name: '',
+      productId: '',
+      quantityTarget: 100,
+      dueDate: '',
+      urgency: 'normal',
+      color: 'Black',
+    });
+  };
 
   const getStatusBadge = (status: Project['status']) => {
     const statusConfig = {
@@ -166,32 +135,8 @@ export const ProjectsPage: React.FC = () => {
     return Math.round((project.quantityGood / project.quantityTarget) * 100);
   };
 
-  const handleAddProject = () => {
-    if (!newProject.name || !newProject.product || !newProject.dueDate) return;
-    
-    const project: Project = {
-      id: Date.now().toString(),
-      name: newProject.name,
-      product: newProject.product,
-      quantityTarget: newProject.quantityTarget,
-      quantityGood: 0,
-      quantityScrap: 0,
-      dueDate: new Date(newProject.dueDate),
-      urgency: newProject.urgency,
-      status: 'pending',
-      color: newProject.color,
-    };
-    
-    setProjects([...projects, project]);
-    setDialogOpen(false);
-    setNewProject({
-      name: '',
-      product: '',
-      quantityTarget: 100,
-      dueDate: '',
-      urgency: 'normal',
-      color: 'Black',
-    });
+  const isOverdue = (project: Project) => {
+    return project.status !== 'completed' && new Date(project.dueDate) < new Date();
   };
 
   const isOverdue = (project: Project) => {
@@ -247,15 +192,15 @@ export const ProjectsPage: React.FC = () => {
               <div className="space-y-2">
                 <Label>{language === 'he' ? 'מוצר' : 'Product'}</Label>
                 <Select 
-                  value={newProject.product} 
-                  onValueChange={(value) => setNewProject({ ...newProject, product: value })}
+                  value={newProject.productId} 
+                  onValueChange={(value) => setNewProject({ ...newProject, productId: value })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder={language === 'he' ? 'בחרו מוצר' : 'Select product'} />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockProducts.map((product) => (
-                      <SelectItem key={product.id} value={product.name}>
+                    {products.map((product) => (
+                      <SelectItem key={product.id} value={product.id}>
                         {product.name} ({product.gramsPerUnit}g)
                       </SelectItem>
                     ))}
@@ -339,7 +284,7 @@ export const ProjectsPage: React.FC = () => {
               <Button 
                 onClick={handleAddProject} 
                 className="w-full"
-                disabled={!newProject.name || !newProject.product || !newProject.dueDate}
+                disabled={!newProject.name || !newProject.productId || !newProject.dueDate}
               >
                 {language === 'he' ? 'הוסף פרויקט' : 'Add Project'}
               </Button>
@@ -425,7 +370,7 @@ export const ProjectsPage: React.FC = () => {
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>{project.product}</TableCell>
+                    <TableCell>{project.productName}</TableCell>
                     <TableCell>
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-sm">

@@ -5,47 +5,71 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { Dashboard } from '@/components/dashboard/Dashboard';
 import { ProjectsPage } from '@/components/projects/ProjectsPage';
 import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
+import { QuoteCheckPage } from '@/components/quote-check/QuoteCheckPage';
+import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Construction } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Construction, AlertTriangle } from 'lucide-react';
+import { isOnboardingComplete, completeOnboarding, saveFactorySettings } from '@/services/storage';
 
 const PrintFlowApp: React.FC = () => {
   const { language } = useLanguage();
-  const [onboardingComplete, setOnboardingComplete] = useState(false);
+  const [onboardingDone, setOnboardingDone] = useState(false);
   const [factoryData, setFactoryData] = useState<OnboardingData | null>(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
+  const [reportIssueOpen, setReportIssueOpen] = useState(false);
   
-  // Check for saved onboarding data
   useEffect(() => {
-    const saved = localStorage.getItem('printflow-onboarding');
-    if (saved) {
-      try {
-        const data = JSON.parse(saved);
-        setFactoryData(data);
-        setOnboardingComplete(true);
-      } catch (e) {
-        console.error('Failed to parse saved data');
-      }
+    if (isOnboardingComplete()) {
+      setOnboardingDone(true);
     }
   }, []);
   
   const handleOnboardingComplete = (data: OnboardingData) => {
     setFactoryData(data);
-    setOnboardingComplete(true);
-    localStorage.setItem('printflow-onboarding', JSON.stringify(data));
+    setOnboardingDone(true);
+    saveFactorySettings({
+      printerCount: data.printerCount,
+      workdays: data.workdays,
+      startTime: data.startTime,
+      endTime: data.endTime,
+      afterHoursBehavior: data.afterHoursBehavior,
+      colors: data.colors,
+      standardSpoolWeight: data.standardSpoolWeight,
+      deliveryDays: data.deliveryDays,
+      transitionMinutes: 10,
+    });
+    completeOnboarding();
   };
   
-  if (!onboardingComplete) {
+  if (!onboardingDone) {
     return <OnboardingWizard onComplete={handleOnboardingComplete} />;
   }
   
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard printerNames={factoryData?.printerNames || []} />;
+        return (
+          <>
+            <Dashboard printerNames={factoryData?.printerNames || []} />
+            <div className="fixed bottom-6 right-6 z-50">
+              <Button 
+                onClick={() => setReportIssueOpen(true)}
+                className="gap-2 shadow-lg"
+                variant="destructive"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                {language === 'he' ? 'דווח על בעיה' : 'Report Issue'}
+              </Button>
+            </div>
+          </>
+        );
       case 'projects':
         return <ProjectsPage />;
       case 'endCycleLog':
         return <EndCycleLog />;
+      case 'quoteCheck':
+        return <QuoteCheckPage />;
       default:
         return (
           <Card variant="elevated">
@@ -70,6 +94,10 @@ const PrintFlowApp: React.FC = () => {
   return (
     <AppLayout currentPage={currentPage} onNavigate={setCurrentPage}>
       {renderPage()}
+      <ReportIssueFlow 
+        isOpen={reportIssueOpen} 
+        onClose={() => setReportIssueOpen(false)} 
+      />
     </AppLayout>
   );
 };
