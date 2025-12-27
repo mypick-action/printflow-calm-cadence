@@ -205,14 +205,19 @@ export const generateLoadRecommendations = (
     let isSameColorMounted = false;
     if (printer.hasAMS && printer.amsSlotStates && printer.amsSlotStates.length > 0) {
       // For AMS: check if any slot has the required color (with or without specific spool)
-      isSameColorMounted = printer.amsSlotStates.some(s => 
-        normalizeColor(s.color) === colorKey
-      );
+      isSameColorMounted = printer.amsSlotStates.some(s => {
+        if (!s.color) return false;
+        return normalizeColor(s.color) === colorKey;
+      });
     } else {
       // For non-AMS: check mountedColor OR currentColor
       const printerColor = printer.mountedColor || printer.currentColor;
-      isSameColorMounted = printerColor ? normalizeColor(printerColor) === colorKey : false;
+      if (printerColor) {
+        isSameColorMounted = normalizeColor(printerColor) === colorKey;
+      }
     }
+    
+    console.log(`[LoadRec] Printer ${printer.name}: requiredColor=${colorKey}, hasAMS=${printer.hasAMS}, amsSlots=${JSON.stringify(printer.amsSlotStates)}, mountedColor=${printer.mountedColor}, currentColor=${printer.currentColor}, isSameColorMounted=${isSameColorMounted}`);
     
     // If same color is mounted, no action needed - mark printer as handled and skip
     if (isSameColorMounted) {
