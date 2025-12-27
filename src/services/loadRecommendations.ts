@@ -15,6 +15,7 @@ import {
   getPrinters,
   getProjects,
   getProducts,
+  getFactorySettings,
 } from './storage';
 import { SAFETY_THRESHOLD_GRAMS } from './materialStatus';
 import { normalizeColor } from './colorNormalization';
@@ -225,6 +226,23 @@ export const generateLoadRecommendations = (
       continue;
     }
 
+    // Find ALL sequential same-color cycles for this printer
+    const sequentialSameColorCycles: PlannedCycle[] = [cycle];
+    let totalGramsForSequence = cycle.requiredGrams || cycle.gramsPlanned;
+    
+    // Look for following cycles with the same color on this printer
+    for (const otherCycle of sortedActiveCycles) {
+      if (otherCycle.printerId !== printerId) continue;
+      if (otherCycle.id === cycle.id) continue;
+      if (otherCycle.status !== 'planned') continue;
+      
+      const otherColorKey = normalizeColor(otherCycle.requiredColor);
+      if (otherColorKey !== colorKey) break; // Stop at first different color
+      
+      sequentialSameColorCycles.push(otherCycle);
+      totalGramsForSequence += otherCycle.requiredGrams || otherCycle.gramsPlanned;
+    }
+
     // Find suitable spools from inventory using normalized color matching
     const suitableSpools = allSpools.filter(s =>
       normalizeColor(s.color) === colorKey &&
@@ -233,15 +251,44 @@ export const generateLoadRecommendations = (
       s.gramsRemainingEst > 0
     );
 
-    // Sort by grams remaining (prefer fuller spools)
+    // Sort by grams remaining (prefer fuller spools for sorting)
     suitableSpools.sort((a, b) => b.gramsRemainingEst - a.gramsRemainingEst);
 
-    const suggestedSpoolIds = suitableSpools.slice(0, 3).map(s => s.id);
+    // Analyze partial vs full spool recommendation
+    const currentCycleGrams = cycle.requiredGrams || cycle.gramsPlanned;
+    const partialSpools = suitableSpools.filter(s => s.gramsRemainingEst < 900); // Less than ~90% full
+    const fullSpools = suitableSpools.filter(s => s.gramsRemainingEst >= 900);
+    
+    // Can a partial spool cover just this job?
+    const partialThatCoversJob = partialSpools.find(s => s.gramsRemainingEst >= currentCycleGrams + 50); // +50g safety margin
+    
+    let partialSpoolRecommendation: 'use_partial' | 'use_full' | 'either' = 'either';
+    let canUsePartialSpool = false;
+    
+    if (partialThatCoversJob) {
+      canUsePartialSpool = true;
+      // If there's only 1 cycle or sequence is short, prefer partial to finish it
+      if (sequentialSameColorCycles.length === 1 || totalGramsForSequence <= partialThatCoversJob.gramsRemainingEst) {
+        partialSpoolRecommendation = 'use_partial';
+      } else {
+        partialSpoolRecommendation = 'either'; // User can decide based on whether they'll be around to swap
+      }
+    } else if (fullSpools.length > 0) {
+      partialSpoolRecommendation = 'use_full';
+    }
+
+    // Prioritize suggestion order based on recommendation
+    let suggestedSpoolIds: string[];
+    if (partialSpoolRecommendation === 'use_partial' && partialThatCoversJob) {
+      suggestedSpoolIds = [partialThatCoversJob.id, ...suitableSpools.filter(s => s.id !== partialThatCoversJob.id).slice(0, 2).map(s => s.id)];
+    } else {
+      suggestedSpoolIds = suitableSpools.slice(0, 3).map(s => s.id);
+    }
     
     const project = allProjects.find(p => p.id === cycle.projectId);
     const projectName = project?.name || 'Unknown';
 
-    // Create recommendation for just this ONE cycle (the next actionable one)
+    // Create recommendation with enhanced info
     recommendations.push({
       id: generateId(),
       printerId: cycle.printerId,
@@ -249,7 +296,11 @@ export const generateLoadRecommendations = (
       action: 'load_spool',
       priority: 'high', // First cycle is always high priority
       color,
-      gramsNeeded: cycle.requiredGrams || cycle.gramsPlanned,
+      gramsNeeded: currentCycleGrams,
+      totalGramsForSequence,
+      sequentialCyclesCount: sequentialSameColorCycles.length,
+      canUsePartialSpool,
+      partialSpoolRecommendation,
       suggestedSpoolIds,
       affectedCycleIds: [cycle.id], // Only this cycle
       affectedProjectNames: [projectName],
