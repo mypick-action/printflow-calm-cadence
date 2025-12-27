@@ -300,7 +300,8 @@ export const ProjectsPage: React.FC = () => {
   };
 
   const handleOpenProductEditor = () => {
-    setProductEditorInitialName(productSearchText);
+    // Use project name as default for new product, fallback to search text
+    setProductEditorInitialName(newProject.name || productSearchText);
     setProductEditorOpen(true);
   };
 

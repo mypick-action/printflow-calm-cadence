@@ -63,7 +63,7 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
   });
   
   const [newPreset, setNewPreset] = useState<Partial<PlatePreset>>({
-    name: '',
+    name: initialName || '',
     unitsPerPlate: 8,
     cycleHours: 2,
     riskLevel: 'low',
@@ -89,6 +89,11 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
           gramsPerUnit: 50,
           platePresets: [],
         });
+        // Also set the initial preset name to the project name
+        setNewPreset(prev => ({
+          ...prev,
+          name: initialName || '',
+        }));
       }
       setErrors({});
     }
