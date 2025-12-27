@@ -175,8 +175,8 @@ export const LoadSpoolDialog: React.FC<LoadSpoolDialogProps> = ({
   if (!printer) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md z-[100]">
+    <Dialog open={open} onOpenChange={onOpenChange} modal>
+      <DialogContent className="sm:max-w-md z-[200] fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Package className="w-5 h-5 text-primary" />
@@ -219,7 +219,7 @@ export const LoadSpoolDialog: React.FC<LoadSpoolDialogProps> = ({
               <SelectTrigger>
                 <SelectValue placeholder={language === 'he' ? 'בחר צבע' : 'Select color'} />
               </SelectTrigger>
-              <SelectContent className="bg-popover z-[150]">
+              <SelectContent className="bg-popover z-[250]">
                 {availableColors.filter(c => c && c.trim()).map(c => (
                   <SelectItem key={c} value={c}>
                     <div className="flex items-center gap-2">
@@ -241,7 +241,7 @@ export const LoadSpoolDialog: React.FC<LoadSpoolDialogProps> = ({
                   <SelectTrigger>
                     <SelectValue placeholder={language === 'he' ? 'בחר גליל' : 'Select spool'} />
                   </SelectTrigger>
-                  <SelectContent className="bg-popover z-[150]">
+                  <SelectContent className="bg-popover z-[250]">
                     {getAvailableSpools().map(s => (
                       <SelectItem key={s.id} value={s.id}>
                         <div className="flex items-center gap-2">
