@@ -301,21 +301,9 @@ const RecommendationCard: React.FC<{ recommendation: LoadRecommendation; languag
       <div className="mt-2 flex items-center gap-2">
         <SpoolIcon color={getSpoolColor(recommendation.color)} size={16} />
         <span className="text-sm">
-          {language === 'he' ? 'טען גליל ' : 'Load '}
-          <span 
-            className="font-semibold" 
-            style={{ color: getSpoolColor(recommendation.color) }}
-          >
-            {recommendation.color}
-          </span>
           {language === 'he' 
-            ? ` על ${recommendation.printerName}` 
-            : ` on ${recommendation.printerName}`}
-          {recommendation.affectedProjectNames.length > 0 && (
-            <span className="text-muted-foreground">
-              {` (${recommendation.affectedProjectNames[0]})`}
-            </span>
-          )}
+            ? recommendation.message 
+            : recommendation.messageEn}
         </span>
       </div>
 
