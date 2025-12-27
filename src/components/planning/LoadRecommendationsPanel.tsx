@@ -19,22 +19,19 @@ import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { generateLoadRecommendations, LoadRecommendationsResult, getActionSummary } from '@/services/loadRecommendations';
 import { getSpools, getPrinters, LoadRecommendation, MaterialShortage, Printer } from '@/services/storage';
 import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
-import { LoadSpoolDialog } from '@/components/printers/LoadSpoolDialog';
 
 interface LoadRecommendationsPanelProps {
   onRefresh?: () => void;
+  onLoadSpoolRequest?: (printer: Printer, color: string, suggestedSpoolIds: string[]) => void;
 }
 
-export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> = ({ onRefresh }) => {
+export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> = ({ 
+  onRefresh,
+  onLoadSpoolRequest,
+}) => {
   const { language } = useLanguage();
   const [result, setResult] = useState<LoadRecommendationsResult | null>(null);
   const [expanded, setExpanded] = useState(true);
-  
-  // Load spool dialog state
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedPrinter, setSelectedPrinter] = useState<Printer | null>(null);
-  const [selectedColor, setSelectedColor] = useState<string>('');
-  const [suggestedSpoolIds, setSuggestedSpoolIds] = useState<string[]>([]);
 
   const refreshRecommendations = useCallback(() => {
     const recommendations = generateLoadRecommendations();
@@ -46,16 +43,9 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
   const handleRecommendationClick = (recommendation: LoadRecommendation) => {
     const printers = getPrinters();
     const printer = printers.find(p => p.id === recommendation.printerId);
-    if (printer) {
-      setSelectedPrinter(printer);
-      setSelectedColor(recommendation.color);
-      setSuggestedSpoolIds(recommendation.suggestedSpoolIds);
-      setDialogOpen(true);
+    if (printer && onLoadSpoolRequest) {
+      onLoadSpoolRequest(printer, recommendation.color, recommendation.suggestedSpoolIds);
     }
-  };
-
-  const handleDialogComplete = () => {
-    refreshRecommendations();
   };
 
   // Refresh on mount
@@ -96,7 +86,6 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
   }
 
   return (
-    <>
     <Card variant="elevated" className="border-warning/30">
       <CardHeader className="p-4 pb-2">
         <div className="flex items-center justify-between">
@@ -200,17 +189,6 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
         </CardContent>
       )}
     </Card>
-    
-    {/* Load Spool Dialog */}
-    <LoadSpoolDialog
-      open={dialogOpen}
-      onOpenChange={setDialogOpen}
-      printer={selectedPrinter}
-      preSelectedColor={selectedColor}
-      suggestedSpoolIds={suggestedSpoolIds}
-      onComplete={handleDialogComplete}
-    />
-    </>
   );
 };
 
