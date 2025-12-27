@@ -1250,6 +1250,47 @@ export const needsLoadedSpoolsSetup = (): boolean => {
 };
 
 /**
+ * Update cycle readiness states after a spool is mounted.
+ * This directly marks cycles as 'ready' if they match the mounted color/printer,
+ * then promotes any pending projects that now have ready cycles.
+ * 
+ * This avoids requiring a full replan just for readiness state updates.
+ */
+export const updateCycleReadinessAfterMount = (printerId: string, mountedColor: string): void => {
+  const cycles = getPlannedCycles();
+  const colorKey = mountedColor.toLowerCase();
+  let updatedCount = 0;
+  
+  const updatedCycles = cycles.map(cycle => {
+    // Only update cycles for this printer that are waiting for a spool
+    if (cycle.printerId !== printerId) return cycle;
+    if (cycle.readinessState !== 'waiting_for_spool') return cycle;
+    if (cycle.status !== 'planned') return cycle;
+    
+    // Check if the mounted color matches what this cycle needs
+    const requiredColor = cycle.requiredColor?.toLowerCase();
+    if (requiredColor && requiredColor === colorKey) {
+      updatedCount++;
+      return {
+        ...cycle,
+        readinessState: 'ready' as const,
+        readinessDetails: undefined,
+      };
+    }
+    
+    return cycle;
+  });
+  
+  if (updatedCount > 0) {
+    setItem(KEYS.PLANNED_CYCLES, updatedCycles);
+    console.log(`[CycleReadiness] Updated ${updatedCount} cycles to ready for printer ${printerId}`);
+    
+    // Now promote any pending projects that have ready cycles
+    promoteProjectsWithReadyCycles();
+  }
+};
+
+/**
  * Mount a spool on a printer from inventory
  * In v2, spoolId is REQUIRED - we don't support color-only mounting anymore
  * @param printerId - The printer to mount on
@@ -1286,11 +1327,16 @@ export const mountSpool = (
   updateSpool(spoolId, { location: 'printer', assignedPrinterId: printerId }, true);
   
   // Update printer - color derived from spool
-  return updatePrinter(printerId, {
+  const updatedPrinter = updatePrinter(printerId, {
     mountedSpoolId: spoolId,
     mountedColor: spool.color, // Derived from spool
     currentColor: spool.color,
   });
+  
+  // Update cycle readiness states and promote projects
+  updateCycleReadinessAfterMount(printerId, spool.color);
+  
+  return updatedPrinter;
 };
 
 /**
@@ -1339,7 +1385,12 @@ export const updateAMSSlot = (
     amsSlotIndex: slotIndex 
   }, true);
   
-  return updatePrinter(printerId, { amsSlotStates: newSlots });
+  const updatedPrinter = updatePrinter(printerId, { amsSlotStates: newSlots });
+  
+  // Update cycle readiness states and promote projects
+  updateCycleReadinessAfterMount(printerId, spool.color);
+  
+  return updatedPrinter;
 };
 
 /**
@@ -1605,6 +1656,63 @@ export const markCapacityChanged = (reason: string): void => {
 
 // Re-export planning recalculation functions from separate module to avoid circular deps
 export { recalculatePlan, triggerPlanningRecalculation } from './planningRecalculator';
+
+// ============= PROJECT STATUS PROMOTION =============
+
+/**
+ * Promotes projects from 'pending' to 'in_progress' when they have ready cycles.
+ * This ensures projects appear in execution views once planning has created
+ * executable cycles with mounted spools.
+ * 
+ * Rules:
+ * - Only promotes 'pending' projects
+ * - Requires at least one PlannedCycle with readinessState === 'ready'
+ * - Does NOT require startTime or running state
+ * 
+ * Returns the count of promoted projects.
+ */
+export const promoteProjectsWithReadyCycles = (): number => {
+  const projects = getProjects();
+  const plannedCycles = getPlannedCycles();
+  
+  let promotedCount = 0;
+  
+  for (const project of projects) {
+    if (project.status !== 'pending') continue;
+    
+    // Check if this project has any ready cycles
+    const hasReadyCycle = plannedCycles.some(
+      cycle => cycle.projectId === project.id && cycle.readinessState === 'ready'
+    );
+    
+    if (hasReadyCycle) {
+      updateProject(project.id, { status: 'in_progress' }, true); // skip auto-replan
+      promotedCount++;
+      console.log(`[ProjectPromotion] Promoted "${project.name}" to in_progress (has ready cycles)`);
+    }
+  }
+  
+  if (promotedCount > 0) {
+    console.log(`[ProjectPromotion] Total promoted: ${promotedCount} projects`);
+  }
+  
+  return promotedCount;
+};
+
+/**
+ * Gets all projects that have planned cycles (regardless of status).
+ * Use this for execution views that should show all schedulable work.
+ */
+export const getProjectsWithPlannedCycles = (): Project[] => {
+  const projects = getProjects();
+  const plannedCycles = getPlannedCycles();
+  
+  const projectIdsWithCycles = new Set(plannedCycles.map(c => c.projectId));
+  
+  return projects.filter(p => 
+    projectIdsWithCycles.has(p.id) && p.status !== 'completed'
+  );
+};
 
 // ============= RESET ALL DATA =============
 
