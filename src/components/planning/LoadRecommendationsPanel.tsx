@@ -225,6 +225,7 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    alert('CLICKED: ' + recommendation.printerName);
     console.log('[RecommendationCard] Navigating to printers for:', recommendation.printerId);
     onClick?.();
   };
