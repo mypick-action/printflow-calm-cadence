@@ -19,6 +19,7 @@ const translations: Record<Language, Record<string, string>> = {
     // Navigation
     'nav.dashboard': 'לוח בקרה',
     'nav.projects': 'פרויקטים',
+    'nav.products': 'מוצרים ופריסות',
     'nav.quoteCheck': 'בדיקת הצעה',
     'nav.planning': 'תכנון',
     'nav.inventory': 'מלאי',
@@ -140,6 +141,7 @@ const translations: Record<Language, Record<string, string>> = {
     // Navigation
     'nav.dashboard': 'Dashboard',
     'nav.projects': 'Projects',
+    'nav.products': 'Products & Presets',
     'nav.quoteCheck': 'Quote Check',
     'nav.planning': 'Planning',
     'nav.inventory': 'Inventory',
