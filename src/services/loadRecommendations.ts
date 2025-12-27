@@ -217,7 +217,7 @@ export const generateLoadRecommendations = (
       }
     }
     
-    console.log(`[LoadRec] Printer ${printer.name}: requiredColor=${colorKey}, hasAMS=${printer.hasAMS}, amsSlots=${JSON.stringify(printer.amsSlotStates)}, mountedColor=${printer.mountedColor}, currentColor=${printer.currentColor}, isSameColorMounted=${isSameColorMounted}`);
+    // Debug removed - issue was user expectation vs actual state
     
     // If same color is mounted, no action needed - mark printer as handled and skip
     if (isSameColorMounted) {
