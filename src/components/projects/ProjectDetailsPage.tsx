@@ -5,6 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +32,7 @@ import {
   FolderKanban,
   Timer,
   AlertCircle,
+  Pencil,
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { toast } from '@/hooks/use-toast';
@@ -37,6 +44,7 @@ import {
   getPlannedCycles,
   getPrinter,
   getPlanningMeta,
+  updateProject,
   Project,
   Product,
   PlannedCycle,
@@ -84,6 +92,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   const [reportIssueCycleId, setReportIssueCycleId] = useState<string | undefined>(undefined);
   const [recalculateOpen, setRecalculateOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [dueDatePopoverOpen, setDueDatePopoverOpen] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -95,6 +104,22 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
     if (proj) {
       const prod = getProduct(proj.productId);
       setProduct(prod || null);
+    }
+  };
+
+  const handleDueDateChange = (date: Date | undefined) => {
+    if (!date || !project) return;
+    
+    const newDueDate = format(date, 'yyyy-MM-dd');
+    const updated = updateProject(project.id, { dueDate: newDueDate });
+    
+    if (updated) {
+      setProject(updated);
+      setDueDatePopoverOpen(false);
+      toast({
+        title: language === 'he' ? 'תאריך יעד עודכן' : 'Due date updated',
+        description: format(date, 'dd/MM/yyyy'),
+      });
     }
   };
 
@@ -332,17 +357,32 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
               <p className="text-2xl font-bold text-primary">{remaining}</p>
             </div>
 
-            {/* Due Date */}
+            {/* Due Date - Editable */}
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">
                 {language === 'he' ? 'תאריך יעד' : 'Due Date'}
               </p>
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-muted-foreground" />
-                <span className={`font-medium ${daysRemaining < 0 ? 'text-error' : ''}`}>
-                  {format(parseISO(project.dueDate), 'dd/MM/yyyy')}
-                </span>
-              </div>
+              <Popover open={dueDatePopoverOpen} onOpenChange={setDueDatePopoverOpen}>
+                <PopoverTrigger asChild>
+                  <button 
+                    className={`flex items-center gap-2 p-1.5 -m-1.5 rounded-lg hover:bg-muted transition-colors group cursor-pointer ${daysRemaining < 0 ? 'text-error' : ''}`}
+                  >
+                    <Calendar className="w-4 h-4 text-muted-foreground group-hover:text-primary" />
+                    <span className="font-medium">
+                      {format(parseISO(project.dueDate), 'dd/MM/yyyy')}
+                    </span>
+                    <Pencil className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <CalendarComponent
+                    mode="single"
+                    selected={parseISO(project.dueDate)}
+                    onSelect={handleDueDateChange}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
               <p className={`text-xs ${daysRemaining < 0 ? 'text-error' : 'text-muted-foreground'}`}>
                 {daysRemaining < 0 
                   ? (language === 'he' ? `${Math.abs(daysRemaining)} ימים באיחור` : `${Math.abs(daysRemaining)} days overdue`)
