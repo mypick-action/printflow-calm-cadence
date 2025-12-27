@@ -3,6 +3,7 @@ import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext';
 import { OnboardingWizard, OnboardingData } from '@/components/onboarding/OnboardingWizard';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Dashboard } from '@/components/dashboard/Dashboard';
+import { ProjectsPage } from '@/components/projects/ProjectsPage';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Construction } from 'lucide-react';
 
@@ -40,6 +41,8 @@ const PrintFlowApp: React.FC = () => {
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard printerNames={factoryData?.printerNames || []} />;
+      case 'projects':
+        return <ProjectsPage />;
       default:
         return (
           <Card variant="elevated">
