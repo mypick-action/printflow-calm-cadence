@@ -12,6 +12,15 @@ import { WeeklySchedule, getDefaultWeeklySchedule } from '@/services/storage';
 
 export type AfterHoursBehavior = 'NONE' | 'ONE_CYCLE_END_OF_DAY' | 'FULL_AUTOMATION';
 
+export interface PrinterAMSConfig {
+  hasAMS: boolean;
+  amsSlots: number;
+  amsModes: {
+    backupSameColor: boolean;
+    multiColor: boolean;
+  };
+}
+
 export interface OnboardingData {
   printerCount: number;
   printerNames: string[];
@@ -20,7 +29,8 @@ export interface OnboardingData {
   colors: string[];
   spoolWeight: number;
   deliveryDays: number;
-  hasAMS: boolean;
+  hasAMS: boolean; // Factory-level: does any printer have AMS?
+  printerAMSConfigs: PrinterAMSConfig[]; // Per-printer AMS configuration
 }
 
 interface OnboardingWizardProps {
@@ -39,6 +49,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete }
     spoolWeight: 1000,
     deliveryDays: 3,
     hasAMS: false,
+    printerAMSConfigs: [{ hasAMS: false, amsSlots: 4, amsModes: { backupSameColor: true, multiColor: false } }],
   });
   
   const totalSteps = 3;

@@ -1,8 +1,11 @@
 import React from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { OnboardingData, AfterHoursBehavior } from './OnboardingWizard';
+import { OnboardingData, AfterHoursBehavior, PrinterAMSConfig } from './OnboardingWizard';
 import { Label } from '@/components/ui/label';
-import { Info, Moon, Clock, Zap, Star } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Info, Moon, Clock, Zap, Star, Box, Settings2 } from 'lucide-react';
 import {
   Tooltip,
   TooltipContent,
@@ -47,6 +50,50 @@ export const Step2AfterHours: React.FC<Step2Props> = ({ data, updateData }) => {
       icon: <Zap className="w-5 h-5" />,
     },
   ];
+
+  const handleAMSChange = (hasAMS: boolean) => {
+    updateData({ hasAMS });
+    // If turning off AMS at factory level, reset all printer AMS configs
+    if (!hasAMS) {
+      const resetConfigs = data.printerAMSConfigs.map(config => ({
+        ...config,
+        hasAMS: false,
+      }));
+      updateData({ hasAMS, printerAMSConfigs: resetConfigs });
+    }
+  };
+
+  const handlePrinterAMSToggle = (index: number, enabled: boolean) => {
+    const newConfigs = [...data.printerAMSConfigs];
+    newConfigs[index] = {
+      ...newConfigs[index],
+      hasAMS: enabled,
+    };
+    updateData({ printerAMSConfigs: newConfigs });
+  };
+
+  const handlePrinterAMSSlots = (index: number, slots: number) => {
+    const newConfigs = [...data.printerAMSConfigs];
+    newConfigs[index] = {
+      ...newConfigs[index],
+      amsSlots: Math.max(1, Math.min(16, slots)),
+    };
+    updateData({ printerAMSConfigs: newConfigs });
+  };
+
+  const handlePrinterAMSMode = (index: number, mode: 'backupSameColor' | 'multiColor', enabled: boolean) => {
+    const newConfigs = [...data.printerAMSConfigs];
+    newConfigs[index] = {
+      ...newConfigs[index],
+      amsModes: {
+        ...newConfigs[index].amsModes,
+        [mode]: enabled,
+      },
+    };
+    updateData({ printerAMSConfigs: newConfigs });
+  };
+
+  const enabledPrintersWithAMS = data.printerAMSConfigs.filter(c => c.hasAMS).length;
   
   return (
     <div className="space-y-8">
@@ -160,13 +207,13 @@ export const Step2AfterHours: React.FC<Step2Props> = ({ data, updateData }) => {
         </div>
       </div>
 
-      {/* Simple AMS Question */}
+      {/* AMS Question - Factory Level */}
       <div className="space-y-4 pt-4 border-t border-border">
         <div className="flex items-center gap-2">
           <Label className="text-base font-medium">
             {language === 'he' 
-              ? 'האם יש במפעל מערכת להחלפת גלילים אוטומטית (AMS)?' 
-              : 'Does your factory have an automatic spool switching system (AMS)?'}
+              ? 'האם יש מערכת AMS מחוברת למדפסת כלשהי?' 
+              : 'Do you have AMS systems connected to any of your printers?'}
           </Label>
           <TooltipProvider>
             <Tooltip>
@@ -176,8 +223,8 @@ export const Step2AfterHours: React.FC<Step2Props> = ({ data, updateData }) => {
               <TooltipContent>
                 <p className="max-w-xs">
                   {language === 'he' 
-                    ? 'AMS (מערכת חומרים אוטומטית) מאפשרת החלפה אוטומטית של גלילים'
-                    : 'AMS (Automatic Material System) enables automatic spool switching'}
+                    ? 'AMS (מערכת חומרים אוטומטית) מאפשרת החלפה אוטומטית של גלילים והדפסה רב-צבעית'
+                    : 'AMS (Automatic Material System) enables automatic spool switching and multi-color printing'}
                 </p>
               </TooltipContent>
             </Tooltip>
@@ -198,7 +245,7 @@ export const Step2AfterHours: React.FC<Step2Props> = ({ data, updateData }) => {
               type="radio"
               name="hasAMS"
               checked={!data.hasAMS}
-              onChange={() => updateData({ hasAMS: false })}
+              onChange={() => handleAMSChange(false)}
               className="sr-only"
             />
             <span className={`font-medium ${!data.hasAMS ? 'text-primary' : 'text-foreground'}`}>
@@ -219,7 +266,7 @@ export const Step2AfterHours: React.FC<Step2Props> = ({ data, updateData }) => {
               type="radio"
               name="hasAMS"
               checked={data.hasAMS}
-              onChange={() => updateData({ hasAMS: true })}
+              onChange={() => handleAMSChange(true)}
               className="sr-only"
             />
             <span className={`font-medium ${data.hasAMS ? 'text-primary' : 'text-foreground'}`}>
@@ -228,12 +275,151 @@ export const Step2AfterHours: React.FC<Step2Props> = ({ data, updateData }) => {
           </label>
         </div>
         
+        {/* Per-Printer AMS Configuration */}
         {data.hasAMS && (
-          <p className="text-sm text-muted-foreground text-center animate-fade-in">
-            {language === 'he' 
-              ? 'מעולה! תוכל להגדיר את פרטי ה-AMS לכל מדפסת בהמשך'
-              : 'Great! You can configure AMS details for each printer later'}
-          </p>
+          <div className="space-y-4 animate-fade-in">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                {language === 'he' 
+                  ? 'בחר לאילו מדפסות יש AMS:' 
+                  : 'Select which printers have AMS:'}
+              </p>
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <Settings2 className="w-3 h-3" />
+                {language === 'he' 
+                  ? 'ניתן להגדיר בהמשך בהגדרות מדפסות' 
+                  : 'Can configure later in Printers settings'}
+              </p>
+            </div>
+            
+            <div className="space-y-3 max-h-64 overflow-y-auto pr-2">
+              {data.printerNames.map((printerName, index) => {
+                const config = data.printerAMSConfigs[index] || { hasAMS: false, amsSlots: 4, amsModes: { backupSameColor: true, multiColor: false } };
+                
+                return (
+                  <div 
+                    key={index}
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      config.hasAMS 
+                        ? 'bg-card border-primary/30' 
+                        : 'bg-muted/30 border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Box className={`w-5 h-5 ${config.hasAMS ? 'text-primary' : 'text-muted-foreground'}`} />
+                        <span className={`font-medium ${config.hasAMS ? 'text-foreground' : 'text-muted-foreground'}`}>
+                          {printerName}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">
+                          {language === 'he' ? 'יש AMS' : 'Has AMS'}
+                        </span>
+                        <Switch
+                          checked={config.hasAMS}
+                          onCheckedChange={(checked) => handlePrinterAMSToggle(index, checked)}
+                        />
+                      </div>
+                    </div>
+                    
+                    {/* AMS Configuration for this printer */}
+                    {config.hasAMS && (
+                      <div className="mt-4 pt-4 border-t border-border space-y-4 animate-fade-in">
+                        {/* AMS Slots */}
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm">
+                            {language === 'he' ? 'מספר סלוטים:' : 'Number of slots:'}
+                          </Label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handlePrinterAMSSlots(index, config.amsSlots === 4 ? 4 : 4)}
+                              className={`px-3 py-1.5 text-sm rounded-lg border transition-all ${
+                                config.amsSlots === 4 
+                                  ? 'bg-primary text-primary-foreground border-primary' 
+                                  : 'bg-card border-border hover:border-primary/40'
+                              }`}
+                            >
+                              4
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePrinterAMSSlots(index, 8)}
+                              className={`px-3 py-1.5 text-sm rounded-lg border transition-all ${
+                                config.amsSlots === 8 
+                                  ? 'bg-primary text-primary-foreground border-primary' 
+                                  : 'bg-card border-border hover:border-primary/40'
+                              }`}
+                            >
+                              8
+                            </button>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={16}
+                              value={config.amsSlots !== 4 && config.amsSlots !== 8 ? config.amsSlots : ''}
+                              placeholder={language === 'he' ? 'אחר' : 'Other'}
+                              onChange={(e) => handlePrinterAMSSlots(index, parseInt(e.target.value) || 4)}
+                              className="w-20 text-center h-8"
+                            />
+                          </div>
+                        </div>
+                        
+                        {/* AMS Modes */}
+                        <div className="space-y-2">
+                          <Label className="text-sm">
+                            {language === 'he' ? 'מצבי שימוש:' : 'Usage modes:'}
+                          </Label>
+                          <div className="flex flex-col gap-2">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <Checkbox
+                                checked={config.amsModes.backupSameColor}
+                                onCheckedChange={(checked) => handlePrinterAMSMode(index, 'backupSameColor', !!checked)}
+                              />
+                              <span className="text-sm">
+                                {language === 'he' 
+                                  ? 'גיבוי / מילוי אוטומטי (אותו צבע)' 
+                                  : 'Backup / auto refill (same color)'}
+                              </span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <Checkbox
+                                checked={config.amsModes.multiColor}
+                                onCheckedChange={(checked) => handlePrinterAMSMode(index, 'multiColor', !!checked)}
+                              />
+                              <span className="text-sm">
+                                {language === 'he' 
+                                  ? 'הדפסה רב-צבעית' 
+                                  : 'Multi-color printing'}
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            
+            {/* Summary */}
+            {enabledPrintersWithAMS > 0 && (
+              <p className="text-sm text-success text-center animate-fade-in">
+                {language === 'he' 
+                  ? `${enabledPrintersWithAMS} מדפסות עם AMS מוגדרות` 
+                  : `${enabledPrintersWithAMS} printer(s) with AMS configured`}
+              </p>
+            )}
+            
+            {enabledPrintersWithAMS === 0 && (
+              <p className="text-sm text-muted-foreground text-center animate-fade-in">
+                {language === 'he' 
+                  ? 'לא נבחרו מדפסות עם AMS. ניתן להגדיר בהמשך בהגדרות מדפסות.' 
+                  : 'No printers with AMS selected. You can configure this later in Printers settings.'}
+              </p>
+            )}
+          </div>
         )}
       </div>
     </div>
