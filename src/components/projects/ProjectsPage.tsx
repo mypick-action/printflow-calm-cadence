@@ -19,6 +19,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -28,7 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FolderKanban, Calendar, Package, AlertTriangle } from 'lucide-react';
+import { Plus, FolderKanban, Calendar, Package, AlertTriangle, Pencil, ChevronDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { 
   getProjects, 
@@ -36,7 +41,8 @@ import {
   createProject, 
   Project, 
   Product,
-  getFactorySettings 
+  calculatePriorityFromDueDate,
+  calculateDaysRemaining,
 } from '@/services/storage';
 
 const availableColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
@@ -46,13 +52,14 @@ export const ProjectsPage: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [manualOverrideOpen, setManualOverrideOpen] = useState(false);
   const [newProject, setNewProject] = useState({
     name: '',
     productId: '',
     quantityTarget: 100,
     dueDate: '',
-    urgency: 'normal' as 'normal' | 'urgent' | 'critical',
     color: 'Black',
+    manualUrgency: null as 'normal' | 'urgent' | 'critical' | null,
   });
 
   useEffect(() => {
@@ -60,11 +67,29 @@ export const ProjectsPage: React.FC = () => {
     setProducts(getProducts());
   }, []);
 
+  // Calculate auto-priority when due date changes
+  const getCalculatedPriority = () => {
+    if (!newProject.dueDate) return null;
+    return calculatePriorityFromDueDate(newProject.dueDate);
+  };
+
+  const getDaysRemainingText = () => {
+    if (!newProject.dueDate) return '';
+    const days = calculateDaysRemaining(newProject.dueDate);
+    if (days < 0) {
+      return language === 'he' ? `באיחור של ${Math.abs(days)} ימים` : `${Math.abs(days)} days overdue`;
+    }
+    return language === 'he' ? `${days} ימים נותרו` : `${days} days remaining`;
+  };
+
   const handleAddProject = () => {
     if (!newProject.name || !newProject.productId || !newProject.dueDate) return;
     
     const product = products.find(p => p.id === newProject.productId);
     if (!product) return;
+
+    const calculatedUrgency = calculatePriorityFromDueDate(newProject.dueDate);
+    const finalUrgency = newProject.manualUrgency || calculatedUrgency;
     
     createProject({
       name: newProject.name,
@@ -72,20 +97,22 @@ export const ProjectsPage: React.FC = () => {
       productName: product.name,
       quantityTarget: newProject.quantityTarget,
       dueDate: newProject.dueDate,
-      urgency: newProject.urgency,
+      urgency: finalUrgency,
+      urgencyManualOverride: newProject.manualUrgency !== null,
       status: 'pending',
       color: newProject.color,
     });
     
     setProjects(getProjects());
     setDialogOpen(false);
+    setManualOverrideOpen(false);
     setNewProject({
       name: '',
       productId: '',
       quantityTarget: 100,
       dueDate: '',
-      urgency: 'normal',
       color: 'Black',
+      manualUrgency: null,
     });
   };
 
@@ -112,7 +139,7 @@ export const ProjectsPage: React.FC = () => {
     return <Badge variant={config.variant}>{config.label}</Badge>;
   };
 
-  const getUrgencyBadge = (urgency: Project['urgency']) => {
+  const getUrgencyBadge = (urgency: Project['urgency'], isManual?: boolean) => {
     const urgencyConfig = {
       normal: { 
         label: language === 'he' ? 'רגיל' : 'Normal', 
@@ -128,7 +155,54 @@ export const ProjectsPage: React.FC = () => {
       },
     };
     const config = urgencyConfig[urgency];
-    return <Badge variant="outline" className={config.className}>{config.label}</Badge>;
+    return (
+      <div className="flex items-center gap-1">
+        <Badge variant="outline" className={config.className}>{config.label}</Badge>
+        {isManual && (
+          <Pencil className="w-3 h-3 text-muted-foreground" />
+        )}
+      </div>
+    );
+  };
+
+  const getUrgencyBadgeWithDays = (project: Project) => {
+    const days = calculateDaysRemaining(project.dueDate);
+    const urgencyConfig = {
+      normal: { 
+        label: language === 'he' ? 'רגיל' : 'Normal', 
+        className: 'bg-success/10 text-success border-success/20' 
+      },
+      urgent: { 
+        label: language === 'he' ? 'דחוף' : 'Urgent', 
+        className: 'bg-warning/10 text-warning border-warning/20' 
+      },
+      critical: { 
+        label: language === 'he' ? 'קריטי' : 'Critical', 
+        className: 'bg-error/10 text-error border-error/20' 
+      },
+    };
+    const config = urgencyConfig[project.urgency];
+    const daysText = days < 0 
+      ? (language === 'he' ? `${Math.abs(days)}- ימים` : `${Math.abs(days)}d late`)
+      : (language === 'he' ? `${days} ימים` : `${days}d`);
+    
+    return (
+      <div className="flex flex-col items-start gap-1">
+        <div className="flex items-center gap-1">
+          <Badge variant="outline" className={config.className}>
+            {config.label}
+          </Badge>
+          {project.urgencyManualOverride && (
+            <span title={language === 'he' ? 'עדיפות ידנית' : 'Manual priority'}>
+              <Pencil className="w-3 h-3 text-muted-foreground" />
+            </span>
+          )}
+        </div>
+        <span className={`text-xs ${days < 0 ? 'text-error' : 'text-muted-foreground'}`}>
+          ({daysText})
+        </span>
+      </div>
+    );
   };
 
   const calculateProgress = (project: Project) => {
@@ -138,6 +212,9 @@ export const ProjectsPage: React.FC = () => {
   const isOverdue = (project: Project) => {
     return project.status !== 'completed' && new Date(project.dueDate) < new Date();
   };
+
+  const calculatedPriority = getCalculatedPriority();
+  const effectivePriority = newProject.manualUrgency || calculatedPriority;
 
   return (
     <div className="space-y-6">
@@ -247,35 +324,80 @@ export const ProjectsPage: React.FC = () => {
                   id="dueDate"
                   type="date"
                   value={newProject.dueDate}
-                  onChange={(e) => setNewProject({ ...newProject, dueDate: e.target.value })}
+                  onChange={(e) => setNewProject({ 
+                    ...newProject, 
+                    dueDate: e.target.value,
+                    manualUrgency: null // Reset manual override when date changes
+                  })}
                 />
               </div>
               
-              {/* Urgency */}
-              <div className="space-y-2">
-                <Label>{language === 'he' ? 'דחיפות' : 'Urgency'}</Label>
-                <Select 
-                  value={newProject.urgency} 
-                  onValueChange={(value: 'normal' | 'urgent' | 'critical') => 
-                    setNewProject({ ...newProject, urgency: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="normal">
-                      {language === 'he' ? 'רגיל' : 'Normal'}
-                    </SelectItem>
-                    <SelectItem value="urgent">
-                      {language === 'he' ? 'דחוף' : 'Urgent'}
-                    </SelectItem>
-                    <SelectItem value="critical">
-                      {language === 'he' ? 'קריטי' : 'Critical'}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* Auto-calculated Priority Display */}
+              {newProject.dueDate && (
+                <div className="p-3 bg-muted rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      {language === 'he' ? 'עדיפות:' : 'Priority:'}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {effectivePriority && getUrgencyBadge(effectivePriority, newProject.manualUrgency !== null)}
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {getDaysRemainingText()}
+                  </div>
+                  
+                  {/* Manual Override Section */}
+                  <Collapsible open={manualOverrideOpen} onOpenChange={setManualOverrideOpen}>
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="w-full justify-between text-xs h-8 mt-1">
+                        <span className="flex items-center gap-1">
+                          <Pencil className="w-3 h-3" />
+                          {language === 'he' ? 'שנה עדיפות ידנית' : 'Change priority manually'}
+                        </span>
+                        <ChevronDown className={`w-3 h-3 transition-transform ${manualOverrideOpen ? 'rotate-180' : ''}`} />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-2">
+                      <div className="flex gap-2">
+                        {(['normal', 'urgent', 'critical'] as const).map((urgency) => {
+                          const isSelected = newProject.manualUrgency === urgency;
+                          const urgencyLabels = {
+                            normal: language === 'he' ? 'רגיל' : 'Normal',
+                            urgent: language === 'he' ? 'דחוף' : 'Urgent',
+                            critical: language === 'he' ? 'קריטי' : 'Critical',
+                          };
+                          const urgencyColors = {
+                            normal: isSelected ? 'bg-success text-success-foreground' : 'bg-success/10 text-success border-success/30',
+                            urgent: isSelected ? 'bg-warning text-warning-foreground' : 'bg-warning/10 text-warning border-warning/30',
+                            critical: isSelected ? 'bg-error text-error-foreground' : 'bg-error/10 text-error border-error/30',
+                          };
+                          return (
+                            <Button
+                              key={urgency}
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setNewProject({ 
+                                ...newProject, 
+                                manualUrgency: isSelected ? null : urgency 
+                              })}
+                              className={`flex-1 ${urgencyColors[urgency]}`}
+                            >
+                              {urgencyLabels[urgency]}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                      {newProject.manualUrgency && (
+                        <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                          <Pencil className="w-3 h-3" />
+                          {language === 'he' ? 'עדיפות ידנית - תסומן בפרויקט' : 'Manual priority - will be marked'}
+                        </p>
+                      )}
+                    </CollapsibleContent>
+                  </Collapsible>
+                </div>
+              )}
               
               <Button 
                 onClick={handleAddProject} 
@@ -348,7 +470,7 @@ export const ProjectsPage: React.FC = () => {
                   <TableHead>{language === 'he' ? 'מוצר' : 'Product'}</TableHead>
                   <TableHead>{language === 'he' ? 'התקדמות' : 'Progress'}</TableHead>
                   <TableHead>{language === 'he' ? 'תאריך יעד' : 'Due Date'}</TableHead>
-                  <TableHead>{language === 'he' ? 'דחיפות' : 'Urgency'}</TableHead>
+                  <TableHead>{language === 'he' ? 'עדיפות' : 'Priority'}</TableHead>
                   <TableHead>{language === 'he' ? 'סטטוס' : 'Status'}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -389,11 +511,11 @@ export const ProjectsPage: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <Calendar className="w-4 h-4 text-muted-foreground" />
                         <span className={isOverdue(project) ? 'text-error font-medium' : ''}>
-                          {format(project.dueDate, 'dd/MM/yyyy')}
+                          {format(new Date(project.dueDate), 'dd/MM/yyyy')}
                         </span>
                       </div>
                     </TableCell>
-                    <TableCell>{getUrgencyBadge(project.urgency)}</TableCell>
+                    <TableCell>{getUrgencyBadgeWithDays(project)}</TableCell>
                     <TableCell>{getStatusBadge(project.status)}</TableCell>
                   </TableRow>
                 ))}

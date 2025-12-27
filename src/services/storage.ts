@@ -25,6 +25,7 @@ export interface Project {
   quantityScrap: number;
   dueDate: string; // ISO date string
   urgency: 'normal' | 'urgent' | 'critical';
+  urgencyManualOverride: boolean; // true if user manually set urgency
   status: 'pending' | 'in_progress' | 'completed' | 'on_hold';
   color: string;
   createdAt: string;
@@ -90,6 +91,11 @@ export interface IssueReport {
   timestamp: string;
 }
 
+export interface PriorityRules {
+  urgentDaysThreshold: number; // Days below which it becomes urgent (default 14)
+  criticalDaysThreshold: number; // Days below which it becomes critical (default 7)
+}
+
 export interface FactorySettings {
   printerCount: number;
   workdays: string[];
@@ -100,6 +106,7 @@ export interface FactorySettings {
   standardSpoolWeight: number;
   deliveryDays: number;
   transitionMinutes: number;
+  priorityRules: PriorityRules;
 }
 
 // ============= STORAGE KEYS =============
@@ -156,6 +163,7 @@ const initialProjects: Project[] = [
     quantityScrap: 3,
     dueDate: '2025-01-02',
     urgency: 'normal',
+    urgencyManualOverride: false,
     status: 'in_progress',
     color: 'Black',
     createdAt: '2024-12-20',
@@ -170,6 +178,7 @@ const initialProjects: Project[] = [
     quantityScrap: 8,
     dueDate: '2024-12-30',
     urgency: 'urgent',
+    urgencyManualOverride: false,
     status: 'in_progress',
     color: 'White',
     createdAt: '2024-12-18',
@@ -184,6 +193,7 @@ const initialProjects: Project[] = [
     quantityScrap: 2,
     dueDate: '2024-12-25',
     urgency: 'normal',
+    urgencyManualOverride: false,
     status: 'completed',
     color: 'Gray',
     createdAt: '2024-12-15',
@@ -198,11 +208,54 @@ const initialProjects: Project[] = [
     quantityScrap: 0,
     dueDate: '2025-01-15',
     urgency: 'critical',
+    urgencyManualOverride: false,
     status: 'pending',
     color: 'Blue',
     createdAt: '2024-12-27',
   },
 ];
+
+// Default priority rules
+const DEFAULT_PRIORITY_RULES: PriorityRules = {
+  urgentDaysThreshold: 14,
+  criticalDaysThreshold: 7,
+};
+
+// ============= PRIORITY CALCULATION =============
+
+export const calculateDaysRemaining = (dueDate: string): number => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(dueDate);
+  due.setHours(0, 0, 0, 0);
+  return Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+};
+
+export const calculatePriorityFromDueDate = (
+  dueDate: string,
+  rules?: PriorityRules
+): 'normal' | 'urgent' | 'critical' => {
+  const effectiveRules = rules || getFactorySettings()?.priorityRules || DEFAULT_PRIORITY_RULES;
+  const daysRemaining = calculateDaysRemaining(dueDate);
+  
+  if (daysRemaining < effectiveRules.criticalDaysThreshold) {
+    return 'critical';
+  } else if (daysRemaining < effectiveRules.urgentDaysThreshold) {
+    return 'urgent';
+  }
+  return 'normal';
+};
+
+export const getPriorityRules = (): PriorityRules => {
+  return getFactorySettings()?.priorityRules || DEFAULT_PRIORITY_RULES;
+};
+
+export const savePriorityRules = (rules: PriorityRules): void => {
+  const settings = getFactorySettings();
+  if (settings) {
+    saveFactorySettings({ ...settings, priorityRules: rules });
+  }
+};
 
 const getInitialPrinters = (): Printer[] => {
   const settings = getFactorySettings();
