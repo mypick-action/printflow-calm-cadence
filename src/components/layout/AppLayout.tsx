@@ -28,9 +28,9 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onN
   const navItems = [
     { id: 'dashboard', label: t('nav.dashboard'), icon: LayoutDashboard },
     { id: 'projects', label: t('nav.projects'), icon: FolderKanban },
+    { id: 'products', label: t('nav.products') || 'Products', icon: Package },
     { id: 'quoteCheck', label: t('nav.quoteCheck'), icon: Calculator },
     { id: 'planning', label: t('nav.planning'), icon: CalendarDays },
-    { id: 'inventory', label: t('nav.inventory'), icon: Package },
     { id: 'printers', label: t('nav.printers'), icon: Printer },
     { id: 'endCycleLog', label: t('nav.endCycleLog'), icon: ClipboardCheck },
     { id: 'settings', label: t('nav.settings'), icon: Settings },
