@@ -37,6 +37,10 @@ interface DebugStats {
     warningsCount: number;
     errorsCount: number;
   } | null;
+  // Origin diagnostics
+  currentOrigin: string;
+  localStorageKeys: string[];
+  cyclesRawLength: number;
 }
 
 export const PlanningDebugPanel: React.FC = () => {
@@ -56,6 +60,25 @@ export const PlanningDebugPanel: React.FC = () => {
     const meta = getPlanningMeta();
     const lastReplan = getLastReplanInfo();
     const log = getPlanningLog();
+
+    // Origin diagnostics - get all PrintFlow localStorage keys
+    const allKeys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('printflow_')) {
+        allKeys.push(key);
+      }
+    }
+
+    // Get raw cycles from localStorage to verify
+    const rawCyclesStr = localStorage.getItem('printflow_planned_cycles');
+    const rawCycles = rawCyclesStr ? JSON.parse(rawCyclesStr) : [];
+
+    // Log origin info to console for debugging
+    console.log('[PlanningDebugPanel] Current origin:', window.location.origin);
+    console.log('[PlanningDebugPanel] localStorage keys:', allKeys);
+    console.log('[PlanningDebugPanel] Raw cycles count:', rawCycles.length);
+    console.log('[PlanningDebugPanel] Parsed cycles count:', cycles.length);
 
     // Calculate cycles for this week
     const today = new Date();
@@ -81,6 +104,10 @@ export const PlanningDebugPanel: React.FC = () => {
       lastReplanAt: lastReplan.lastReplanAt,
       lastReplanReason: lastReplan.lastReplanReason,
       lastReplanResult: lastReplan.lastReplanResult,
+      // Origin diagnostics
+      currentOrigin: window.location.origin,
+      localStorageKeys: allKeys,
+      cyclesRawLength: rawCycles.length,
     });
 
     setLogEntries(log);
@@ -213,6 +240,38 @@ export const PlanningDebugPanel: React.FC = () => {
                       {stats.capacityChanged ? 'Yes (needs recalc)' : 'No'}
                     </span>
                   </div>
+                </div>
+
+                {/* Origin Diagnostics */}
+                <div className="space-y-2 p-3 bg-blue-500/10 rounded-lg border border-blue-500/30">
+                  <div className="text-xs font-medium mb-2 text-blue-400">🔍 Origin Diagnostics:</div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium">Current Origin:</span>
+                    <code className="text-xs bg-muted px-2 py-0.5 rounded font-mono">
+                      {stats.currentOrigin}
+                    </code>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium">Raw Cycles in LS:</span>
+                    <Badge variant={stats.cyclesRawLength > 0 ? 'default' : 'destructive'} className="text-xs">
+                      {stats.cyclesRawLength}
+                    </Badge>
+                  </div>
+                  <div className="text-xs">
+                    <span className="font-medium">PrintFlow Keys ({stats.localStorageKeys.length}):</span>
+                    <div className="mt-1 max-h-20 overflow-y-auto bg-muted/50 rounded p-1 font-mono text-[10px]">
+                      {stats.localStorageKeys.length > 0 
+                        ? stats.localStorageKeys.map((k, i) => <div key={i}>{k}</div>)
+                        : <span className="text-destructive">No printflow_ keys found!</span>
+                      }
+                    </div>
+                  </div>
+                  {stats.cyclesRawLength !== stats.plannedCyclesTotal && (
+                    <div className="flex items-center gap-2 text-destructive">
+                      <AlertCircle className="w-3 h-3" />
+                      <span className="text-xs">Mismatch: Raw ({stats.cyclesRawLength}) ≠ Parsed ({stats.plannedCyclesTotal})</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Diagnosis */}

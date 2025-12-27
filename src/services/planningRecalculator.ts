@@ -102,6 +102,9 @@ export const recalculatePlan = (
   // Merge kept cycles with new plan cycles
   const newCycles = [...cyclesToKeep, ...planResult.cycles];
 
+  // Log before saving for debugging
+  console.log(`[planningRecalculator] Saving ${newCycles.length} cycles to origin: ${window.location.origin}`);
+
   // Save the updated cycles
   setItem(KEYS.PLANNED_CYCLES, newCycles);
 
