@@ -441,7 +441,7 @@ export const ProjectsPage: React.FC = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableColors.map((color) => (
+                    {availableColors.filter(c => c && c.trim()).map((color) => (
                       <SelectItem key={color} value={color}>
                         {color}
                       </SelectItem>
