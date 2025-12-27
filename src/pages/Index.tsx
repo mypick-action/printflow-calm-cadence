@@ -6,6 +6,7 @@ import { Dashboard } from '@/components/dashboard/Dashboard';
 import { ProjectsPage } from '@/components/projects/ProjectsPage';
 import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
 import { QuoteCheckPage } from '@/components/quote-check/QuoteCheckPage';
+import { SettingsPage } from '@/components/settings/SettingsPage';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,6 +39,10 @@ const PrintFlowApp: React.FC = () => {
       standardSpoolWeight: data.spoolWeight,
       deliveryDays: data.deliveryDays,
       transitionMinutes: 10,
+      priorityRules: {
+        urgentDaysThreshold: 14,
+        criticalDaysThreshold: 7,
+      },
     });
     completeOnboarding();
   };
@@ -70,6 +75,8 @@ const PrintFlowApp: React.FC = () => {
         return <EndCycleLog />;
       case 'quoteCheck':
         return <QuoteCheckPage />;
+      case 'settings':
+        return <SettingsPage />;
       default:
         return (
           <Card variant="elevated">
