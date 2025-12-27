@@ -146,6 +146,11 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
     });
   };
 
+  const hasUnaddedPreset = () => {
+    // Check if user has started filling in the preset form but hasn't added it
+    return !!(newPreset.name && newPreset.name.trim());
+  };
+
   const validateForm = (): boolean => {
     const newErrors: typeof errors = {};
     
@@ -156,7 +161,14 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
       newErrors.gramsPerUnit = language === 'he' ? 'חסר גרמים ליחידה' : 'Missing grams per unit';
     }
     if (formData.platePresets.length === 0) {
-      newErrors.presets = language === 'he' ? 'הוסיפו לפחות פריסת פלטה אחת' : 'Add at least one plate preset';
+      // Check if user has started filling a preset but hasn't clicked Add
+      if (hasUnaddedPreset()) {
+        newErrors.presets = language === 'he' 
+          ? 'לחצו על כפתור "הוסף" כדי להוסיף את הפריסה' 
+          : 'Click the "Add" button to add the preset';
+      } else {
+        newErrors.presets = language === 'he' ? 'הוסיפו לפחות פריסת פלטה אחת' : 'Add at least one plate preset';
+      }
     }
     
     setErrors(newErrors);
