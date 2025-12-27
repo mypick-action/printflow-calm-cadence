@@ -146,8 +146,10 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
                   recommendation={rec} 
                   language={language}
                   onClick={() => {
-                    console.log('[LoadRecommendationsPanel] Card clicked:', rec.printerId);
+                    console.log('[LoadRecommendationsPanel] onClick called for:', rec.printerId, rec.printerName);
+                    console.log('[LoadRecommendationsPanel] Calling navigateTo("printers", ...)', { openPrinterId: rec.printerId, focusField: 'mountColor' });
                     navigateTo('printers', { openPrinterId: rec.printerId, focusField: 'mountColor' });
+                    console.log('[LoadRecommendationsPanel] navigateTo completed');
                   }}
                 />
               ))}
