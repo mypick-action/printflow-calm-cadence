@@ -31,6 +31,7 @@ import { Plus, PackagePlus, Trash2, Star, Moon } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { 
   createProduct,
+  updateProduct,
   getProducts,
   Product, 
   PlatePreset,
@@ -172,25 +173,21 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
     }
 
     if (editingProduct) {
-      // Update existing product
-      const allProducts = getProducts();
-      const updatedProduct = { 
-        ...editingProduct, 
-        name: formData.name, 
-        gramsPerUnit: formData.gramsPerUnit, 
-        platePresets: presets 
-      };
-      const updatedProducts = allProducts.map(p => 
-        p.id === editingProduct.id ? updatedProduct : p
-      );
-      localStorage.setItem('printflow_products', JSON.stringify(updatedProducts));
-      
-      toast({
-        title: language === 'he' ? 'מוצר עודכן' : 'Product updated',
-        description: formData.name,
+      // Update existing product using storage helper (triggers auto-replan)
+      const updated = updateProduct(editingProduct.id, {
+        name: formData.name,
+        gramsPerUnit: formData.gramsPerUnit,
+        platePresets: presets,
       });
       
-      onProductSaved?.(updatedProduct);
+      if (updated) {
+        toast({
+          title: language === 'he' ? 'מוצר עודכן' : 'Product updated',
+          description: formData.name,
+        });
+        
+        onProductSaved?.(updated);
+      }
     } else {
       // Create new product
       const created = createProduct({

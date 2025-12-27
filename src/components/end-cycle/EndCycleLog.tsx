@@ -26,7 +26,6 @@ import {
   getProject,
   getProduct,
   logCycleWithMaterialConsumption,
-  recalculatePlan,
   Printer as PrinterType,
   PlannedCycle
 } from '@/services/storage';
@@ -174,14 +173,14 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
           : `${result.materialResult.gramsConsumed}g deducted from inventory.`)
       : '';
 
-    // Trigger planning recalculation
-    recalculatePlan('from_now', true);
+    // Auto-replan is now triggered automatically by the material consumption
+    // No need to call recalculatePlan manually
     
     toast({
       title: language === 'he' ? 'המחזור עודכן' : 'Cycle Updated',
       description: language === 'he' 
-        ? `התכנון עודכן בהתאם. ${materialInfo}`
-        : `Planning updated accordingly. ${materialInfo}`,
+        ? `${materialInfo} התכנון יתעדכן אוטומטית.`
+        : `${materialInfo} Plan will update automatically.`,
     });
 
     if (onComplete) {
