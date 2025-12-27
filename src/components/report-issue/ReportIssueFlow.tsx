@@ -1,18 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -30,10 +21,13 @@ import {
   CheckCircle2,
   Clock,
   Calendar,
-  Truck,
   Timer,
-  RotateCcw,
-  X
+  Package,
+  ArrowRight,
+  AlertCircle,
+  Gauge,
+  TrendingDown,
+  Plus,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { 
@@ -43,10 +37,18 @@ import {
   createIssueReport,
   resolveIssue,
   getProject,
+  getProduct,
   PlannedCycle,
   Project,
   Printer as PrinterType
 } from '@/services/storage';
+import {
+  analyzeIssue,
+  IssueContext,
+  IssueAnalysis,
+  RecoveryOption,
+  IssueType,
+} from '@/services/issueEngine';
 
 interface ReportIssueFlowProps {
   isOpen: boolean;
@@ -55,67 +57,28 @@ interface ReportIssueFlowProps {
   preselectedProjectId?: string;
 }
 
-type IssueType = 'power_outage' | 'print_not_started' | 'stopped_mid_cycle' | 'other';
-type RecoveryOption = 'reduce_units' | 'cancel_end_of_day' | 'delay_project' | 'outsource' | 'overtime';
+type UIIssueType = 'power_outage' | 'print_not_started' | 'stopped_mid_cycle' | 'completed_with_defects' | 'other';
 
-interface RecoveryOptionData {
-  id: RecoveryOption;
-  icon: React.ElementType;
-  title: string;
-  titleEn: string;
-  description: string;
-  descriptionEn: string;
-}
-
-const issueTypes: { value: IssueType; labelHe: string; labelEn: string; icon: React.ElementType }[] = [
-  { value: 'power_outage', labelHe: 'הפסקת חשמל', labelEn: 'Power Outage', icon: Zap },
-  { value: 'print_not_started', labelHe: 'הדפסה לא התחילה', labelEn: 'Print did not start', icon: PlayCircle },
-  { value: 'stopped_mid_cycle', labelHe: 'הדפסה נעצרה באמצע', labelEn: 'Print stopped mid-cycle', icon: PauseCircle },
-  { value: 'other', labelHe: 'אחר', labelEn: 'Other', icon: HelpCircle },
+const issueTypes: { value: UIIssueType; labelHe: string; labelEn: string; icon: React.ElementType; engineType: IssueType }[] = [
+  { value: 'power_outage', labelHe: 'הפסקת חשמל', labelEn: 'Power Outage', icon: Zap, engineType: 'interrupted_mid_cycle' },
+  { value: 'print_not_started', labelHe: 'הדפסה לא התחילה', labelEn: 'Print did not start', icon: PlayCircle, engineType: 'printer_failure' },
+  { value: 'stopped_mid_cycle', labelHe: 'הדפסה נעצרה באמצע', labelEn: 'Print stopped mid-cycle', icon: PauseCircle, engineType: 'interrupted_mid_cycle' },
+  { value: 'completed_with_defects', labelHe: 'הושלם עם נפלים', labelEn: 'Completed with defects', icon: AlertCircle, engineType: 'completed_with_defects' },
+  { value: 'other', labelHe: 'אחר', labelEn: 'Other', icon: HelpCircle, engineType: 'unknown' },
 ];
 
-const recoveryOptions: RecoveryOptionData[] = [
-  {
-    id: 'reduce_units',
-    icon: Timer,
-    title: 'הפחת יחידות במחזורים הבאים',
-    titleEn: 'Reduce units per upcoming cycles',
-    description: 'המערכת תתאים את כמות היחידות במחזורים הבאים',
-    descriptionEn: 'System will adjust unit count in upcoming cycles',
-  },
-  {
-    id: 'cancel_end_of_day',
-    icon: Clock,
-    title: 'בטל מחזור סוף יום',
-    titleEn: 'Cancel end-of-day cycle',
-    description: 'לא נשלח מחזור בסוף יום העבודה',
-    descriptionEn: 'No cycle will be sent at end of workday',
-  },
-  {
-    id: 'delay_project',
-    icon: Calendar,
-    title: 'דחה את הפרויקט',
-    titleEn: 'Delay project',
-    description: 'עדכן את תאריך היעד של הפרויקט',
-    descriptionEn: 'Update the project due date',
-  },
-  {
-    id: 'outsource',
-    icon: Truck,
-    title: 'מיקור חוץ ליחידות שנותרו',
-    titleEn: 'Outsource remaining units',
-    description: 'שלח את היחידות הנותרות לייצור חיצוני',
-    descriptionEn: 'Send remaining units to external production',
-  },
-  {
-    id: 'overtime',
-    icon: Timer,
-    title: 'הוסף שעות נוספות היום',
-    titleEn: 'Add overtime today',
-    description: 'הארכה חד-פעמית של יום העבודה',
-    descriptionEn: 'One-time extension of today\'s workday',
-  },
-];
+const getRecoveryIcon = (type: RecoveryOption['type']): React.ElementType => {
+  switch (type) {
+    case 'reduce_units': return TrendingDown;
+    case 'add_cycle': return Plus;
+    case 'change_spool': return Package;
+    case 'extend_hours': return Clock;
+    case 'defer_units': return Calendar;
+    case 'move_printer': return Printer;
+    case 'delay_project': return Calendar;
+    default: return Timer;
+  }
+};
 
 export const ReportIssueFlow: React.FC<ReportIssueFlowProps> = ({
   isOpen,
@@ -130,11 +93,13 @@ export const ReportIssueFlow: React.FC<ReportIssueFlowProps> = ({
   const [activeCycle, setActiveCycle] = useState<PlannedCycle | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState(preselectedProjectId || '');
   const [confirmedProject, setConfirmedProject] = useState(false);
-  const [issueType, setIssueType] = useState<IssueType | ''>('');
+  const [issueType, setIssueType] = useState<UIIssueType | ''>('');
   const [hadUnitsPrinted, setHadUnitsPrinted] = useState<boolean | null>(null);
   const [unitsPrinted, setUnitsPrinted] = useState(0);
-  const [selectedRecovery, setSelectedRecovery] = useState<RecoveryOption | ''>('');
+  const [defectUnits, setDefectUnits] = useState(0);
   const [issueReportId, setIssueReportId] = useState<string | null>(null);
+  const [issueAnalysis, setIssueAnalysis] = useState<IssueAnalysis | null>(null);
+  const [selectedRecoveryId, setSelectedRecoveryId] = useState<string>('');
 
   useEffect(() => {
     setPrinters(getPrinters().filter(p => p.active));
@@ -157,16 +122,28 @@ export const ReportIssueFlow: React.FC<ReportIssueFlowProps> = ({
     }
   }, [preselectedProjectId]);
 
+  const project = selectedProjectId ? getProject(selectedProjectId) : null;
+  const product = project ? getProduct(project.productId) : null;
+  const activeProjects = getActiveProjects();
+
+  // Calculate planned units from active cycle or product preset
+  const plannedUnits = useMemo(() => {
+    if (activeCycle) return activeCycle.unitsPlanned;
+    if (product) {
+      const defaultPreset = product.platePresets.find(p => p.isRecommended) || product.platePresets[0];
+      return defaultPreset?.unitsPerPlate || 8;
+    }
+    return 8;
+  }, [activeCycle, product]);
+
   const handlePrinterSelect = (printerId: string) => {
     setSelectedPrinterId(printerId);
     const cycle = getActiveCycleForPrinter(printerId);
     if (cycle) {
       setActiveCycle(cycle);
       setSelectedProjectId(cycle.projectId);
-      // Move to confirmation step
       setStep(1.5);
     } else {
-      // No active cycle, let user select project manually
       setStep(1.6);
     }
   };
@@ -186,28 +163,79 @@ export const ReportIssueFlow: React.FC<ReportIssueFlowProps> = ({
     setStep(2);
   };
 
-  const handleIssueTypeSelect = (type: IssueType) => {
+  const handleIssueTypeSelect = (type: UIIssueType) => {
     setIssueType(type);
-    setStep(3);
+    if (type === 'completed_with_defects') {
+      setStep(3.5); // Go to defects step
+    } else {
+      setStep(3);
+    }
   };
 
-  const handleSubmitIssue = () => {
+  const runIssueAnalysis = () => {
+    const issueTypeData = issueTypes.find(t => t.value === issueType);
+    const engineType = issueTypeData?.engineType || 'unknown';
+    
+    // Calculate units lost based on issue type
+    let unitsLost = 0;
+    let gramsWasted = 0;
+    
+    if (issueType === 'completed_with_defects') {
+      unitsLost = defectUnits;
+      gramsWasted = product ? defectUnits * product.gramsPerUnit : 0;
+    } else if (issueType === 'stopped_mid_cycle' || issueType === 'power_outage') {
+      // If some units were printed, the lost units are the planned minus printed
+      unitsLost = hadUnitsPrinted ? plannedUnits - unitsPrinted : plannedUnits;
+      gramsWasted = product ? unitsLost * product.gramsPerUnit : 0;
+    } else if (issueType === 'print_not_started') {
+      unitsLost = 0; // Nothing was printed, nothing was wasted
+    }
+
+    const context: IssueContext = {
+      printerId: selectedPrinterId,
+      projectId: selectedProjectId,
+      issueType: engineType,
+      unitsLost,
+      gramsWasted,
+      cycleWasCompleted: issueType === 'completed_with_defects',
+    };
+
+    const analysis = analyzeIssue(context);
+    setIssueAnalysis(analysis);
+    
+    // Create issue report
     const report = createIssueReport({
       printerId: selectedPrinterId,
       projectId: selectedProjectId,
-      issueType: issueType as IssueType,
+      issueType: issueType as any,
       unitsPrinted: hadUnitsPrinted ? unitsPrinted : 0,
     });
     setIssueReportId(report.id);
+    
     setStep(4);
   };
 
+  const handleSubmitIssue = () => {
+    runIssueAnalysis();
+  };
+
+  const handleSubmitDefects = () => {
+    if (defectUnits > 0) {
+      runIssueAnalysis();
+    }
+  };
+
   const handleSelectRecovery = (option: RecoveryOption) => {
-    setSelectedRecovery(option);
+    setSelectedRecoveryId(option.id);
     if (issueReportId) {
-      resolveIssue(issueReportId, option);
+      resolveIssue(issueReportId, option.type);
     }
     setStep(5);
+    
+    toast({
+      title: language === 'he' ? 'התכנון עודכן' : 'Planning Updated',
+      description: language === 'he' ? option.description : option.descriptionEn,
+    });
   };
 
   const handleClose = () => {
@@ -220,28 +248,50 @@ export const ReportIssueFlow: React.FC<ReportIssueFlowProps> = ({
     setIssueType('');
     setHadUnitsPrinted(null);
     setUnitsPrinted(0);
-    setSelectedRecovery('');
+    setDefectUnits(0);
     setIssueReportId(null);
+    setIssueAnalysis(null);
+    setSelectedRecoveryId('');
     onClose();
   };
 
-  const project = selectedProjectId ? getProject(selectedProjectId) : null;
-  const activeProjects = getActiveProjects();
+  const getSelectedRecovery = (): RecoveryOption | undefined => {
+    return issueAnalysis?.recoveryOptions.find(o => o.id === selectedRecoveryId);
+  };
 
-  const getRecoveryInstructions = () => {
-    switch (selectedRecovery) {
+  const getRecoveryInstructions = (): string[] => {
+    const recovery = getSelectedRecovery();
+    if (!recovery) {
+      return language === 'he' 
+        ? ['התכנון עודכן', 'המשיכו לעבוד כרגיל']
+        : ['Planning updated', 'Continue working normally'];
+    }
+
+    switch (recovery.type) {
       case 'reduce_units':
         return language === 'he' 
-          ? ['נקו את המגש', 'הגדירו 6 יחידות במקום 8', 'התחילו מחזור חדש']
-          : ['Clean the tray', 'Set 6 units instead of 8', 'Start new cycle'];
-      case 'cancel_end_of_day':
+          ? ['נקו את המגש', `הגדירו ${recovery.impact.unitsAffected} יחידות`, 'התחילו מחזור חדש']
+          : ['Clean the tray', `Set ${recovery.impact.unitsAffected} units`, 'Start new cycle'];
+      case 'add_cycle':
         return language === 'he'
-          ? ['מחזור סוף היום בוטל', 'המדפסת תיעצר ב-17:30', 'המשיכו כרגיל מחר']
-          : ['End-of-day cycle cancelled', 'Printer will stop at 17:30', 'Continue normally tomorrow'];
-      case 'overtime':
+          ? ['המחזור הנוכחי יסתיים כרגיל', 'מחזור נוסף יתוזמן מחר', 'אין צורך בפעולה נוספת כעת']
+          : ['Current cycle will finish normally', 'Additional cycle scheduled for tomorrow', 'No action needed now'];
+      case 'extend_hours':
         return language === 'he'
-          ? ['הארכנו את יום העבודה עד 20:00', 'הוסיפו מחזור נוסף', 'זכרו לדווח בסיום']
-          : ['Extended workday until 20:00', 'Add one more cycle', 'Remember to report when done'];
+          ? ['יום העבודה הוארך', 'הוסיפו מחזור נוסף', 'זכרו לדווח בסיום']
+          : ['Workday extended', 'Add one more cycle', 'Remember to report when done'];
+      case 'change_spool':
+        return language === 'he'
+          ? ['החליפו את הגליל', 'ודאו שהצבע תואם', 'המשיכו עם המחזור']
+          : ['Replace the spool', 'Verify color matches', 'Continue with cycle'];
+      case 'defer_units':
+        return language === 'he'
+          ? ['חלק מהיחידות יופקו מחר', 'המשיכו במחזור הנוכחי', 'התכנון עודכן בהתאם']
+          : ['Some units will be produced tomorrow', 'Continue with current cycle', 'Planning updated accordingly'];
+      case 'delay_project':
+        return language === 'he'
+          ? ['תאריך היעד נדחה', 'עדכנו את הלקוח במידת הצורך', 'התכנון עודכן']
+          : ['Due date postponed', 'Update customer if needed', 'Planning updated'];
       default:
         return language === 'he'
           ? ['התכנון עודכן', 'המשיכו לעבוד כרגיל']
@@ -271,7 +321,7 @@ export const ReportIssueFlow: React.FC<ReportIssueFlowProps> = ({
           ))}
         </div>
 
-        {/* Step 1: Select Printer (Global entry) */}
+        {/* Step 1: Select Printer */}
         {step === 1 && !preselectedPrinterId && (
           <div className="space-y-4 animate-fade-in">
             <div className="text-center text-muted-foreground">
@@ -391,7 +441,7 @@ export const ReportIssueFlow: React.FC<ReportIssueFlowProps> = ({
           </div>
         )}
 
-        {/* Step 3: Any units printed? */}
+        {/* Step 3: Any units printed? (for interruptions) */}
         {step === 3 && (
           <div className="space-y-6 animate-fade-in">
             <div className="text-center text-muted-foreground">
@@ -429,11 +479,14 @@ export const ReportIssueFlow: React.FC<ReportIssueFlowProps> = ({
                   </Button>
                   <div className="flex-1 text-center">
                     <div className="text-4xl font-bold">{unitsPrinted}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {language === 'he' ? `מתוך ${plannedUnits} מתוכננות` : `out of ${plannedUnits} planned`}
+                    </div>
                   </div>
                   <Button
                     variant="outline"
                     size="lg"
-                    onClick={() => setUnitsPrinted(unitsPrinted + 1)}
+                    onClick={() => setUnitsPrinted(Math.min(plannedUnits, unitsPrinted + 1))}
                     className="h-14 w-14 text-xl"
                   >
                     +
@@ -447,49 +500,174 @@ export const ReportIssueFlow: React.FC<ReportIssueFlowProps> = ({
                 onClick={handleSubmitIssue}
                 className="w-full h-12"
               >
-                {language === 'he' ? 'המשך' : 'Continue'}
+                {language === 'he' ? 'המשך לניתוח' : 'Continue to Analysis'}
+                <ArrowRight className="w-4 h-4 ms-2" />
               </Button>
             )}
           </div>
         )}
 
-        {/* Step 4: Recovery options */}
-        {step === 4 && (
-          <div className="space-y-4 animate-fade-in">
-            <div className="text-center">
-              <div className="text-lg font-semibold mb-1">
-                {language === 'he' ? 'איך נפתור את זה?' : 'How should we fix this?'}
-              </div>
-              <div className="text-sm text-muted-foreground">
-                {language === 'he' ? 'בחרו אפשרות התאוששות' : 'Choose a recovery option'}
-              </div>
+        {/* Step 3.5: Defect count */}
+        {step === 3.5 && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="text-center text-muted-foreground">
+              {language === 'he' ? 'כמה יחידות נפלו / פגומות?' : 'How many units are defective?'}
             </div>
             
-            <div className="space-y-2">
-              {recoveryOptions.slice(0, 3).map((option) => {
-                const Icon = option.icon;
-                return (
-                  <button
-                    key={option.id}
-                    onClick={() => handleSelectRecovery(option.id)}
-                    className="w-full p-4 rounded-xl border-2 border-border hover:border-primary hover:bg-accent transition-all text-start"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-primary/10">
-                        <Icon className="w-5 h-5 text-primary" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="font-medium">
-                          {language === 'he' ? option.title : option.titleEn}
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          {language === 'he' ? option.description : option.descriptionEn}
-                        </div>
-                      </div>
+            <div className="flex items-center gap-4">
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => setDefectUnits(Math.max(0, defectUnits - 1))}
+                className="h-14 w-14 text-xl"
+              >
+                -
+              </Button>
+              <div className="flex-1 text-center">
+                <div className="text-4xl font-bold text-destructive">{defectUnits}</div>
+                <div className="text-sm text-muted-foreground">
+                  {language === 'he' ? `מתוך ${plannedUnits} במחזור` : `out of ${plannedUnits} in cycle`}
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => setDefectUnits(Math.min(plannedUnits, defectUnits + 1))}
+                className="h-14 w-14 text-xl"
+              >
+                +
+              </Button>
+            </div>
+
+            {product && defectUnits > 0 && (
+              <div className="p-4 rounded-xl bg-muted">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">
+                    {language === 'he' ? 'חומר שהושמד:' : 'Material wasted:'}
+                  </span>
+                  <span className="font-semibold">{defectUnits * product.gramsPerUnit}g</span>
+                </div>
+              </div>
+            )}
+
+            <Button 
+              onClick={handleSubmitDefects}
+              disabled={defectUnits === 0}
+              className="w-full h-12"
+            >
+              {language === 'he' ? 'המשך לניתוח' : 'Continue to Analysis'}
+              <ArrowRight className="w-4 h-4 ms-2" />
+            </Button>
+          </div>
+        )}
+
+        {/* Step 4: Issue Analysis & Recovery Options */}
+        {step === 4 && issueAnalysis && (
+          <div className="space-y-4 animate-fade-in">
+            {/* Issue Summary */}
+            <Card className="border-destructive/30 bg-destructive/5">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-destructive mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-destructive">
+                      {language === 'he' ? 'בעיה זוהתה' : 'Issue Detected'}
                     </div>
-                  </button>
-                );
-              })}
+                    <div className="text-sm text-muted-foreground mt-1">
+                      {language === 'he' ? issueAnalysis.blockingReason : issueAnalysis.blockingReasonEn}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Context Info */}
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="p-3 rounded-lg bg-muted">
+                <div className="text-muted-foreground">{language === 'he' ? 'יחידות נותרו' : 'Remaining'}</div>
+                <div className="font-bold text-lg">{issueAnalysis.context.remainingUnits}</div>
+              </div>
+              <div className="p-3 rounded-lg bg-muted">
+                <div className="text-muted-foreground">{language === 'he' ? 'זמן נותר היום' : 'Time Left Today'}</div>
+                <div className="font-bold text-lg">{issueAnalysis.context.remainingTimeToday.toFixed(1)}h</div>
+              </div>
+              <div className="p-3 rounded-lg bg-muted">
+                <div className="text-muted-foreground">{language === 'he' ? 'ימים לדד-ליין' : 'Days to Due'}</div>
+                <div className="font-bold text-lg">{issueAnalysis.context.remainingDaysUntilDue}</div>
+              </div>
+              <div className="p-3 rounded-lg bg-muted">
+                <div className="text-muted-foreground">{language === 'he' ? 'פילמנט זמין' : 'Available Filament'}</div>
+                <div className="font-bold text-lg">{issueAnalysis.context.availableFilament}g</div>
+              </div>
+            </div>
+
+            {/* Recovery Options */}
+            <div className="pt-2">
+              <div className="text-center mb-3">
+                <div className="font-semibold">
+                  {language === 'he' ? 'אפשרויות התאוששות' : 'Recovery Options'}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'בחרו כיצד להמשיך' : 'Choose how to proceed'}
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                {issueAnalysis.recoveryOptions.length > 0 ? (
+                  issueAnalysis.recoveryOptions.map((option) => {
+                    const Icon = getRecoveryIcon(option.type);
+                    return (
+                      <button
+                        key={option.id}
+                        onClick={() => handleSelectRecovery(option)}
+                        className="w-full p-4 rounded-xl border-2 border-border hover:border-primary hover:bg-accent transition-all text-start"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`p-2 rounded-lg ${option.resolvesIssue ? 'bg-success/10' : 'bg-warning/10'}`}>
+                            <Icon className={`w-5 h-5 ${option.resolvesIssue ? 'text-success' : 'text-warning'}`} />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">
+                                {language === 'he' ? option.title : option.titleEn}
+                              </span>
+                              {option.resolvesIssue && (
+                                <Badge variant="outline" className="text-xs bg-success/10 text-success border-success/30">
+                                  {language === 'he' ? 'פותר' : 'Resolves'}
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="text-sm text-muted-foreground mt-1">
+                              {language === 'he' ? option.description : option.descriptionEn}
+                            </div>
+                            {/* Impact indicators */}
+                            <div className="flex gap-3 mt-2 text-xs text-muted-foreground">
+                              {option.impact.timeChange !== 0 && (
+                                <span className="flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  {option.impact.timeChange > 0 ? '+' : ''}{option.impact.timeChange.toFixed(1)}h
+                                </span>
+                              )}
+                              {option.impact.unitsAffected > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <Gauge className="w-3 h-3" />
+                                  {option.impact.unitsAffected} {language === 'he' ? 'יח׳' : 'units'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="text-center p-6 text-muted-foreground">
+                    {language === 'he' 
+                      ? 'לא נמצאו אפשרויות התאוששות אוטומטיות. צרו קשר עם מנהל.'
+                      : 'No automatic recovery options found. Contact manager.'}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
