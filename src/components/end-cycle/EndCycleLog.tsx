@@ -25,7 +25,7 @@ import {
   getActiveCycleForPrinter, 
   getProject,
   getProduct,
-  logCycle,
+  logCycleWithMaterialConsumption,
   recalculatePlan,
   Printer as PrinterType,
   PlannedCycle
@@ -141,15 +141,38 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       gramsWasted = wastedGrams;
     }
 
-    logCycle({
-      printerId: selectedPrinter,
-      projectId: activeCycle.projectId,
-      plannedCycleId: activeCycle.id,
-      result: resultType,
-      unitsCompleted,
-      unitsScrap,
-      gramsWasted,
-    });
+    // Use the new function that handles material consumption
+    const result = logCycleWithMaterialConsumption(
+      {
+        printerId: selectedPrinter,
+        projectId: activeCycle.projectId,
+        plannedCycleId: activeCycle.id,
+        result: resultType,
+        unitsCompleted,
+        unitsScrap,
+        gramsWasted,
+      },
+      activeCycle.color,
+      activeCycle.gramsPerUnit,
+      selectedPrinter
+    );
+
+    if (!result.success) {
+      // Show error - not enough material
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: language === 'he' ? result.errorHe : result.error,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Show success with material info
+    const materialInfo = result.materialResult 
+      ? (language === 'he' 
+          ? `נוכו ${result.materialResult.gramsConsumed}g מהמלאי.`
+          : `${result.materialResult.gramsConsumed}g deducted from inventory.`)
+      : '';
 
     // Trigger planning recalculation
     recalculatePlan('from_now', true);
@@ -157,8 +180,8 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     toast({
       title: language === 'he' ? 'המחזור עודכן' : 'Cycle Updated',
       description: language === 'he' 
-        ? 'התכנון עודכן בהתאם.'
-        : 'Planning updated accordingly.',
+        ? `התכנון עודכן בהתאם. ${materialInfo}`
+        : `Planning updated accordingly. ${materialInfo}`,
     });
 
     if (onComplete) {
