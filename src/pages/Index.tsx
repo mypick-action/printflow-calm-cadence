@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext';
 import { OnboardingWizard, OnboardingData } from '@/components/onboarding/OnboardingWizard';
+import { BootstrapScreen } from '@/components/bootstrap/BootstrapScreen';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Dashboard } from '@/components/dashboard/Dashboard';
 import { ProjectsPage } from '@/components/projects/ProjectsPage';
@@ -13,12 +14,19 @@ import { SettingsPage } from '@/components/settings/SettingsPage';
 import { PlanningPage } from '@/components/planning/PlanningPage';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Construction, AlertTriangle } from 'lucide-react';
-import { isOnboardingComplete, completeOnboarding, saveFactorySettings } from '@/services/storage';
+import { Construction } from 'lucide-react';
+import { 
+  isOnboardingComplete, 
+  completeOnboarding, 
+  saveFactorySettings,
+  isBootstrapped,
+  bootstrapFresh,
+  bootstrapWithDemo,
+} from '@/services/storage';
 
 const PrintFlowApp: React.FC = () => {
   const { language } = useLanguage();
+  const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [factoryData, setFactoryData] = useState<OnboardingData | null>(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -26,10 +34,26 @@ const PrintFlowApp: React.FC = () => {
   const [endCyclePrinterId, setEndCyclePrinterId] = useState<string | undefined>(undefined);
   
   useEffect(() => {
-    if (isOnboardingComplete()) {
+    // Check bootstrap status first
+    const isBootstrapDone = isBootstrapped();
+    setBootstrapped(isBootstrapDone);
+    
+    if (isBootstrapDone && isOnboardingComplete()) {
       setOnboardingDone(true);
     }
   }, []);
+
+  const handleBootstrapFresh = () => {
+    bootstrapFresh();
+    setBootstrapped(true);
+    // Will show onboarding next
+  };
+
+  const handleBootstrapDemo = () => {
+    bootstrapWithDemo();
+    setBootstrapped(true);
+    // Will show onboarding next
+  };
   
   const handleOnboardingComplete = (data: OnboardingData) => {
     setFactoryData(data);
@@ -50,7 +74,27 @@ const PrintFlowApp: React.FC = () => {
     });
     completeOnboarding();
   };
+
+  // Show loading while checking bootstrap status
+  if (bootstrapped === null) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  // Show bootstrap screen if not bootstrapped
+  if (!bootstrapped) {
+    return (
+      <BootstrapScreen 
+        onStartFresh={handleBootstrapFresh}
+        onLoadDemo={handleBootstrapDemo}
+      />
+    );
+  }
   
+  // Show onboarding if not complete
   if (!onboardingDone) {
     return <OnboardingWizard onComplete={handleOnboardingComplete} />;
   }
