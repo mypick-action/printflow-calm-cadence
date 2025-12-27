@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +27,7 @@ interface LoadRecommendationsPanelProps {
 
 export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> = ({ onRefresh }) => {
   const { language } = useLanguage();
+  const navigate = useNavigate();
   const [result, setResult] = useState<LoadRecommendationsResult | null>(null);
   const [expanded, setExpanded] = useState(true);
 
@@ -139,7 +141,12 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
                 {language === 'he' ? 'הנחיות טעינה' : 'Load Instructions'}
               </h4>
               {recommendations.map((rec) => (
-                <RecommendationCard key={rec.id} recommendation={rec} language={language} />
+                <RecommendationCard 
+                  key={rec.id} 
+                  recommendation={rec} 
+                  language={language}
+                  onClick={() => navigate(`/inventory/printers?openPrinterId=${rec.printerId}&focus=mountColor`)}
+                />
               ))}
             </div>
           )}
@@ -200,17 +207,30 @@ const ShortageAlert: React.FC<{ shortage: MaterialShortage; language: string }> 
   );
 };
 
-const RecommendationCard: React.FC<{ recommendation: LoadRecommendation; language: string }> = ({ recommendation, language }) => {
+interface RecommendationCardProps {
+  recommendation: LoadRecommendation;
+  language: string;
+  onClick?: () => void;
+}
+
+const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation, language, onClick }) => {
   const spools = getSpools();
   const suggestedSpools = spools.filter(s => recommendation.suggestedSpoolIds.includes(s.id));
 
   return (
-    <div className={cn(
-      "p-3 rounded-lg border",
-      recommendation.priority === 'high' && "border-warning/50 bg-warning/5",
-      recommendation.priority === 'medium' && "border-muted bg-muted/30",
-      recommendation.priority === 'low' && "border-border bg-background",
-    )}>
+    <div 
+      className={cn(
+        "p-3 rounded-lg border transition-colors",
+        recommendation.priority === 'high' && "border-warning/50 bg-warning/5",
+        recommendation.priority === 'medium' && "border-muted bg-muted/30",
+        recommendation.priority === 'low' && "border-border bg-background",
+        onClick && "cursor-pointer hover:bg-accent/50"
+      )}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           <PrinterIcon className="w-4 h-4 text-muted-foreground" />
