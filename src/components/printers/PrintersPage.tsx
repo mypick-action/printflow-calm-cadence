@@ -48,6 +48,7 @@ import {
   updatePlannedCycle,
   getNextPrinterNumber,
   getFactorySettings,
+  markCapacityChanged,
   Printer, 
   Spool,
   PlannedCycle,
@@ -136,6 +137,9 @@ export const PrintersPage: React.FC = () => {
       amsMode: newPrinter.hasAMS ? newPrinter.amsMode : undefined,
     });
     
+    // Mark capacity as changed
+    markCapacityChanged(language === 'he' ? 'נוספה מדפסת חדשה' : 'New printer added');
+    
     refreshData();
     setAddDialogOpen(false);
     
@@ -196,6 +200,9 @@ export const PrintersPage: React.FC = () => {
       });
     }
     
+    // Mark capacity as changed
+    markCapacityChanged(language === 'he' ? 'מדפסת הושבתה' : 'Printer disabled');
+    
     refreshData();
     setDisableDialogOpen(false);
     setCycleAlertOpen(false);
@@ -216,6 +223,9 @@ export const PrintersPage: React.FC = () => {
       disabledAt: undefined,
       expectedReturnDate: undefined,
     });
+    
+    // Mark capacity as changed
+    markCapacityChanged(language === 'he' ? 'מדפסת הופעלה מחדש' : 'Printer reactivated');
     
     refreshData();
     

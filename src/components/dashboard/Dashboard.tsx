@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,10 @@ import {
   Clock,
   Moon
 } from 'lucide-react';
+import { getPlanningMeta } from '@/services/storage';
+import { RecalculateButton } from '@/components/planning/RecalculateButton';
+import { RecalculateModal } from '@/components/planning/RecalculateModal';
+import { CapacityChangeBanner } from '@/components/planning/CapacityChangeBanner';
 
 interface DashboardProps {
   printerNames: string[];
@@ -39,9 +43,37 @@ const mockPlanData = [
 
 export const Dashboard: React.FC<DashboardProps> = ({ printerNames, onReportIssue }) => {
   const { t } = useLanguage();
+  const [recalculateModalOpen, setRecalculateModalOpen] = useState(false);
+  const [planningMeta, setPlanningMeta] = useState(getPlanningMeta());
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  const refreshData = () => {
+    setPlanningMeta(getPlanningMeta());
+    setBannerDismissed(false);
+  };
+
+  useEffect(() => {
+    refreshData();
+  }, []);
   
   return (
     <div className="space-y-6">
+      {/* Capacity Change Banner */}
+      {planningMeta.capacityChangedSinceLastRecalculation && !bannerDismissed && (
+        <CapacityChangeBanner
+          reason={planningMeta.lastCapacityChangeReason}
+          onRecalculate={() => setRecalculateModalOpen(true)}
+          onDismiss={() => setBannerDismissed(true)}
+        />
+      )}
+
+      {/* Recalculate Modal */}
+      <RecalculateModal
+        open={recalculateModalOpen}
+        onOpenChange={setRecalculateModalOpen}
+        onRecalculated={refreshData}
+      />
+
       {/* Header with greeting */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -54,10 +86,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ printerNames, onReportIssu
             </h1>
           </div>
         </div>
-        <Button variant="outline" className="gap-2" onClick={onReportIssue}>
-          <AlertTriangle className="w-4 h-4" />
-          {t('dashboard.reportIssue')}
-        </Button>
+        <div className="flex items-center gap-3">
+          <RecalculateButton 
+            onClick={() => setRecalculateModalOpen(true)} 
+            showLastCalculated={true}
+          />
+          <Button variant="outline" className="gap-2" onClick={onReportIssue}>
+            <AlertTriangle className="w-4 h-4" />
+            {t('dashboard.reportIssue')}
+          </Button>
+        </div>
       </div>
       
       {/* Status badges */}
