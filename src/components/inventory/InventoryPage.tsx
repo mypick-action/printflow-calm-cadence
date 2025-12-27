@@ -49,12 +49,12 @@ export const InventoryPage: React.FC = () => {
   const { language } = useLanguage();
   const [spools, setSpools] = useState<Spool[]>([]);
   const [printers, setPrinters] = useState<Printer[]>([]);
-  const [availableColors, setAvailableColors] = useState<string[]>([]);
+  const [availableColors, setAvailableColors] = useState<string[]>(['Black', 'White', 'Gray', 'Red', 'Blue', 'Green']);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
   
   // Quick add states
-  const [quickAddColor, setQuickAddColor] = useState('');
+  const [quickAddColor, setQuickAddColor] = useState('Black');
   const [quickAddMaterial, setQuickAddMaterial] = useState('PLA');
   const [quickAddSize, setQuickAddSize] = useState<1000 | 2000 | 5000>(1000);
   const [quickAddQty, setQuickAddQty] = useState(1);
@@ -236,7 +236,7 @@ export const InventoryPage: React.FC = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg">
-                    {availableColors.map(c => (
+                    {availableColors.filter(c => c && c.trim()).map(c => (
                       <SelectItem key={c} value={c}>{c}</SelectItem>
                     ))}
                   </SelectContent>
@@ -306,7 +306,7 @@ export const InventoryPage: React.FC = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg">
-                    {availableColors.map(c => (
+                    {availableColors.filter(c => c && c.trim()).map(c => (
                       <SelectItem key={c} value={c}>{c}</SelectItem>
                     ))}
                   </SelectContent>
@@ -508,7 +508,7 @@ export const InventoryPage: React.FC = () => {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-background border shadow-lg">
-                      {availableColors.map(c => (
+                      {availableColors.filter(c => c && c.trim()).map(c => (
                         <SelectItem key={c} value={c}>{c}</SelectItem>
                       ))}
                     </SelectContent>
