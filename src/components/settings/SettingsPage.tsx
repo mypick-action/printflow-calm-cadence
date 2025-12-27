@@ -8,12 +8,11 @@ import { Badge } from '@/components/ui/badge';
 import { 
   Settings, 
   Clock, 
-  AlertTriangle,
-  CheckCircle2,
   Save
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { getPriorityRules, savePriorityRules, PriorityRules } from '@/services/storage';
+import { WorkScheduleSection } from './WorkScheduleSection';
 
 export const SettingsPage: React.FC = () => {
   const { language } = useLanguage();
@@ -211,6 +210,9 @@ export const SettingsPage: React.FC = () => {
           </Button>
         </CardContent>
       </Card>
+
+      {/* Work Schedule Section */}
+      <WorkScheduleSection />
     </div>
   );
 };
