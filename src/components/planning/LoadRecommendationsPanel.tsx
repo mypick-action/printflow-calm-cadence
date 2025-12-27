@@ -62,6 +62,8 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
 
   // Open load spool dialog for a recommendation
   const handleOpenLoadDialog = (rec: LoadRecommendation) => {
+    console.log('[LoadRecommendationsPanel] handleOpenLoadDialog called for:', rec.printerName, rec.color);
+    
     const printer = getPrinters().find(p => p.id === rec.printerId);
     const spools = getSpools().filter(s => 
       s.color.toLowerCase() === rec.color.toLowerCase() && 
@@ -69,11 +71,15 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
       s.location === 'stock'
     );
     
+    console.log('[LoadRecommendationsPanel] Found printer:', printer?.name, 'Available spools:', spools.length);
+    
     setSelectedRecommendation(rec);
     setTargetPrinter(printer || null);
     setAvailableSpools(spools);
     setSelectedSpoolId(rec.suggestedSpoolIds[0] || '');
     setLoadDialogOpen(true);
+    
+    console.log('[LoadRecommendationsPanel] Dialog should now be open');
   };
 
   // Handle mounting spool
