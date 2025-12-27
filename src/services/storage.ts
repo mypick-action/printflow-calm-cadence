@@ -2,6 +2,7 @@
 // This layer abstracts localStorage so we can swap to a real DB later
 
 import { scheduleAutoReplan } from './autoReplan';
+import { normalizeColor } from './colorNormalization';
 
 // ============= TYPES =============
 
@@ -266,8 +267,9 @@ export const getAvailableFilamentForPrinter = (
   printer: Printer
 ): { totalGrams: number; spools: Spool[]; recommendation?: string } => {
   const spools = getSpools();
+  const colorKey = normalizeColor(color);
   const matchingSpools = spools.filter(s => 
-    s.color.toLowerCase() === color.toLowerCase() &&
+    normalizeColor(s.color) === colorKey &&
     s.state !== 'empty' &&
     (s.assignedPrinterId === printerId || s.location === 'stock')
   );
@@ -905,13 +907,13 @@ export const consumeMaterial = (
   }
 
   const spools = getSpools();
-  const colorLower = color.toLowerCase();
+  const colorKey = normalizeColor(color);
   
   // Find matching spools (same color, not empty)
   // Sort by: assigned to printer first, then open before new, then by remaining grams (FIFO approximation)
   const matchingSpools = spools
     .filter(s => 
-      s.color.toLowerCase() === colorLower && 
+      normalizeColor(s.color) === colorKey && 
       s.state !== 'empty' &&
       s.gramsRemainingEst > 0
     )
@@ -993,11 +995,11 @@ export const checkMaterialAvailability = (
   gramsNeeded: number
 ): { available: boolean; totalGrams: number; shortfall: number } => {
   const spools = getSpools();
-  const colorLower = color.toLowerCase();
+  const colorKey = normalizeColor(color);
   
   const totalGrams = spools
     .filter(s => 
-      s.color.toLowerCase() === colorLower && 
+      normalizeColor(s.color) === colorKey && 
       s.state !== 'empty' &&
       s.gramsRemainingEst > 0
     )

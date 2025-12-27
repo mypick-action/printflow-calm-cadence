@@ -3,6 +3,7 @@
 // Version 2.0: Enforces spool selection from inventory, removes FilamentEstimate
 
 import { scheduleAutoReplan } from './autoReplan';
+import { normalizeColor } from './colorNormalization';
 
 // Migration version key
 const MIGRATION_VERSION_KEY = 'printflow_migration_version';
@@ -167,7 +168,7 @@ const migrateToVersion2 = (): MigrationResult => {
           
           // Try to find a matching spool in inventory
           const matchingSpool = spools.find(s => 
-            s.color?.toLowerCase() === printer.mountedColor?.toLowerCase() &&
+            normalizeColor(s.color) === normalizeColor(printer.mountedColor) &&
             s.state !== 'empty' &&
             s.gramsRemainingEst > 0 &&
             !s.assignedPrinterId // Not already assigned

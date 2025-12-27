@@ -24,6 +24,7 @@ import {
   getAvailableFilamentForPrinter,
   getGramsPerCycle,
 } from './storage';
+import { normalizeColor } from './colorNormalization';
 
 // ============= TYPES =============
 
@@ -166,8 +167,9 @@ const formatDateString = (date: Date): string => {
 };
 
 const getAvailableFilamentForColor = (color: string, spools: Spool[]): number => {
+  const colorKey = normalizeColor(color);
   return spools
-    .filter(s => s.color.toLowerCase() === color.toLowerCase() && s.state !== 'empty')
+    .filter(s => normalizeColor(s.color) === colorKey && s.state !== 'empty')
     .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
 };
 
@@ -388,7 +390,7 @@ const scheduleCyclesForDay = (
         
         // Calculate material needs
         const gramsNeeded = getGramsPerCycle(state.product, state.preset);
-        const colorKey = state.project.color.toLowerCase();
+        const colorKey = normalizeColor(state.project.color);
         const availableMaterial = workingMaterial.get(colorKey) || 0;
         
         // Determine units for this cycle
@@ -400,7 +402,7 @@ const scheduleCyclesForDay = (
         // Count available spools for this color
         const allSpools = getSpools();
         const availableSpoolsForColor = allSpools.filter(s => 
-          s.color.toLowerCase() === colorKey && 
+          normalizeColor(s.color) === colorKey && 
           s.state !== 'empty' &&
           s.gramsRemainingEst > 0
         );
@@ -451,11 +453,11 @@ const scheduleCyclesForDay = (
           let isSpoolMounted = false;
           if (printer?.hasAMS && printer.amsSlotStates) {
             isSpoolMounted = printer.amsSlotStates.some(s => 
-              s.color?.toLowerCase() === colorKey && !!s.spoolId
+              normalizeColor(s.color) === colorKey && !!s.spoolId
             );
           } else {
             isSpoolMounted = !!printer?.mountedSpoolId && 
-              printer?.mountedColor?.toLowerCase() === colorKey;
+              normalizeColor(printer?.mountedColor) === colorKey;
           }
           
           if (isSpoolMounted) {

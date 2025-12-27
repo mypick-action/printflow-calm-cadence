@@ -17,6 +17,7 @@ import {
   getProducts,
 } from './storage';
 import { SAFETY_THRESHOLD_GRAMS } from './materialStatus';
+import { normalizeColor } from './colorNormalization';
 
 export interface LoadRecommendationsResult {
   recommendations: LoadRecommendation[];
@@ -44,7 +45,6 @@ const calculateRemainingDemandByColor = (): Map<string, {
 }> => {
   const projects = getProjects();
   const products = getProducts();
-  const spools = getSpools();
   const demandByColor = new Map<string, {
     totalGrams: number;
     projectIds: string[];
@@ -58,9 +58,9 @@ const calculateRemainingDemandByColor = (): Map<string, {
     const product = products.find(p => p.id === project.productId);
     if (!product) continue;
 
-    // Project.color is the source of truth for color
-    const color = project.color?.toLowerCase();
-    if (!color) continue;
+    // Normalize project color for consistent matching
+    const colorKey = normalizeColor(project.color);
+    if (!colorKey) continue;
 
     // Calculate remaining units needed (quantityGood = successfully produced)
     const unitsProduced = project.quantityGood || 0;
@@ -72,28 +72,7 @@ const calculateRemainingDemandByColor = (): Map<string, {
     const gramsPerUnit = product.gramsPerUnit || 0;
     const gramsNeeded = unitsRemaining * gramsPerUnit;
 
-    // DEBUG: Log for projects with "green" color to diagnose key mismatch
-    if (color.includes('green') || color.includes('ירוק') || project.name.includes('מלפפון')) {
-      const inventoryForColor = spools.filter(s => 
-        s.color.toLowerCase() === color && 
-        s.state !== 'empty' && 
-        s.gramsRemainingEst > 0
-      );
-      const inventoryGrams = inventoryForColor.reduce((sum, s) => sum + s.gramsRemainingEst, 0);
-      
-      console.log(`[DEBUG Material Alert] Project: "${project.name}"`, {
-        '1. project.color': project.color,
-        '2. colorKey (lowercase)': color,
-        '3. product.gramsPerUnit': gramsPerUnit,
-        '4. unitsRemaining': unitsRemaining,
-        '5. gramsNeeded': gramsNeeded,
-        '6. inventorySpoolColors': spools.map(s => ({ color: s.color, colorLower: s.color.toLowerCase(), grams: s.gramsRemainingEst, state: s.state })),
-        '7. matchingSpools': inventoryForColor.map(s => ({ id: s.id, color: s.color, grams: s.gramsRemainingEst })),
-        '8. totalInventoryGrams': inventoryGrams,
-      });
-    }
-
-    const existing = demandByColor.get(color) || {
+    const existing = demandByColor.get(colorKey) || {
       totalGrams: 0,
       projectIds: [],
       projectNames: [],
@@ -102,7 +81,7 @@ const calculateRemainingDemandByColor = (): Map<string, {
     existing.totalGrams += gramsNeeded;
     existing.projectIds.push(project.id);
     existing.projectNames.push(project.name);
-    demandByColor.set(color, existing);
+    demandByColor.set(colorKey, existing);
   }
 
   return demandByColor;
@@ -111,6 +90,7 @@ const calculateRemainingDemandByColor = (): Map<string, {
 /**
  * Calculate material shortages based on CURRENT inventory vs REMAINING project demand
  * This is the source of truth for material alerts - derived, not stored
+ * Uses normalizeColor() for consistent matching between projects and spools
  */
 const calculateMaterialShortages = (): MaterialShortage[] => {
   const spools = getSpools();
@@ -118,10 +98,10 @@ const calculateMaterialShortages = (): MaterialShortage[] => {
   const shortages: MaterialShortage[] = [];
 
   for (const [colorKey, demand] of demandByColor) {
-    // Calculate available grams for this color
+    // Calculate available grams using normalized color matching
     const availableGrams = spools
       .filter(s => 
-        s.color.toLowerCase() === colorKey && 
+        normalizeColor(s.color) === colorKey && 
         s.state !== 'empty' && 
         s.gramsRemainingEst > 0
       )
