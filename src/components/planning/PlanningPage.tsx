@@ -269,8 +269,8 @@ export const PlanningPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Load Recommendations Panel - Per PRD: Always show execution guidance */}
-      <LoadRecommendationsPanel onRefresh={refreshData} />
+      {/* Load Recommendations Panel - Indicator only, full details on Printers page */}
+      <LoadRecommendationsPanel onRefresh={refreshData} showFullDetails={false} />
 
       {/* Capacity Change Banner */}
       {planningMeta.capacityChangedSinceLastRecalculation && !bannerDismissed && (

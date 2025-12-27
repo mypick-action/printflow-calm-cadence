@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronUp,
   Printer as PrinterIcon,
+  ArrowRight,
 } from 'lucide-react';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { generateLoadRecommendations, LoadRecommendationsResult, getActionSummary } from '@/services/loadRecommendations';
@@ -22,9 +23,11 @@ import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
 
 interface LoadRecommendationsPanelProps {
   onRefresh?: () => void;
+  /** If true, shows full details. If false, shows only indicator with link to Printers page */
+  showFullDetails?: boolean;
 }
 
-export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> = ({ onRefresh }) => {
+export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> = ({ onRefresh, showFullDetails = false }) => {
   const { language } = useLanguage();
   const [result, setResult] = useState<LoadRecommendationsResult | null>(null);
   const [expanded, setExpanded] = useState(true);
@@ -72,6 +75,38 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
     return null; // No cycles, no panel
   }
 
+  const hasLoadActions = recommendations.length > 0 || materialShortages.length > 0;
+
+  // Compact indicator mode - just shows that action is needed with link to printers
+  if (!showFullDetails && hasLoadActions) {
+    return (
+      <Alert className="border-warning/30 bg-warning/5">
+        <Package className="h-4 w-4 text-warning" />
+        <AlertTitle className="text-warning flex items-center gap-2">
+          {language === 'he' ? 'נדרשת טעינת גלילים' : 'Spool Loading Required'}
+          <Badge variant="outline" className="bg-warning/10 text-warning border-warning/30 text-xs">
+            {recommendations.length + materialShortages.length}
+          </Badge>
+        </AlertTitle>
+        <AlertDescription className="flex items-center justify-between mt-1">
+          <span className="text-muted-foreground">
+            {language === 'he' 
+              ? 'יש לגשת לדף מדפסות ולהזין לפי הרשימה' 
+              : 'Go to Printers page and load according to the list'}
+          </span>
+          <a 
+            href="/printers" 
+            className="text-primary hover:underline text-sm font-medium flex items-center gap-1"
+          >
+            {language === 'he' ? 'לדף מדפסות' : 'Go to Printers'}
+            <ArrowRight className="w-3 h-3" />
+          </a>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  // Full details mode - shows all recommendations
   return (
     <Card variant="elevated" className="border-warning/30">
       <CardHeader className="p-4 pb-2">
