@@ -248,6 +248,20 @@ const RecommendationCard: React.FC<{
   const spools = getSpools();
   const suggestedSpools = spools.filter(s => recommendation.suggestedSpoolIds.includes(s.id));
 
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onClick?.();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick?.();
+    }
+  };
+
   return (
     <div 
       className={cn(
@@ -256,10 +270,10 @@ const RecommendationCard: React.FC<{
         recommendation.priority === 'medium' && "border-muted bg-muted/30 hover:bg-muted/50",
         recommendation.priority === 'low' && "border-border bg-background hover:bg-muted/30",
       )}
-      onClick={onClick}
+      onClick={handleClick}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => e.key === 'Enter' && onClick?.()}
+      onKeyDown={handleKeyDown}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
