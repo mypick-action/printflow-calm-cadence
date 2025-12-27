@@ -3,22 +3,16 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { Calendar } from '@/components/ui/calendar';
 import { cn } from '@/lib/utils';
 import { format, addDays, startOfWeek, isSameDay, isWithinInterval, parseISO } from 'date-fns';
 import { 
@@ -30,9 +24,9 @@ import {
   Moon,
   Sun,
   Settings2,
-  Plus,
   Trash2,
-  CalendarIcon
+  Info,
+  RefreshCw,
 } from 'lucide-react';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { 
@@ -48,14 +42,29 @@ import {
 import { RecalculateButton } from './RecalculateButton';
 import { RecalculateModal } from './RecalculateModal';
 import { CapacityChangeBanner } from './CapacityChangeBanner';
+import { DailyPlanDrawer } from './DailyPlanDrawer';
+import { TemporaryOverrideModal } from './TemporaryOverrideModal';
+import { toast } from '@/hooks/use-toast';
 
-interface ScheduleOverride {
+interface DayOverride {
+  enabled: boolean;
+  startTime: string;
+  endTime: string;
+}
+
+interface WeekOverride {
   id: string;
   startDate: string;
   endDate: string;
-  extraDays: string[];
-  customStartTime?: string;
-  customEndTime?: string;
+  days: {
+    sunday: DayOverride;
+    monday: DayOverride;
+    tuesday: DayOverride;
+    wednesday: DayOverride;
+    thursday: DayOverride;
+    friday: DayOverride;
+    saturday: DayOverride;
+  };
 }
 
 interface DaySchedule {
@@ -67,9 +76,11 @@ interface DaySchedule {
   cycles: (PlannedCycle & { projectName: string; projectColor: string })[];
 }
 
-const DAYS_OF_WEEK = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const DAYS_OF_WEEK = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 const DAYS_LABELS_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 const DAYS_LABELS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const STORAGE_KEY = 'printflow_week_overrides';
 
 export const PlanningPage: React.FC = () => {
   const { language } = useLanguage();
@@ -77,18 +88,16 @@ export const PlanningPage: React.FC = () => {
   const [printers, setPrinters] = useState<PrinterType[]>([]);
   const [plannedCycles, setPlannedCycles] = useState<PlannedCycle[]>([]);
   const [currentWeekStart, setCurrentWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 0 }));
-  const [overrides, setOverrides] = useState<ScheduleOverride[]>([]);
-  const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
-  const [newOverride, setNewOverride] = useState<Partial<ScheduleOverride>>({
-    extraDays: [],
-    customStartTime: '08:00',
-    customEndTime: '17:00',
-  });
-  const [startDateOpen, setStartDateOpen] = useState(false);
-  const [endDateOpen, setEndDateOpen] = useState(false);
+  const [overrides, setOverrides] = useState<WeekOverride[]>([]);
+  const [overrideModalOpen, setOverrideModalOpen] = useState(false);
   const [recalculateModalOpen, setRecalculateModalOpen] = useState(false);
   const [planningMeta, setPlanningMeta] = useState(getPlanningMeta());
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [selectedDay, setSelectedDay] = useState<DaySchedule | null>(null);
+  const [dailyDrawerOpen, setDailyDrawerOpen] = useState(false);
+  // For mobile info popovers
+  const [recalculateInfoOpen, setRecalculateInfoOpen] = useState(false);
+  const [overrideInfoOpen, setOverrideInfoOpen] = useState(false);
 
   const refreshData = () => {
     setSettings(getFactorySettings());
@@ -102,36 +111,29 @@ export const PlanningPage: React.FC = () => {
     refreshData();
     
     // Load overrides from localStorage
-    const savedOverrides = localStorage.getItem('printflow_schedule_overrides');
+    const savedOverrides = localStorage.getItem(STORAGE_KEY);
     if (savedOverrides) {
       setOverrides(JSON.parse(savedOverrides));
     }
   }, []);
 
-  const saveOverrides = (newOverrides: ScheduleOverride[]) => {
+  const saveOverrides = (newOverrides: WeekOverride[]) => {
     setOverrides(newOverrides);
-    localStorage.setItem('printflow_schedule_overrides', JSON.stringify(newOverrides));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(newOverrides));
   };
 
-  const handleAddOverride = () => {
-    if (!newOverride.startDate || !newOverride.endDate) return;
-    
-    const override: ScheduleOverride = {
-      id: `override-${Date.now()}`,
-      startDate: newOverride.startDate,
-      endDate: newOverride.endDate,
-      extraDays: newOverride.extraDays || [],
-      customStartTime: newOverride.customStartTime,
-      customEndTime: newOverride.customEndTime,
-    };
-    
-    saveOverrides([...overrides, override]);
-    setNewOverride({
-      extraDays: [],
-      customStartTime: '08:00',
-      customEndTime: '17:00',
+  const handleSaveOverride = (override: WeekOverride) => {
+    // Remove any existing override for the same date range and add new one
+    const filtered = overrides.filter(o => 
+      !(o.startDate === override.startDate && o.endDate === override.endDate)
+    );
+    saveOverrides([...filtered, override]);
+    toast({
+      title: language === 'he' ? 'שינוי לוז נשמר' : 'Schedule override saved',
+      description: language === 'he' 
+        ? 'השינוי יחול על הימים שנבחרו'
+        : 'Override will apply to selected days',
     });
-    setOverrideDialogOpen(false);
   };
 
   const handleRemoveOverride = (id: string) => {
@@ -145,24 +147,39 @@ export const PlanningPage: React.FC = () => {
       const date = addDays(currentWeekStart, i);
       const dayName = DAYS_OF_WEEK[date.getDay()];
       
-      // Check if this day is a regular workday
-      let isWorkday = settings?.workdays.includes(dayName) || false;
-      let isOverride = false;
-      let startTime = settings?.startTime || '08:00';
-      let endTime = settings?.endTime || '17:00';
+      // Check if this day is a regular workday from weekly schedule
+      let isWorkday = false;
+      let startTime = '08:00';
+      let endTime = '17:00';
       
-      // Check for overrides
+      if (settings?.weeklySchedule) {
+        const daySchedule = settings.weeklySchedule[dayName];
+        if (daySchedule) {
+          isWorkday = daySchedule.enabled;
+          startTime = daySchedule.startTime;
+          endTime = daySchedule.endTime;
+        }
+      } else if (settings?.workdays) {
+        // Legacy support
+        isWorkday = settings.workdays.includes(dayName);
+        startTime = settings.startTime || '08:00';
+        endTime = settings.endTime || '17:00';
+      }
+      
+      let isOverride = false;
+      
+      // Check for week overrides
       for (const override of overrides) {
         const overrideStart = parseISO(override.startDate);
         const overrideEnd = parseISO(override.endDate);
         
         if (isWithinInterval(date, { start: overrideStart, end: overrideEnd })) {
-          // Check if this day is an extra day in the override
-          if (override.extraDays.includes(dayName)) {
-            isWorkday = true;
+          const dayOverride = override.days[dayName];
+          if (dayOverride) {
+            isWorkday = dayOverride.enabled;
+            startTime = dayOverride.startTime;
+            endTime = dayOverride.endTime;
             isOverride = true;
-            startTime = override.customStartTime || startTime;
-            endTime = override.customEndTime || endTime;
           }
         }
       }
@@ -211,6 +228,18 @@ export const PlanningPage: React.FC = () => {
     return cyclesPerPrinter * 8 * printers.length;
   };
 
+  const handleDayClick = (day: DaySchedule) => {
+    setSelectedDay(day);
+    setDailyDrawerOpen(true);
+  };
+
+  const handleRecalculateDay = (date: Date) => {
+    // For now, just trigger full recalculation
+    // In the future, this could be day-specific
+    setDailyDrawerOpen(false);
+    setRecalculateModalOpen(true);
+  };
+
   const weekDays = getWeekDays();
   const dayLabels = language === 'he' ? DAYS_LABELS_HE : DAYS_LABELS_EN;
 
@@ -219,14 +248,14 @@ export const PlanningPage: React.FC = () => {
     return day.cycles.filter(c => c.shift === 'end_of_day');
   };
 
-  const toggleExtraDay = (day: string) => {
-    const current = newOverride.extraDays || [];
-    if (current.includes(day)) {
-      setNewOverride({ ...newOverride, extraDays: current.filter(d => d !== day) });
-    } else {
-      setNewOverride({ ...newOverride, extraDays: [...current, day] });
-    }
-  };
+  // Tooltip content
+  const recalculateTooltipText = language === 'he' 
+    ? 'מחשב מחדש את התכנון לפי: פרויקטים פתוחים, זמינות מדפסות, שעות עבודה, וזמינות פילמנט.\nלא מוחק נתונים — רק מייצר לוז חדש.'
+    : "Rebuilds the plan based on active projects, printer availability, work hours, and filament inventory.\nIt doesn't delete data — it only generates a new schedule.";
+
+  const overrideTooltipText = language === 'he'
+    ? 'שינוי זמני לשבוע הזה בלבד (למשל לעבוד עד 21:00 או לפתוח שישי).\nבסוף הטווח הכל חוזר אוטומטית להגדרות הרגילות.'
+    : 'Temporary override for this week only (e.g., work until 21:00 or open Friday).\nAfter the date range ends, it automatically returns to default settings.';
 
   return (
     <div className="space-y-6">
@@ -246,6 +275,22 @@ export const PlanningPage: React.FC = () => {
         onRecalculated={refreshData}
       />
 
+      {/* Temporary Override Modal */}
+      <TemporaryOverrideModal
+        open={overrideModalOpen}
+        onOpenChange={setOverrideModalOpen}
+        onSave={handleSaveOverride}
+      />
+
+      {/* Daily Plan Drawer */}
+      <DailyPlanDrawer
+        open={dailyDrawerOpen}
+        onOpenChange={setDailyDrawerOpen}
+        day={selectedDay}
+        printers={printers}
+        onRecalculateDay={handleRecalculateDay}
+      />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -257,169 +302,77 @@ export const PlanningPage: React.FC = () => {
               {language === 'he' ? 'תכנון שבועי' : 'Weekly Planning'}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {language === 'he' ? 'תצוגת קיבולת ומחזורים לפי יום' : 'Daily capacity and cycles view'}
+              {language === 'he' ? 'לחצו על יום לצפייה בתכנון מפורט' : 'Click a day to view detailed plan'}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <RecalculateButton 
-            onClick={() => setRecalculateModalOpen(true)} 
-            showLastCalculated={true}
-          />
-        
-          <Dialog open={overrideDialogOpen} onOpenChange={setOverrideDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" className="gap-2">
-                <Settings2 className="w-4 h-4" />
-                {language === 'he' ? 'שינוי לוח זמנים זמני' : 'Temporary Override'}
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>
-                  {language === 'he' ? 'שינוי לוח זמנים זמני' : 'Temporary Schedule Override'}
-                </DialogTitle>
-              </DialogHeader>
-            <div className="space-y-4 py-4">
-              {/* Date Range */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>{language === 'he' ? 'מתאריך' : 'From Date'}</Label>
-                  <Popover open={startDateOpen} onOpenChange={setStartDateOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !newOverride.startDate && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {newOverride.startDate 
-                          ? format(parseISO(newOverride.startDate), 'dd/MM/yyyy')
-                          : (language === 'he' ? 'בחר תאריך' : 'Pick date')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={newOverride.startDate ? parseISO(newOverride.startDate) : undefined}
-                        onSelect={(date) => {
-                          if (date) {
-                            setNewOverride({ ...newOverride, startDate: format(date, 'yyyy-MM-dd') });
-                          }
-                          setStartDateOpen(false);
-                        }}
-                        initialFocus
-                        className={cn("p-3 pointer-events-auto")}
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-2">
-                  <Label>{language === 'he' ? 'עד תאריך' : 'To Date'}</Label>
-                  <Popover open={endDateOpen} onOpenChange={setEndDateOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !newOverride.endDate && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {newOverride.endDate 
-                          ? format(parseISO(newOverride.endDate), 'dd/MM/yyyy')
-                          : (language === 'he' ? 'בחר תאריך' : 'Pick date')}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={newOverride.endDate ? parseISO(newOverride.endDate) : undefined}
-                        onSelect={(date) => {
-                          if (date) {
-                            setNewOverride({ ...newOverride, endDate: format(date, 'yyyy-MM-dd') });
-                          }
-                          setEndDateOpen(false);
-                        }}
-                        disabled={(date) => newOverride.startDate ? date < parseISO(newOverride.startDate) : false}
-                        initialFocus
-                        className={cn("p-3 pointer-events-auto")}
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              </div>
+        <div className="flex items-center gap-2">
+          {/* Recalculate Button with Tooltip */}
+          <div className="flex items-center">
+            <RecalculateButton 
+              onClick={() => setRecalculateModalOpen(true)} 
+              showLastCalculated={true}
+            />
+            {/* Desktop tooltip */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="hidden sm:flex h-8 w-8">
+                  <Info className="w-4 h-4 text-muted-foreground" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs whitespace-pre-line">
+                {recalculateTooltipText}
+              </TooltipContent>
+            </Tooltip>
+            {/* Mobile popover */}
+            <Popover open={recalculateInfoOpen} onOpenChange={setRecalculateInfoOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="sm:hidden h-8 w-8">
+                  <Info className="w-4 h-4 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-sm">
+                {recalculateTooltipText}
+              </PopoverContent>
+            </Popover>
+          </div>
 
-              {/* Extra Days */}
-              <div className="space-y-2">
-                <Label>{language === 'he' ? 'ימי עבודה נוספים' : 'Extra Workdays'}</Label>
-                <div className="flex flex-wrap gap-2">
-                  {DAYS_OF_WEEK.map((day, index) => {
-                    const isRegularWorkday = settings?.workdays.includes(day);
-                    const isSelected = newOverride.extraDays?.includes(day);
-                    const label = language === 'he' ? DAYS_LABELS_HE[index] : DAYS_LABELS_EN[index];
-                    
-                    return (
-                      <button
-                        key={day}
-                        onClick={() => !isRegularWorkday && toggleExtraDay(day)}
-                        disabled={isRegularWorkday}
-                        className={cn(
-                          "px-3 py-2 rounded-lg text-sm font-medium transition-all",
-                          isRegularWorkday 
-                            ? "bg-muted text-muted-foreground cursor-not-allowed"
-                            : isSelected
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted hover:bg-accent"
-                        )}
-                      >
-                        {label}
-                        {isRegularWorkday && <span className="text-xs ml-1">✓</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {language === 'he' 
-                    ? 'ימים עם ✓ הם ימי עבודה רגילים. בחרו ימים נוספים.'
-                    : 'Days with ✓ are regular workdays. Select additional days.'}
-                </p>
-              </div>
-
-              {/* Custom Hours */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>{language === 'he' ? 'שעת התחלה' : 'Start Time'}</Label>
-                  <Input
-                    type="time"
-                    value={newOverride.customStartTime || '08:00'}
-                    onChange={(e) => setNewOverride({ ...newOverride, customStartTime: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>{language === 'he' ? 'שעת סיום' : 'End Time'}</Label>
-                  <Input
-                    type="time"
-                    value={newOverride.customEndTime || '17:00'}
-                    onChange={(e) => setNewOverride({ ...newOverride, customEndTime: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <Button 
-                onClick={handleAddOverride}
-                disabled={!newOverride.startDate || !newOverride.endDate || (newOverride.extraDays?.length === 0)}
-                className="w-full"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                {language === 'he' ? 'הוסף שינוי' : 'Add Override'}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+          {/* Override Button with Tooltip */}
+          <div className="flex items-center">
+            <Button 
+              variant="outline" 
+              className="gap-2"
+              onClick={() => setOverrideModalOpen(true)}
+            >
+              <Settings2 className="w-4 h-4" />
+              <span className="hidden sm:inline">
+                {language === 'he' ? 'שינוי לוז זמני' : 'Temporary Override'}
+              </span>
+            </Button>
+            {/* Desktop tooltip */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="hidden sm:flex h-8 w-8">
+                  <Info className="w-4 h-4 text-muted-foreground" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs whitespace-pre-line">
+                {overrideTooltipText}
+              </TooltipContent>
+            </Tooltip>
+            {/* Mobile popover */}
+            <Popover open={overrideInfoOpen} onOpenChange={setOverrideInfoOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="sm:hidden h-8 w-8">
+                  <Info className="w-4 h-4 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-sm">
+                {overrideTooltipText}
+              </PopoverContent>
+            </Popover>
+          </div>
         </div>
       </div>
 
@@ -430,38 +383,40 @@ export const PlanningPage: React.FC = () => {
             <div className="flex items-center gap-2 mb-3">
               <Settings2 className="w-4 h-4 text-warning" />
               <span className="font-medium text-sm">
-                {language === 'he' ? 'שינויי לוח זמנים פעילים' : 'Active Schedule Overrides'}
+                {language === 'he' ? 'שינויי לוז פעילים' : 'Active Schedule Overrides'}
               </span>
             </div>
             <div className="space-y-2">
-              {overrides.map((override) => (
-                <div key={override.id} className="flex items-center justify-between p-3 bg-background rounded-lg">
-                  <div className="text-sm">
-                    <span className="font-medium">
-                      {format(parseISO(override.startDate), 'dd/MM')} - {format(parseISO(override.endDate), 'dd/MM')}
-                    </span>
-                    <span className="text-muted-foreground mx-2">•</span>
-                    <span className="text-muted-foreground">
-                      {override.extraDays.map(d => {
-                        const idx = DAYS_OF_WEEK.indexOf(d);
-                        return language === 'he' ? DAYS_LABELS_HE[idx] : DAYS_LABELS_EN[idx];
-                      }).join(', ')}
-                    </span>
-                    <span className="text-muted-foreground mx-2">•</span>
-                    <span className="text-muted-foreground">
-                      {override.customStartTime} - {override.customEndTime}
-                    </span>
+              {overrides.map((override) => {
+                const enabledDays = Object.entries(override.days)
+                  .filter(([_, v]) => v.enabled)
+                  .map(([k, _]) => {
+                    const idx = DAYS_OF_WEEK.indexOf(k as typeof DAYS_OF_WEEK[number]);
+                    return language === 'he' ? DAYS_LABELS_HE[idx] : DAYS_LABELS_EN[idx];
+                  });
+
+                return (
+                  <div key={override.id} className="flex items-center justify-between p-3 bg-background rounded-lg">
+                    <div className="text-sm">
+                      <span className="font-medium">
+                        {format(parseISO(override.startDate), 'dd/MM')} - {format(parseISO(override.endDate), 'dd/MM')}
+                      </span>
+                      <span className="text-muted-foreground mx-2">•</span>
+                      <span className="text-muted-foreground">
+                        {enabledDays.join(', ')}
+                      </span>
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      onClick={() => handleRemoveOverride(override.id)}
+                      className="h-8 w-8 text-muted-foreground hover:text-error"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </div>
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    onClick={() => handleRemoveOverride(override.id)}
-                    className="h-8 w-8 text-muted-foreground hover:text-error"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -494,11 +449,12 @@ export const PlanningPage: React.FC = () => {
               key={index}
               variant={day.isWorkday ? 'elevated' : 'glass'}
               className={cn(
-                "min-h-[200px] transition-all",
+                "min-h-[200px] transition-all cursor-pointer hover:ring-2 hover:ring-primary/50",
                 isToday && "ring-2 ring-primary",
                 !day.isWorkday && "opacity-60",
                 day.isOverride && "border-warning/50 bg-warning/5"
               )}
+              onClick={() => handleDayClick(day)}
             >
               <CardHeader className="p-3 pb-2">
                 <div className="flex items-center justify-between">
