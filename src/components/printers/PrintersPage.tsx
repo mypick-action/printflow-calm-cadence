@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useNavigation } from '@/contexts/NavigationContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -63,6 +64,8 @@ import { notifyInventoryChanged } from '@/services/inventoryEvents';
 
 export const PrintersPage: React.FC = () => {
   const { language } = useLanguage();
+  const { navigationState, clearNavigationState } = useNavigation();
+  const autoOpenHandled = useRef(false);
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [spools, setSpools] = useState<Spool[]>([]);
   const [editingPrinter, setEditingPrinter] = useState<Printer | null>(null);
@@ -100,6 +103,19 @@ export const PrintersPage: React.FC = () => {
   useEffect(() => {
     refreshData();
   }, []);
+
+  // Handle auto-open printer from navigation state (e.g., from Required Actions click)
+  useEffect(() => {
+    if (navigationState.openPrinterId && !autoOpenHandled.current) {
+      autoOpenHandled.current = true;
+      const printer = printers.find(p => p.id === navigationState.openPrinterId);
+      if (printer) {
+        // Auto-open the load spool dialog for this printer
+        handleOpenLoadSpoolDialog(printer);
+        clearNavigationState();
+      }
+    }
+  }, [navigationState.openPrinterId, printers, clearNavigationState]);
 
   const refreshData = () => {
     setPrinters(getPrinters());
@@ -337,6 +353,9 @@ export const PrintersPage: React.FC = () => {
 
     // Mark loaded spools as initialized
     setLoadedSpoolsInitialized(true);
+
+    // Notify inventory change so Required Actions panel refreshes
+    notifyInventoryChanged();
 
     refreshData();
     setLoadSpoolDialogOpen(false);

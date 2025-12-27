@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useNavigation } from '@/contexts/NavigationContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,7 +27,7 @@ interface LoadRecommendationsPanelProps {
 
 export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> = ({ onRefresh }) => {
   const { language } = useLanguage();
-  const navigate = useNavigate();
+  const { navigateTo } = useNavigation();
   const [result, setResult] = useState<LoadRecommendationsResult | null>(null);
   const [expanded, setExpanded] = useState(true);
 
@@ -145,7 +145,7 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
                   key={rec.id} 
                   recommendation={rec} 
                   language={language}
-                  onClick={() => navigate(`/inventory/printers?openPrinterId=${rec.printerId}&focus=mountColor`)}
+                  onClick={() => navigateTo('printers', { openPrinterId: rec.printerId, focusField: 'mountColor' })}
                 />
               ))}
             </div>

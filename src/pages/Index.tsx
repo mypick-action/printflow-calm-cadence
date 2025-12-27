@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext';
+import { NavigationProvider } from '@/contexts/NavigationContext';
 import { OnboardingWizard, OnboardingData } from '@/components/onboarding/OnboardingWizard';
 import { BootstrapScreen } from '@/components/bootstrap/BootstrapScreen';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -164,13 +165,15 @@ const PrintFlowApp: React.FC = () => {
   };
   
   return (
-    <AppLayout currentPage={currentPage} onNavigate={setCurrentPage}>
-      {renderPage()}
-      <ReportIssueFlow 
-        isOpen={reportIssueOpen} 
-        onClose={() => setReportIssueOpen(false)} 
-      />
-    </AppLayout>
+    <NavigationProvider currentPage={currentPage} onNavigate={setCurrentPage}>
+      <AppLayout currentPage={currentPage} onNavigate={setCurrentPage}>
+        {renderPage()}
+        <ReportIssueFlow 
+          isOpen={reportIssueOpen} 
+          onClose={() => setReportIssueOpen(false)} 
+        />
+      </AppLayout>
+    </NavigationProvider>
   );
 };
 
