@@ -79,8 +79,10 @@ export const SettingsPage: React.FC = () => {
           </p>
         </div>
       </div>
+      {/* Work Schedule Section - First */}
+      <WorkScheduleSection />
 
-      {/* Priority Rules Card */}
+      {/* Priority Rules Card - Second */}
       <Card variant="elevated">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
@@ -161,44 +163,6 @@ export const SettingsPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Preview */}
-          <div className="pt-4 border-t border-border">
-            <div className="text-sm font-medium mb-3">
-              {language === 'he' ? 'תצוגה מקדימה:' : 'Preview:'}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {previewDays.map(days => {
-                const priority = getPriorityPreview(days);
-                const priorityConfig = {
-                  normal: { 
-                    label: language === 'he' ? 'רגיל' : 'Normal', 
-                    className: 'bg-success/10 text-success border-success/20' 
-                  },
-                  urgent: { 
-                    label: language === 'he' ? 'דחוף' : 'Urgent', 
-                    className: 'bg-warning/10 text-warning border-warning/20' 
-                  },
-                  critical: { 
-                    label: language === 'he' ? 'קריטי' : 'Critical', 
-                    className: 'bg-error/10 text-error border-error/20' 
-                  },
-                };
-                return (
-                  <div key={days} className="flex items-center gap-1 p-2 bg-muted rounded-lg">
-                    <span className="text-sm font-medium">{days}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {language === 'he' ? 'ימים' : 'days'}
-                    </span>
-                    <span className="mx-1">→</span>
-                    <Badge variant="outline" className={priorityConfig[priority].className}>
-                      {priorityConfig[priority].label}
-                    </Badge>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
           {/* Save Button */}
           <Button 
             onClick={handleSave} 
@@ -210,9 +174,6 @@ export const SettingsPage: React.FC = () => {
           </Button>
         </CardContent>
       </Card>
-
-      {/* Work Schedule Section */}
-      <WorkScheduleSection />
     </div>
   );
 };
