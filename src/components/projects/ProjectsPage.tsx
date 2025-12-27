@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ProjectDetailsPage } from './ProjectDetailsPage';
 import {
   Table,
   TableBody,
@@ -102,6 +103,7 @@ export const ProjectsPage: React.FC = () => {
   const [productEditorInitialName, setProductEditorInitialName] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   
   // Filter state - Status filter (primary, default to in_progress only)
   const [statusFilters, setStatusFilters] = useState<Record<ProjectStatus, boolean>>({
@@ -377,6 +379,20 @@ export const ProjectsPage: React.FC = () => {
 
   // Check if any status filter is active
   const hasActiveStatusFilter = Object.values(statusFilters).some(v => v);
+
+  // If a project is selected, show the details page
+  if (selectedProjectId) {
+    return (
+      <ProjectDetailsPage
+        projectId={selectedProjectId}
+        onBack={() => {
+          setSelectedProjectId(null);
+          // Refresh data when coming back from details
+          setProjects(getProjects());
+        }}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -758,7 +774,11 @@ export const ProjectsPage: React.FC = () => {
               </TableHeader>
               <TableBody>
                 {filteredProjects.map((project) => (
-                  <TableRow key={project.id} className="cursor-pointer hover:bg-accent/50">
+                  <TableRow 
+                    key={project.id} 
+                    className="cursor-pointer hover:bg-accent/50"
+                    onClick={() => setSelectedProjectId(project.id)}
+                  >
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {isOverdue(project) && (
@@ -799,7 +819,7 @@ export const ProjectsPage: React.FC = () => {
                     </TableCell>
                     <TableCell>{getStatusBadge(project.status)}</TableCell>
                     <TableCell>{getPriorityWithDays(project)}</TableCell>
-                    <TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon" className="h-8 w-8">

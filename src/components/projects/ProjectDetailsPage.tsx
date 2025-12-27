@@ -1,0 +1,569 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
+import { Separator } from '@/components/ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  ArrowLeft,
+  Calendar,
+  Package,
+  Printer,
+  Clock,
+  CheckCircle2,
+  AlertTriangle,
+  PlayCircle,
+  XCircle,
+  ClipboardCheck,
+  RefreshCw,
+  FolderKanban,
+  Timer,
+  AlertCircle,
+} from 'lucide-react';
+import { format, parseISO } from 'date-fns';
+import { toast } from '@/hooks/use-toast';
+import {
+  getProject,
+  getProduct,
+  getCyclesForProject,
+  getCycleLogs,
+  getPlannedCycles,
+  getPrinter,
+  getPlanningMeta,
+  Project,
+  Product,
+  PlannedCycle,
+  CycleLog,
+  calculateDaysRemaining,
+} from '@/services/storage';
+import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
+import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
+import { RecalculateModal } from '@/components/planning/RecalculateModal';
+
+interface ProjectDetailsPageProps {
+  projectId: string;
+  onBack: () => void;
+}
+
+type CycleStatus = 'planned' | 'in_progress' | 'completed' | 'completed_with_scrap' | 'failed';
+
+interface UnifiedCycle {
+  id: string;
+  cycleIndex: number;
+  printerId: string;
+  printerName: string;
+  plannedDate: string;
+  startTime: string;
+  endTime: string;
+  unitsPlanned: number;
+  unitsProduced: number;
+  unitsScrap: number;
+  status: CycleStatus;
+  plannedCycleId?: string;
+  cycleLogId?: string;
+  timestamp?: string;
+}
+
+export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
+  projectId,
+  onBack,
+}) => {
+  const { language } = useLanguage();
+  const [project, setProject] = useState<Project | null>(null);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [endCycleOpen, setEndCycleOpen] = useState(false);
+  const [selectedPrinterIdForEndCycle, setSelectedPrinterIdForEndCycle] = useState<string | undefined>(undefined);
+  const [reportIssueOpen, setReportIssueOpen] = useState(false);
+  const [reportIssueCycleId, setReportIssueCycleId] = useState<string | undefined>(undefined);
+  const [recalculateOpen, setRecalculateOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    loadData();
+  }, [projectId, refreshKey]);
+
+  const loadData = () => {
+    const proj = getProject(projectId);
+    setProject(proj || null);
+    if (proj) {
+      const prod = getProduct(proj.productId);
+      setProduct(prod || null);
+    }
+  };
+
+  // Merge planned cycles and cycle logs into unified timeline
+  const unifiedCycles = useMemo((): UnifiedCycle[] => {
+    if (!project) return [];
+
+    const plannedCycles = getCyclesForProject(projectId);
+    const allCycleLogs = getCycleLogs().filter(log => log.projectId === projectId);
+
+    const cycles: UnifiedCycle[] = [];
+    let cycleIndex = 1;
+
+    // First, add all planned cycles
+    plannedCycles.forEach(pc => {
+      const printer = getPrinter(pc.printerId);
+      const matchingLog = allCycleLogs.find(log => log.plannedCycleId === pc.id);
+
+      let status: CycleStatus = pc.status as CycleStatus;
+      let unitsProduced = 0;
+      let unitsScrap = 0;
+
+      if (matchingLog) {
+        status = matchingLog.result === 'completed' 
+          ? 'completed' 
+          : matchingLog.result === 'completed_with_scrap' 
+            ? 'completed_with_scrap' 
+            : 'failed';
+        unitsProduced = matchingLog.unitsCompleted;
+        unitsScrap = matchingLog.unitsScrap;
+      }
+
+      cycles.push({
+        id: pc.id,
+        cycleIndex: cycleIndex++,
+        printerId: pc.printerId,
+        printerName: printer?.name || `Printer ${pc.printerId.slice(-4)}`,
+        plannedDate: pc.startTime.split('T')[0],
+        startTime: pc.startTime,
+        endTime: pc.endTime,
+        unitsPlanned: pc.unitsPlanned,
+        unitsProduced,
+        unitsScrap,
+        status,
+        plannedCycleId: pc.id,
+        cycleLogId: matchingLog?.id,
+        timestamp: matchingLog?.timestamp,
+      });
+    });
+
+    // Add any orphan logs (logs without matching planned cycles)
+    allCycleLogs.forEach(log => {
+      if (!log.plannedCycleId || !plannedCycles.find(pc => pc.id === log.plannedCycleId)) {
+        const printer = getPrinter(log.printerId);
+        cycles.push({
+          id: log.id,
+          cycleIndex: cycleIndex++,
+          printerId: log.printerId,
+          printerName: printer?.name || `Printer ${log.printerId.slice(-4)}`,
+          plannedDate: log.timestamp.split('T')[0],
+          startTime: log.timestamp,
+          endTime: log.timestamp,
+          unitsPlanned: log.unitsCompleted + log.unitsScrap,
+          unitsProduced: log.unitsCompleted,
+          unitsScrap: log.unitsScrap,
+          status: log.result === 'completed' 
+            ? 'completed' 
+            : log.result === 'completed_with_scrap' 
+              ? 'completed_with_scrap' 
+              : 'failed',
+          cycleLogId: log.id,
+          timestamp: log.timestamp,
+        });
+      }
+    });
+
+    // Sort by date/time
+    cycles.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+
+    // Re-index after sorting
+    return cycles.map((c, i) => ({ ...c, cycleIndex: i + 1 }));
+  }, [project, projectId, refreshKey]);
+
+  const planningMeta = getPlanningMeta();
+  const hasOutdatedPlanning = planningMeta && unifiedCycles.length === 0;
+
+  const handleEndCycle = (printerId: string) => {
+    setSelectedPrinterIdForEndCycle(printerId);
+    setEndCycleOpen(true);
+  };
+
+  const handleEndCycleComplete = () => {
+    setEndCycleOpen(false);
+    setSelectedPrinterIdForEndCycle(undefined);
+    setRefreshKey(k => k + 1);
+    loadData();
+  };
+
+  const handleReportIssue = (cycleId?: string) => {
+    setReportIssueCycleId(cycleId);
+    setReportIssueOpen(true);
+  };
+
+  const handleRecalculateComplete = () => {
+    setRecalculateOpen(false);
+    setRefreshKey(k => k + 1);
+    loadData();
+  };
+
+  const getStatusConfig = (status: CycleStatus) => {
+    switch (status) {
+      case 'planned':
+        return {
+          icon: Clock,
+          label: language === 'he' ? 'מתוכנן' : 'Planned',
+          className: 'bg-muted text-muted-foreground border-muted-foreground/20',
+        };
+      case 'in_progress':
+        return {
+          icon: PlayCircle,
+          label: language === 'he' ? 'בתהליך' : 'In Progress',
+          className: 'bg-primary/10 text-primary border-primary/20',
+        };
+      case 'completed':
+        return {
+          icon: CheckCircle2,
+          label: language === 'he' ? 'הושלם' : 'Completed',
+          className: 'bg-success/10 text-success border-success/20',
+        };
+      case 'completed_with_scrap':
+        return {
+          icon: AlertTriangle,
+          label: language === 'he' ? 'הושלם עם נפלים' : 'Completed with Scrap',
+          className: 'bg-warning/10 text-warning border-warning/20',
+        };
+      case 'failed':
+        return {
+          icon: XCircle,
+          label: language === 'he' ? 'נכשל' : 'Failed',
+          className: 'bg-error/10 text-error border-error/20',
+        };
+    }
+  };
+
+  const getProjectStatusConfig = (project: Project) => {
+    const daysRemaining = calculateDaysRemaining(project.dueDate);
+    if (project.status === 'completed') {
+      return { label: language === 'he' ? 'הושלם' : 'Completed', className: 'bg-success/10 text-success' };
+    }
+    if (project.urgency === 'critical') {
+      return { label: language === 'he' ? 'קריטי' : 'Critical', className: 'bg-error/10 text-error' };
+    }
+    if (project.urgency === 'urgent') {
+      return { label: language === 'he' ? 'דחוף' : 'Urgent', className: 'bg-warning/10 text-warning' };
+    }
+    if (project.status === 'on_hold') {
+      return { label: language === 'he' ? 'ממתין' : 'On Hold', className: 'bg-muted text-muted-foreground' };
+    }
+    return { label: language === 'he' ? 'בתהליך' : 'In Progress', className: 'bg-primary/10 text-primary' };
+  };
+
+  if (!project) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <FolderKanban className="w-12 h-12 text-muted-foreground/50" />
+        <p className="text-muted-foreground">
+          {language === 'he' ? 'הפרויקט לא נמצא' : 'Project not found'}
+        </p>
+        <Button variant="outline" onClick={onBack}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          {language === 'he' ? 'חזרה לרשימה' : 'Back to List'}
+        </Button>
+      </div>
+    );
+  }
+
+  const remaining = project.quantityTarget - project.quantityGood;
+  const progressPercent = Math.round((project.quantityGood / project.quantityTarget) * 100);
+  const daysRemaining = calculateDaysRemaining(project.dueDate);
+  const projectStatus = getProjectStatusConfig(project);
+
+  const completedCycles = unifiedCycles.filter(c => c.status === 'completed' || c.status === 'completed_with_scrap');
+  const inProgressCycles = unifiedCycles.filter(c => c.status === 'in_progress');
+  const plannedCycles = unifiedCycles.filter(c => c.status === 'planned');
+
+  return (
+    <div className="space-y-6">
+      {/* Header with Back Button */}
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="icon" onClick={onBack}>
+          <ArrowLeft className="w-5 h-5" />
+        </Button>
+        <div className="flex-1">
+          <h1 className="text-2xl font-bold text-foreground">{project.name}</h1>
+          <p className="text-sm text-muted-foreground">
+            {product?.name || project.productName} • {project.color}
+          </p>
+        </div>
+        <Badge variant="outline" className={projectStatus.className}>
+          {projectStatus.label}
+        </Badge>
+      </div>
+
+      {/* Project Summary Section */}
+      <Card variant="elevated">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Package className="w-5 h-5 text-primary" />
+            {language === 'he' ? 'סיכום פרויקט' : 'Project Summary'}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Total Quantity */}
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">
+                {language === 'he' ? 'כמות יעד' : 'Target Qty'}
+              </p>
+              <p className="text-2xl font-bold">{project.quantityTarget}</p>
+            </div>
+
+            {/* Produced */}
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">
+                {language === 'he' ? 'הופק' : 'Produced'}
+              </p>
+              <p className="text-2xl font-bold text-success">{project.quantityGood}</p>
+            </div>
+
+            {/* Remaining */}
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">
+                {language === 'he' ? 'נותר' : 'Remaining'}
+              </p>
+              <p className="text-2xl font-bold text-primary">{remaining}</p>
+            </div>
+
+            {/* Due Date */}
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">
+                {language === 'he' ? 'תאריך יעד' : 'Due Date'}
+              </p>
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-muted-foreground" />
+                <span className={`font-medium ${daysRemaining < 0 ? 'text-error' : ''}`}>
+                  {format(parseISO(project.dueDate), 'dd/MM/yyyy')}
+                </span>
+              </div>
+              <p className={`text-xs ${daysRemaining < 0 ? 'text-error' : 'text-muted-foreground'}`}>
+                {daysRemaining < 0 
+                  ? (language === 'he' ? `${Math.abs(daysRemaining)} ימים באיחור` : `${Math.abs(daysRemaining)} days overdue`)
+                  : (language === 'he' ? `${daysRemaining} ימים נותרו` : `${daysRemaining} days left`)
+                }
+              </p>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">
+                {language === 'he' ? 'התקדמות' : 'Progress'}
+              </span>
+              <span className="font-medium">{progressPercent}%</span>
+            </div>
+            <Progress value={progressPercent} className="h-3" />
+          </div>
+
+          {/* Scrap Info */}
+          {project.quantityScrap > 0 && (
+            <div className="flex items-center gap-2 p-2 bg-warning/10 rounded-lg">
+              <AlertTriangle className="w-4 h-4 text-warning" />
+              <span className="text-sm text-warning">
+                {language === 'he' ? 'פסולת:' : 'Scrap:'} {project.quantityScrap} {language === 'he' ? 'יחידות' : 'units'}
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Quick Actions */}
+      <div className="flex flex-wrap gap-3">
+        {inProgressCycles.length > 0 && (
+          <Button onClick={() => handleEndCycle(inProgressCycles[0].printerId)} className="gap-2">
+            <ClipboardCheck className="w-4 h-4" />
+            {language === 'he' ? 'דווח סיום מחזור' : 'Report Cycle End'}
+          </Button>
+        )}
+        <Button variant="outline" onClick={() => handleReportIssue()} className="gap-2">
+          <AlertTriangle className="w-4 h-4" />
+          {language === 'he' ? 'דווח על בעיה' : 'Report Issue'}
+        </Button>
+        <Button variant="outline" onClick={() => setRecalculateOpen(true)} className="gap-2">
+          <RefreshCw className="w-4 h-4" />
+          {language === 'he' ? 'חשב מחדש' : 'Recalculate'}
+        </Button>
+      </div>
+
+      {/* Cycles Timeline Section */}
+      <Card variant="elevated">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-lg">
+              <Timer className="w-5 h-5 text-primary" />
+              {language === 'he' ? 'ציר זמן מחזורים' : 'Cycles Timeline'}
+            </div>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Badge variant="secondary">{completedCycles.length} {language === 'he' ? 'הושלמו' : 'done'}</Badge>
+              <Badge variant="secondary">{inProgressCycles.length} {language === 'he' ? 'פעילים' : 'active'}</Badge>
+              <Badge variant="secondary">{plannedCycles.length} {language === 'he' ? 'מתוכננים' : 'planned'}</Badge>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {unifiedCycles.length === 0 ? (
+            <div className="text-center py-12 space-y-4">
+              <div className="inline-flex p-4 bg-muted rounded-full">
+                <Clock className="w-8 h-8 text-muted-foreground" />
+              </div>
+              <div className="space-y-2">
+                <p className="text-muted-foreground">
+                  {language === 'he' 
+                    ? 'אין מחזורים מתוכננים עדיין' 
+                    : 'No planned cycles yet'}
+                </p>
+                {hasOutdatedPlanning && (
+                  <p className="text-sm text-warning flex items-center justify-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
+                    {language === 'he' 
+                      ? 'התכנון מיושן – בוצעו שינויים מאז החישוב האחרון'
+                      : 'Planning is outdated – changes detected since last calculation'}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap justify-center gap-3 pt-2">
+                <Button onClick={() => setRecalculateOpen(true)} className="gap-2">
+                  <RefreshCw className="w-4 h-4" />
+                  {language === 'he' ? 'חשב תכנון' : 'Calculate Planning'}
+                </Button>
+                <Button variant="outline" onClick={onBack} className="gap-2">
+                  <FolderKanban className="w-4 h-4" />
+                  {language === 'he' ? 'לך לפרויקטים בתהליך' : 'Go to Active Projects'}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {unifiedCycles.map((cycle) => {
+                const statusConfig = getStatusConfig(cycle.status);
+                const StatusIcon = statusConfig.icon;
+                const canEndCycle = cycle.status === 'in_progress' || cycle.status === 'planned';
+                
+                return (
+                  <div
+                    key={cycle.id}
+                    className="flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:bg-accent/50 transition-colors"
+                  >
+                    {/* Cycle Index */}
+                    <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                      <span className="text-sm font-bold text-muted-foreground">
+                        #{cycle.cycleIndex}
+                      </span>
+                    </div>
+
+                    {/* Cycle Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium">{cycle.printerName}</span>
+                        <Badge variant="outline" className={`gap-1 ${statusConfig.className}`}>
+                          <StatusIcon className="w-3 h-3" />
+                          {statusConfig.label}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5" />
+                          {format(parseISO(cycle.plannedDate), 'dd/MM/yyyy')}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5" />
+                          {format(parseISO(cycle.startTime), 'HH:mm')} - {format(parseISO(cycle.endTime), 'HH:mm')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Units Info */}
+                    <div className="text-right flex-shrink-0">
+                      <div className="font-medium">
+                        {cycle.status === 'planned' || cycle.status === 'in_progress' 
+                          ? cycle.unitsPlanned 
+                          : cycle.unitsProduced
+                        } {language === 'he' ? 'יח\'' : 'units'}
+                      </div>
+                      {cycle.unitsScrap > 0 && (
+                        <div className="text-xs text-warning">
+                          {language === 'he' ? 'פסולת:' : 'Scrap:'} {cycle.unitsScrap}
+                        </div>
+                      )}
+                      {(cycle.status === 'completed' || cycle.status === 'completed_with_scrap') && (
+                        <div className="text-xs text-muted-foreground">
+                          {language === 'he' ? 'מתוכנן:' : 'Planned:'} {cycle.unitsPlanned}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex-shrink-0 flex gap-2">
+                      {canEndCycle && (
+                        <Button
+                          size="sm"
+                          variant={cycle.status === 'in_progress' ? 'default' : 'outline'}
+                          onClick={() => handleEndCycle(cycle.printerId)}
+                          className="gap-1"
+                        >
+                          <ClipboardCheck className="w-4 h-4" />
+                          {language === 'he' ? 'סיום' : 'End'}
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleReportIssue(cycle.id)}
+                        className="gap-1"
+                      >
+                        <AlertTriangle className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* End Cycle Dialog */}
+      <Dialog open={endCycleOpen} onOpenChange={setEndCycleOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {language === 'he' ? 'דיווח סיום מחזור' : 'End Cycle Report'}
+            </DialogTitle>
+          </DialogHeader>
+          <EndCycleLog
+            preSelectedPrinterId={selectedPrinterIdForEndCycle}
+            onComplete={handleEndCycleComplete}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Report Issue Flow */}
+      <ReportIssueFlow
+        isOpen={reportIssueOpen}
+        onClose={() => {
+          setReportIssueOpen(false);
+          setReportIssueCycleId(undefined);
+          setRefreshKey(k => k + 1);
+        }}
+        preselectedProjectId={projectId}
+      />
+
+      {/* Recalculate Modal */}
+      <RecalculateModal
+        open={recalculateOpen}
+        onOpenChange={(open) => {
+          if (!open) handleRecalculateComplete();
+        }}
+        onRecalculated={handleRecalculateComplete}
+      />
+    </div>
+  );
+};
