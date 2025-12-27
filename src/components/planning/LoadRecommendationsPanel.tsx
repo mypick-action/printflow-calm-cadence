@@ -239,6 +239,37 @@ const ShortageAlert: React.FC<{ shortage: MaterialShortage; language: string }> 
 const RecommendationCard: React.FC<{ recommendation: LoadRecommendation; language: string }> = ({ recommendation, language }) => {
   const spools = getSpools();
   const suggestedSpools = spools.filter(s => recommendation.suggestedSpoolIds.includes(s.id));
+  
+  // Determine spool recommendation text
+  const getSpoolAdvice = () => {
+    if (!recommendation.partialSpoolRecommendation) return null;
+    
+    if (recommendation.partialSpoolRecommendation === 'use_partial') {
+      return {
+        text: language === 'he' 
+          ? '💡 מומלץ גליל חלקי - מספיק לעבודה זו'
+          : '💡 Partial spool recommended - enough for this job',
+        className: 'text-success'
+      };
+    } else if (recommendation.partialSpoolRecommendation === 'use_full') {
+      return {
+        text: language === 'he' 
+          ? '📦 מומלץ גליל מלא - אין חלקי מתאים'
+          : '📦 Full spool recommended - no suitable partial',
+        className: 'text-primary'
+      };
+    } else if (recommendation.sequentialCyclesCount && recommendation.sequentialCyclesCount > 1) {
+      return {
+        text: language === 'he' 
+          ? `⚖️ יש ${recommendation.sequentialCyclesCount} עבודות ברצף - בחר לפי זמינותך להחלפה`
+          : `⚖️ ${recommendation.sequentialCyclesCount} jobs in sequence - choose based on your availability to swap`,
+        className: 'text-muted-foreground'
+      };
+    }
+    return null;
+  };
+  
+  const spoolAdvice = getSpoolAdvice();
 
   return (
     <div className={cn(
@@ -276,6 +307,33 @@ const RecommendationCard: React.FC<{ recommendation: LoadRecommendation; languag
         </span>
       </div>
 
+      {/* Grams info - NEW */}
+      <div className="mt-2 p-2 bg-muted/50 rounded text-xs space-y-1">
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">
+            {language === 'he' ? 'עבודה נוכחית:' : 'Current job:'}
+          </span>
+          <span className="font-medium">{Math.ceil(recommendation.gramsNeeded)}g</span>
+        </div>
+        {recommendation.sequentialCyclesCount && recommendation.sequentialCyclesCount > 1 && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">
+              {language === 'he' 
+                ? `סה"כ ${recommendation.sequentialCyclesCount} עבודות באותו צבע:`
+                : `Total ${recommendation.sequentialCyclesCount} same-color jobs:`}
+            </span>
+            <span className="font-medium">{Math.ceil(recommendation.totalGramsForSequence || 0)}g</span>
+          </div>
+        )}
+      </div>
+
+      {/* Spool recommendation advice - NEW */}
+      {spoolAdvice && (
+        <div className={cn("mt-2 text-xs", spoolAdvice.className)}>
+          {spoolAdvice.text}
+        </div>
+      )}
+
       {/* Suggested spools from inventory */}
       {suggestedSpools.length > 0 && (
         <div className="mt-2 pt-2 border-t border-dashed">
@@ -283,21 +341,29 @@ const RecommendationCard: React.FC<{ recommendation: LoadRecommendation; languag
             {language === 'he' ? 'גלילים מומלצים מהמלאי:' : 'Suggested spools from inventory:'}
           </span>
           <div className="flex flex-wrap gap-1 mt-1">
-            {suggestedSpools.map(spool => (
-              <Badge key={spool.id} variant="secondary" className="text-xs">
-            {spool.color} ({Math.ceil(spool.gramsRemainingEst)}g)
-              </Badge>
-            ))}
+            {suggestedSpools.map(spool => {
+              const isPartial = spool.gramsRemainingEst < 900;
+              return (
+                <Badge 
+                  key={spool.id} 
+                  variant="secondary" 
+                  className={cn(
+                    "text-xs",
+                    isPartial && recommendation.partialSpoolRecommendation === 'use_partial' && "bg-success/20 border-success/30"
+                  )}
+                >
+                  {spool.color} ({Math.ceil(spool.gramsRemainingEst)}g)
+                  {isPartial && <span className="ml-1 opacity-70">{language === 'he' ? '(חלקי)' : '(partial)'}</span>}
+                </Badge>
+              );
+            })}
           </div>
         </div>
       )}
 
       <div className="mt-2 text-xs text-muted-foreground">
-        {language === 'he' 
-          ? `משפיע על ${recommendation.affectedCycleIds.length} מחזורים`
-          : `Affects ${recommendation.affectedCycleIds.length} cycles`}
         {recommendation.affectedProjectNames.length > 0 && (
-          <span> • {recommendation.affectedProjectNames.slice(0, 2).join(', ')}</span>
+          <span>{recommendation.affectedProjectNames.slice(0, 2).join(', ')}</span>
         )}
       </div>
     </div>

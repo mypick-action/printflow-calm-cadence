@@ -154,6 +154,11 @@ export interface LoadRecommendation {
   color: string;
   material?: string;
   gramsNeeded: number;
+  // Enhanced spool selection info
+  totalGramsForSequence?: number; // Total grams for all sequential same-color cycles
+  sequentialCyclesCount?: number; // Number of sequential same-color cycles
+  canUsePartialSpool?: boolean; // Whether a partial spool can cover the current job
+  partialSpoolRecommendation?: 'use_partial' | 'use_full' | 'either';
   suggestedSpoolIds: string[]; // Spools from inventory that could be used
   affectedCycleIds: string[];
   affectedProjectNames: string[];
