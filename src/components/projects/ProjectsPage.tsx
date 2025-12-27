@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -39,7 +40,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FolderKanban, Calendar, Package, AlertTriangle, Pencil, ChevronDown, PackagePlus, MoreHorizontal } from 'lucide-react';
+import { 
+  Plus, 
+  FolderKanban, 
+  Calendar, 
+  Package, 
+  AlertTriangle, 
+  Pencil, 
+  ChevronDown, 
+  PackagePlus, 
+  MoreHorizontal,
+  Clock,
+  Pause,
+  CheckCircle,
+  PlayCircle,
+  Filter,
+  Flame,
+} from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from '@/hooks/use-toast';
 import { 
@@ -56,6 +73,10 @@ import { ProductEditorModal } from '@/components/products/ProductEditorModal';
 
 const availableColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
 
+// Status type definitions
+type ProjectStatus = 'pending' | 'in_progress' | 'on_hold' | 'completed';
+type ProjectPriority = 'normal' | 'urgent' | 'critical';
+
 export const ProjectsPage: React.FC = () => {
   const { language } = useLanguage();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -67,14 +88,26 @@ export const ProjectsPage: React.FC = () => {
   const [reportIssueProjectId, setReportIssueProjectId] = useState<string | undefined>(undefined);
   const [productEditorOpen, setProductEditorOpen] = useState(false);
   const [productEditorInitialName, setProductEditorInitialName] = useState('');
+  
+  // Filter state - Status filter (primary, default to in_progress only)
+  const [statusFilters, setStatusFilters] = useState<Record<ProjectStatus, boolean>>({
+    pending: false,
+    in_progress: true, // Default ON - "What are we working on now?"
+    on_hold: false,
+    completed: false,
+  });
+  
+  // Priority filter (secondary)
+  const [priorityFilter, setPriorityFilter] = useState<'all' | ProjectPriority>('all');
+  
   const [newProject, setNewProject] = useState({
     name: '',
     productId: '',
-    preferredPresetId: '', // optional preset override
+    preferredPresetId: '',
     quantityTarget: 100,
     dueDate: '',
     color: 'Black',
-    manualUrgency: null as 'normal' | 'urgent' | 'critical' | null,
+    manualUrgency: null as ProjectPriority | null,
   });
 
   const handleReportIssue = (projectId: string) => {
@@ -86,6 +119,94 @@ export const ProjectsPage: React.FC = () => {
     setProjects(getProjects());
     setProducts(getProducts());
   }, []);
+
+  // Status configuration with Hebrew-first labels
+  const statusConfig: Record<ProjectStatus, { 
+    label: string; 
+    labelEn: string; 
+    icon: React.ReactNode;
+    className: string;
+  }> = {
+    pending: { 
+      label: 'מתוכנן', 
+      labelEn: 'Planned',
+      icon: <Clock className="w-3.5 h-3.5" />,
+      className: 'bg-muted text-muted-foreground border-muted-foreground/20' 
+    },
+    in_progress: { 
+      label: 'בתהליך', 
+      labelEn: 'In Progress',
+      icon: <PlayCircle className="w-3.5 h-3.5" />,
+      className: 'bg-primary/10 text-primary border-primary/20' 
+    },
+    on_hold: { 
+      label: 'ממתין', 
+      labelEn: 'Waiting',
+      icon: <Pause className="w-3.5 h-3.5" />,
+      className: 'bg-warning/10 text-warning border-warning/20' 
+    },
+    completed: { 
+      label: 'הושלם', 
+      labelEn: 'Completed',
+      icon: <CheckCircle className="w-3.5 h-3.5" />,
+      className: 'bg-success/10 text-success border-success/20' 
+    },
+  };
+
+  // Priority configuration
+  const priorityConfig: Record<ProjectPriority, { 
+    label: string; 
+    labelEn: string; 
+    className: string;
+  }> = {
+    normal: { 
+      label: 'רגיל', 
+      labelEn: 'Normal',
+      className: 'bg-success/10 text-success border-success/20' 
+    },
+    urgent: { 
+      label: 'דחוף', 
+      labelEn: 'Urgent',
+      className: 'bg-warning/10 text-warning border-warning/20' 
+    },
+    critical: { 
+      label: 'קריטי', 
+      labelEn: 'Critical',
+      className: 'bg-error/10 text-error border-error/20' 
+    },
+  };
+
+  // Filtered projects based on status and priority
+  const filteredProjects = useMemo(() => {
+    return projects.filter(project => {
+      // Status filter (primary)
+      const statusMatch = statusFilters[project.status];
+      if (!statusMatch) return false;
+      
+      // Priority filter (secondary)
+      if (priorityFilter !== 'all' && project.urgency !== priorityFilter) {
+        return false;
+      }
+      
+      return true;
+    });
+  }, [projects, statusFilters, priorityFilter]);
+
+  // Summary counts
+  const statusCounts = useMemo(() => ({
+    pending: projects.filter(p => p.status === 'pending').length,
+    in_progress: projects.filter(p => p.status === 'in_progress').length,
+    on_hold: projects.filter(p => p.status === 'on_hold').length,
+    completed: projects.filter(p => p.status === 'completed').length,
+  }), [projects]);
+
+  const attentionCounts = useMemo(() => {
+    const active = projects.filter(p => p.status !== 'completed');
+    return {
+      urgent: active.filter(p => p.urgency === 'urgent').length,
+      critical: active.filter(p => p.urgency === 'critical').length,
+    };
+  }, [projects]);
 
   // Calculate auto-priority when due date changes
   const getCalculatedPriority = () => {
@@ -137,71 +258,49 @@ export const ProjectsPage: React.FC = () => {
       manualUrgency: null,
     });
     setProductSearchText('');
+    
+    toast({
+      title: language === 'he' ? 'פרויקט נוצר' : 'Project created',
+      description: newProject.name,
+    });
   };
 
   const handleOpenProductEditor = () => {
-    // Pre-fill with search text if user typed something
     setProductEditorInitialName(productSearchText);
     setProductEditorOpen(true);
   };
 
   const handleProductCreated = (product: Product) => {
-    // Refresh products
     setProducts(getProducts());
-    
-    // Auto-select the newly created product
     setNewProject({ 
       ...newProject, 
       productId: product.id,
-      // Auto-select the recommended preset
       preferredPresetId: product.platePresets.find(p => p.isRecommended)?.id || product.platePresets[0]?.id || '',
     });
-    
     setProductSearchText('');
   };
 
-  const getStatusBadge = (status: Project['status']) => {
-    const statusConfig = {
-      pending: { 
-        label: language === 'he' ? 'ממתין' : 'Pending', 
-        variant: 'secondary' as const 
-      },
-      in_progress: { 
-        label: language === 'he' ? 'בתהליך' : 'In Progress', 
-        variant: 'default' as const 
-      },
-      completed: { 
-        label: language === 'he' ? 'הושלם' : 'Completed', 
-        variant: 'outline' as const 
-      },
-      on_hold: { 
-        label: language === 'he' ? 'מושהה' : 'On Hold', 
-        variant: 'destructive' as const 
-      },
-    };
-    const config = statusConfig[status];
-    return <Badge variant={config.variant}>{config.label}</Badge>;
+  const toggleStatusFilter = (status: ProjectStatus) => {
+    setStatusFilters(prev => ({ ...prev, [status]: !prev[status] }));
   };
 
-  const getUrgencyBadge = (urgency: Project['urgency'], isManual?: boolean) => {
-    const urgencyConfig = {
-      normal: { 
-        label: language === 'he' ? 'רגיל' : 'Normal', 
-        className: 'bg-success/10 text-success border-success/20' 
-      },
-      urgent: { 
-        label: language === 'he' ? 'דחוף' : 'Urgent', 
-        className: 'bg-warning/10 text-warning border-warning/20' 
-      },
-      critical: { 
-        label: language === 'he' ? 'קריטי' : 'Critical', 
-        className: 'bg-error/10 text-error border-error/20' 
-      },
-    };
-    const config = urgencyConfig[urgency];
+  const getStatusBadge = (status: ProjectStatus) => {
+    const config = statusConfig[status];
+    return (
+      <Badge variant="outline" className={`gap-1.5 ${config.className}`}>
+        {config.icon}
+        {language === 'he' ? config.label : config.labelEn}
+      </Badge>
+    );
+  };
+
+  const getPriorityBadge = (urgency: ProjectPriority, isManual?: boolean) => {
+    const config = priorityConfig[urgency];
     return (
       <div className="flex items-center gap-1">
-        <Badge variant="outline" className={config.className}>{config.label}</Badge>
+        <Badge variant="outline" className={config.className}>
+          {language === 'he' ? config.label : config.labelEn}
+        </Badge>
         {isManual && (
           <Pencil className="w-3 h-3 text-muted-foreground" />
         )}
@@ -209,42 +308,26 @@ export const ProjectsPage: React.FC = () => {
     );
   };
 
-  const getUrgencyBadgeWithDays = (project: Project) => {
+  const getPriorityWithDays = (project: Project) => {
     const days = calculateDaysRemaining(project.dueDate);
-    const urgencyConfig = {
-      normal: { 
-        label: language === 'he' ? 'רגיל' : 'Normal', 
-        className: 'bg-success/10 text-success border-success/20' 
-      },
-      urgent: { 
-        label: language === 'he' ? 'דחוף' : 'Urgent', 
-        className: 'bg-warning/10 text-warning border-warning/20' 
-      },
-      critical: { 
-        label: language === 'he' ? 'קריטי' : 'Critical', 
-        className: 'bg-error/10 text-error border-error/20' 
-      },
-    };
-    const config = urgencyConfig[project.urgency];
+    const config = priorityConfig[project.urgency];
     const daysText = days < 0 
-      ? (language === 'he' ? `${Math.abs(days)}- ימים` : `${Math.abs(days)}d late`)
-      : (language === 'he' ? `${days} ימים` : `${days}d`);
+      ? (language === 'he' ? `${Math.abs(days)} ימים באיחור` : `${Math.abs(days)}d late`)
+      : (language === 'he' ? `${days} ימים ליעד` : `${days}d to go`);
     
     return (
-      <div className="flex flex-col items-start gap-1">
-        <div className="flex items-center gap-1">
-          <Badge variant="outline" className={config.className}>
-            {config.label}
-          </Badge>
-          {project.urgencyManualOverride && (
-            <span title={language === 'he' ? 'עדיפות ידנית' : 'Manual priority'}>
-              <Pencil className="w-3 h-3 text-muted-foreground" />
-            </span>
-          )}
-        </div>
-        <span className={`text-xs ${days < 0 ? 'text-error' : 'text-muted-foreground'}`}>
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" className={config.className}>
+          {language === 'he' ? config.label : config.labelEn}
+        </Badge>
+        <span className={`text-xs ${days < 0 ? 'text-error font-medium' : 'text-muted-foreground'}`}>
           ({daysText})
         </span>
+        {project.urgencyManualOverride && (
+          <span title={language === 'he' ? 'עדיפות ידנית' : 'Manual priority'}>
+            <Pencil className="w-3 h-3 text-muted-foreground" />
+          </span>
+        )}
       </div>
     );
   };
@@ -259,6 +342,9 @@ export const ProjectsPage: React.FC = () => {
 
   const calculatedPriority = getCalculatedPriority();
   const effectivePriority = newProject.manualUrgency || calculatedPriority;
+
+  // Check if any status filter is active
+  const hasActiveStatusFilter = Object.values(statusFilters).some(v => v);
 
   return (
     <div className="space-y-6">
@@ -322,7 +408,6 @@ export const ProjectsPage: React.FC = () => {
                     <SelectValue placeholder={language === 'he' ? 'בחרו מוצר' : 'Select product'} />
                   </SelectTrigger>
                   <SelectContent className="bg-background border shadow-lg">
-                    {/* Search/filter input */}
                     <div className="p-2 border-b">
                       <Input
                         placeholder={language === 'he' ? 'חפשו או הקלידו שם מוצר...' : 'Search or type product name...'}
@@ -333,7 +418,6 @@ export const ProjectsPage: React.FC = () => {
                         onKeyDown={(e) => e.stopPropagation()}
                       />
                     </div>
-                    {/* Filtered products */}
                     {products
                       .filter(p => 
                         productSearchText === '' || 
@@ -344,7 +428,6 @@ export const ProjectsPage: React.FC = () => {
                           {product.name} ({product.gramsPerUnit}g)
                         </SelectItem>
                       ))}
-                    {/* Add new product option */}
                     <div className="border-t mt-1 pt-1">
                       <SelectItem value="__new__" className="text-primary font-medium">
                         <div className="flex items-center gap-2">
@@ -357,7 +440,6 @@ export const ProjectsPage: React.FC = () => {
                 </Select>
               </div>
               
-              {/* Product Editor Modal */}
               <ProductEditorModal
                 open={productEditorOpen}
                 onOpenChange={setProductEditorOpen}
@@ -411,7 +493,7 @@ export const ProjectsPage: React.FC = () => {
                   onChange={(e) => setNewProject({ 
                     ...newProject, 
                     dueDate: e.target.value,
-                    manualUrgency: null // Reset manual override when date changes
+                    manualUrgency: null
                   })}
                 />
               </div>
@@ -421,23 +503,22 @@ export const ProjectsPage: React.FC = () => {
                 <div className="p-3 bg-muted rounded-lg space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">
-                      {language === 'he' ? 'עדיפות:' : 'Priority:'}
+                      {language === 'he' ? 'דחיפות:' : 'Priority:'}
                     </span>
                     <div className="flex items-center gap-2">
-                      {effectivePriority && getUrgencyBadge(effectivePriority, newProject.manualUrgency !== null)}
+                      {effectivePriority && getPriorityBadge(effectivePriority, newProject.manualUrgency !== null)}
                     </div>
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {getDaysRemainingText()}
                   </div>
                   
-                  {/* Manual Override Section */}
                   <Collapsible open={manualOverrideOpen} onOpenChange={setManualOverrideOpen}>
                     <CollapsibleTrigger asChild>
                       <Button variant="ghost" size="sm" className="w-full justify-between text-xs h-8 mt-1">
                         <span className="flex items-center gap-1">
                           <Pencil className="w-3 h-3" />
-                          {language === 'he' ? 'שנה עדיפות ידנית' : 'Change priority manually'}
+                          {language === 'he' ? 'שנה דחיפות ידנית' : 'Change priority manually'}
                         </span>
                         <ChevronDown className={`w-3 h-3 transition-transform ${manualOverrideOpen ? 'rotate-180' : ''}`} />
                       </Button>
@@ -446,16 +527,7 @@ export const ProjectsPage: React.FC = () => {
                       <div className="flex gap-2">
                         {(['normal', 'urgent', 'critical'] as const).map((urgency) => {
                           const isSelected = newProject.manualUrgency === urgency;
-                          const urgencyLabels = {
-                            normal: language === 'he' ? 'רגיל' : 'Normal',
-                            urgent: language === 'he' ? 'דחוף' : 'Urgent',
-                            critical: language === 'he' ? 'קריטי' : 'Critical',
-                          };
-                          const urgencyColors = {
-                            normal: isSelected ? 'bg-success text-success-foreground' : 'bg-success/10 text-success border-success/30',
-                            urgent: isSelected ? 'bg-warning text-warning-foreground' : 'bg-warning/10 text-warning border-warning/30',
-                            critical: isSelected ? 'bg-error text-error-foreground' : 'bg-error/10 text-error border-error/30',
-                          };
+                          const config = priorityConfig[urgency];
                           return (
                             <Button
                               key={urgency}
@@ -465,9 +537,9 @@ export const ProjectsPage: React.FC = () => {
                                 ...newProject, 
                                 manualUrgency: isSelected ? null : urgency 
                               })}
-                              className={`flex-1 ${urgencyColors[urgency]}`}
+                              className={`flex-1 ${isSelected ? config.className : ''}`}
                             >
-                              {urgencyLabels[urgency]}
+                              {language === 'he' ? config.label : config.labelEn}
                             </Button>
                           );
                         })}
@@ -475,7 +547,7 @@ export const ProjectsPage: React.FC = () => {
                       {newProject.manualUrgency && (
                         <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
                           <Pencil className="w-3 h-3" />
-                          {language === 'he' ? 'עדיפות ידנית - תסומן בפרויקט' : 'Manual priority - will be marked'}
+                          {language === 'he' ? 'דחיפות ידנית - תסומן בפרויקט' : 'Manual priority - will be marked'}
                         </p>
                       )}
                     </CollapsibleContent>
@@ -495,55 +567,148 @@ export const ProjectsPage: React.FC = () => {
         </Dialog>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card variant="glass">
+      {/* Row 1: Status Overview Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card 
+          variant="glass" 
+          className={`cursor-pointer transition-all ${statusFilters.in_progress ? 'ring-2 ring-primary' : 'hover:ring-1 hover:ring-border'}`}
+          onClick={() => toggleStatusFilter('in_progress')}
+        >
           <CardContent className="p-4">
-            <div className="text-2xl font-bold text-foreground">{projects.length}</div>
-            <div className="text-sm text-muted-foreground">
-              {language === 'he' ? 'סה"כ פרויקטים' : 'Total Projects'}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-2xl font-bold text-primary">{statusCounts.in_progress}</div>
+                <div className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'בתהליך' : 'In Progress'}
+                </div>
+              </div>
+              <PlayCircle className="w-8 h-8 text-primary/30" />
             </div>
           </CardContent>
         </Card>
-        <Card variant="glass">
+        
+        <Card 
+          variant="glass" 
+          className={`cursor-pointer transition-all ${statusFilters.pending ? 'ring-2 ring-muted-foreground' : 'hover:ring-1 hover:ring-border'}`}
+          onClick={() => toggleStatusFilter('pending')}
+        >
           <CardContent className="p-4">
-            <div className="text-2xl font-bold text-primary">
-              {projects.filter(p => p.status === 'in_progress').length}
-            </div>
-            <div className="text-sm text-muted-foreground">
-              {language === 'he' ? 'בתהליך' : 'In Progress'}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-2xl font-bold text-muted-foreground">{statusCounts.pending}</div>
+                <div className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'מתוכננים' : 'Planned'}
+                </div>
+              </div>
+              <Clock className="w-8 h-8 text-muted-foreground/30" />
             </div>
           </CardContent>
         </Card>
-        <Card variant="glass">
+        
+        <Card 
+          variant="glass" 
+          className={`cursor-pointer transition-all ${statusFilters.on_hold ? 'ring-2 ring-warning' : 'hover:ring-1 hover:ring-border'}`}
+          onClick={() => toggleStatusFilter('on_hold')}
+        >
           <CardContent className="p-4">
-            <div className="text-2xl font-bold text-success">
-              {projects.filter(p => p.status === 'completed').length}
-            </div>
-            <div className="text-sm text-muted-foreground">
-              {language === 'he' ? 'הושלמו' : 'Completed'}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-2xl font-bold text-warning">{statusCounts.on_hold}</div>
+                <div className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'ממתינים' : 'Waiting'}
+                </div>
+              </div>
+              <Pause className="w-8 h-8 text-warning/30" />
             </div>
           </CardContent>
         </Card>
-        <Card variant="glass">
+        
+        <Card 
+          variant="glass" 
+          className={`cursor-pointer transition-all ${statusFilters.completed ? 'ring-2 ring-success' : 'hover:ring-1 hover:ring-border'}`}
+          onClick={() => toggleStatusFilter('completed')}
+        >
           <CardContent className="p-4">
-            <div className="text-2xl font-bold text-warning">
-              {projects.filter(p => p.urgency !== 'normal' && p.status !== 'completed').length}
-            </div>
-            <div className="text-sm text-muted-foreground">
-              {language === 'he' ? 'דחופים' : 'Urgent'}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-2xl font-bold text-success">{statusCounts.completed}</div>
+                <div className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'הושלמו' : 'Completed'}
+                </div>
+              </div>
+              <CheckCircle className="w-8 h-8 text-success/30" />
             </div>
           </CardContent>
         </Card>
       </div>
 
+      {/* Row 2: Attention Indicators */}
+      {(attentionCounts.urgent > 0 || attentionCounts.critical > 0) && (
+        <div className="flex gap-3 flex-wrap">
+          {attentionCounts.critical > 0 && (
+            <div 
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all ${
+                priorityFilter === 'critical' 
+                  ? 'bg-error/20 border-error text-error' 
+                  : 'bg-error/5 border-error/30 text-error hover:bg-error/10'
+              }`}
+              onClick={() => setPriorityFilter(priorityFilter === 'critical' ? 'all' : 'critical')}
+            >
+              <Flame className="w-4 h-4" />
+              <span className="font-medium">{attentionCounts.critical}</span>
+              <span className="text-sm">
+                {language === 'he' ? 'קריטיים' : 'Critical'}
+              </span>
+            </div>
+          )}
+          {attentionCounts.urgent > 0 && (
+            <div 
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all ${
+                priorityFilter === 'urgent' 
+                  ? 'bg-warning/20 border-warning text-warning' 
+                  : 'bg-warning/5 border-warning/30 text-warning hover:bg-warning/10'
+              }`}
+              onClick={() => setPriorityFilter(priorityFilter === 'urgent' ? 'all' : 'urgent')}
+            >
+              <AlertTriangle className="w-4 h-4" />
+              <span className="font-medium">{attentionCounts.urgent}</span>
+              <span className="text-sm">
+                {language === 'he' ? 'דחופים' : 'Urgent'}
+              </span>
+            </div>
+          )}
+          {priorityFilter !== 'all' && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => setPriorityFilter('all')}
+              className="text-muted-foreground"
+            >
+              {language === 'he' ? 'הצג הכל' : 'Show all'}
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Projects Table */}
       <Card variant="elevated">
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <Package className="w-5 h-5" />
             {language === 'he' ? 'רשימת פרויקטים' : 'Projects List'}
+            <Badge variant="secondary" className="ml-2">
+              {filteredProjects.length}
+            </Badge>
           </CardTitle>
+          
+          {/* Filter summary */}
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Filter className="w-4 h-4" />
+            {Object.entries(statusFilters)
+              .filter(([_, active]) => active)
+              .map(([status]) => language === 'he' ? statusConfig[status as ProjectStatus].label : statusConfig[status as ProjectStatus].labelEn)
+              .join(', ') || (language === 'he' ? 'ללא סינון' : 'No filter')}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -554,13 +719,13 @@ export const ProjectsPage: React.FC = () => {
                   <TableHead>{language === 'he' ? 'מוצר' : 'Product'}</TableHead>
                   <TableHead>{language === 'he' ? 'התקדמות' : 'Progress'}</TableHead>
                   <TableHead>{language === 'he' ? 'תאריך יעד' : 'Due Date'}</TableHead>
-                  <TableHead>{language === 'he' ? 'עדיפות' : 'Priority'}</TableHead>
-                  <TableHead>{language === 'he' ? 'סטטוס' : 'Status'}</TableHead>
+                  <TableHead>{language === 'he' ? 'מצב' : 'Status'}</TableHead>
+                  <TableHead>{language === 'he' ? 'דחיפות' : 'Priority'}</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {projects.map((project) => (
+                {filteredProjects.map((project) => (
                   <TableRow key={project.id} className="cursor-pointer hover:bg-accent/50">
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -600,8 +765,8 @@ export const ProjectsPage: React.FC = () => {
                         </span>
                       </div>
                     </TableCell>
-                    <TableCell>{getUrgencyBadgeWithDays(project)}</TableCell>
                     <TableCell>{getStatusBadge(project.status)}</TableCell>
+                    <TableCell>{getPriorityWithDays(project)}</TableCell>
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -623,19 +788,34 @@ export const ProjectsPage: React.FC = () => {
             </Table>
           </div>
           
-          {projects.length === 0 && (
+          {filteredProjects.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               <FolderKanban className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>{language === 'he' ? 'אין פרויקטים עדיין' : 'No projects yet'}</p>
-              <p className="text-sm mt-1">
-                {language === 'he' ? 'לחצו על "פרויקט חדש" כדי להתחיל' : 'Click "New Project" to get started'}
-              </p>
+              {hasActiveStatusFilter ? (
+                <>
+                  <p>{language === 'he' ? 'אין פרויקטים התואמים לסינון' : 'No projects match the filter'}</p>
+                  <Button 
+                    variant="link" 
+                    onClick={() => setStatusFilters({ pending: true, in_progress: true, on_hold: true, completed: true })}
+                    className="mt-2"
+                  >
+                    {language === 'he' ? 'הצג את כל הפרויקטים' : 'Show all projects'}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p>{language === 'he' ? 'אין פרויקטים עדיין' : 'No projects yet'}</p>
+                  <p className="text-sm mt-1">
+                    {language === 'he' ? 'לחצו על "פרויקט חדש" כדי להתחיל' : 'Click "New Project" to get started'}
+                  </p>
+                </>
+              )}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Report Issue Modal - Contextual Entry */}
+      {/* Report Issue Modal */}
       <ReportIssueFlow
         isOpen={reportIssueOpen}
         onClose={() => {
