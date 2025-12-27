@@ -339,6 +339,9 @@ export const PrintersPage: React.FC = () => {
     // Mark loaded spools as initialized
     setLoadedSpoolsInitialized(true);
 
+    // Notify inventory changed to refresh Required Actions panel
+    notifyInventoryChanged();
+    
     refreshData();
     setLoadSpoolDialogOpen(false);
 
