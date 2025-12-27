@@ -68,11 +68,12 @@ export const InventoryPage: React.FC = () => {
     setSpools(getSpools());
     setPrinters(getPrinters());
     const settings = getFactorySettings();
-    if (settings?.colors) {
-      setAvailableColors(settings.colors);
-      if (!quickAddColor && settings.colors.length > 0) {
-        setQuickAddColor(settings.colors[0]);
-      }
+    // Default colors if none configured
+    const defaultColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green'];
+    const colors = settings?.colors?.length > 0 ? settings.colors : defaultColors;
+    setAvailableColors(colors);
+    if (!quickAddColor && colors.length > 0) {
+      setQuickAddColor(colors[0]);
     }
   };
 
