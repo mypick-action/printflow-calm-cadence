@@ -6,6 +6,7 @@ import { Dashboard } from '@/components/dashboard/Dashboard';
 import { ProjectsPage } from '@/components/projects/ProjectsPage';
 import { ProductsPage } from '@/components/products/ProductsPage';
 import { PrintersPage } from '@/components/printers/PrintersPage';
+import { InventoryPage } from '@/components/inventory/InventoryPage';
 import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
 import { QuoteCheckPage } from '@/components/quote-check/QuoteCheckPage';
 import { SettingsPage } from '@/components/settings/SettingsPage';
@@ -68,6 +69,8 @@ const PrintFlowApp: React.FC = () => {
         return <ProductsPage />;
       case 'printers':
         return <PrintersPage />;
+      case 'inventory':
+        return <InventoryPage />;
       case 'endCycleLog':
         return <EndCycleLog />;
       case 'quoteCheck':
