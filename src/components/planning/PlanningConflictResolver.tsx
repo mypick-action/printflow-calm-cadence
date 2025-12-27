@@ -35,7 +35,7 @@ import {
 import { 
   Product, 
   PlatePreset, 
-  getProducts, 
+  updateProduct, 
   PlannedCycle,
 } from '@/services/storage';
 
@@ -90,16 +90,10 @@ export const PlanningConflictResolver: React.FC<PlanningConflictResolverProps> =
   };
   
   const handleCreatePreset = (preset: PlatePreset) => {
-    // Save preset to product
-    const allProducts = getProducts();
-    const updatedProduct = {
-      ...product,
+    // Save preset to product using storage helper (triggers auto-replan)
+    updateProduct(product.id, {
       platePresets: [...product.platePresets, preset],
-    };
-    const updatedProducts = allProducts.map(p => 
-      p.id === product.id ? updatedProduct : p
-    );
-    localStorage.setItem('printflow_products', JSON.stringify(updatedProducts));
+    });
     
     // Resolve with new preset
     onResolve({ type: 'create_preset', newPreset: preset });

@@ -1,6 +1,8 @@
 // Data service layer for PrintFlow
 // This layer abstracts localStorage so we can swap to a real DB later
 
+import { scheduleAutoReplan } from './autoReplan';
+
 // ============= TYPES =============
 
 export interface PlatePreset {
@@ -581,7 +583,26 @@ export const createProduct = (product: Omit<Product, 'id'>): Product => {
   const newProduct = { ...product, id: generateId() };
   const products = getProducts();
   setItem(KEYS.PRODUCTS, [...products, newProduct]);
+  scheduleAutoReplan('product_created');
   return newProduct;
+};
+
+export const updateProduct = (id: string, updates: Partial<Product>): Product | undefined => {
+  const products = getProducts();
+  const index = products.findIndex(p => p.id === id);
+  if (index === -1) return undefined;
+  
+  products[index] = { ...products[index], ...updates };
+  setItem(KEYS.PRODUCTS, products);
+  
+  // Schedule auto-replan for planning-relevant changes
+  const planningRelevantKeys = ['gramsPerUnit', 'platePresets'];
+  const hasRelevantChange = Object.keys(updates).some(key => planningRelevantKeys.includes(key));
+  if (hasRelevantChange) {
+    scheduleAutoReplan('product_updated');
+  }
+  
+  return products[index];
 };
 
 export const deleteProduct = (id: string): boolean => {
@@ -589,6 +610,7 @@ export const deleteProduct = (id: string): boolean => {
   const filtered = products.filter(p => p.id !== id);
   if (filtered.length === products.length) return false;
   setItem(KEYS.PRODUCTS, filtered);
+  scheduleAutoReplan('product_deleted');
   return true;
 };
 
@@ -599,6 +621,7 @@ export const deleteProducts = (ids: string[]): number => {
   const deletedCount = products.length - filtered.length;
   if (deletedCount > 0) {
     setItem(KEYS.PRODUCTS, filtered);
+    scheduleAutoReplan('products_deleted');
   }
   return deletedCount;
 };
@@ -610,6 +633,7 @@ export const deleteProjects = (ids: string[]): number => {
   const deletedCount = projects.length - filtered.length;
   if (deletedCount > 0) {
     setItem(KEYS.PROJECTS, filtered);
+    scheduleAutoReplan('projects_deleted');
   }
   return deletedCount;
 };
@@ -643,16 +667,27 @@ export const createProject = (project: Omit<Project, 'id' | 'createdAt' | 'quant
   };
   const projects = getProjects();
   setItem(KEYS.PROJECTS, [...projects, newProject]);
+  scheduleAutoReplan('project_created');
   return newProject;
 };
 
-export const updateProject = (id: string, updates: Partial<Project>): Project | undefined => {
+export const updateProject = (id: string, updates: Partial<Project>, skipAutoReplan: boolean = false): Project | undefined => {
   const projects = getProjects();
   const index = projects.findIndex(p => p.id === id);
   if (index === -1) return undefined;
   
   projects[index] = { ...projects[index], ...updates };
   setItem(KEYS.PROJECTS, projects);
+  
+  // Schedule auto-replan for planning-relevant changes
+  if (!skipAutoReplan) {
+    const planningRelevantKeys = ['quantityTarget', 'dueDate', 'status', 'urgency', 'preferredPresetId', 'productId'];
+    const hasRelevantChange = Object.keys(updates).some(key => planningRelevantKeys.includes(key));
+    if (hasRelevantChange) {
+      scheduleAutoReplan('project_updated');
+    }
+  }
+  
   return projects[index];
 };
 
@@ -661,6 +696,7 @@ export const deleteProject = (id: string): boolean => {
   const filtered = projects.filter(p => p.id !== id);
   if (filtered.length === projects.length) return false;
   setItem(KEYS.PROJECTS, filtered);
+  scheduleAutoReplan('project_deleted');
   return true;
 };
 
@@ -697,6 +733,7 @@ export const createPrinter = (printer: Omit<Printer, 'id'>): Printer => {
   const newPrinter: Printer = { ...printer, id: generateId() };
   const printers = getPrinters();
   setItem(KEYS.PRINTERS, [...printers, newPrinter]);
+  scheduleAutoReplan('printer_added');
   return newPrinter;
 };
 
@@ -707,6 +744,14 @@ export const updatePrinter = (id: string, updates: Partial<Printer>): Printer | 
   
   printers[index] = { ...printers[index], ...updates };
   setItem(KEYS.PRINTERS, printers);
+  
+  // Schedule auto-replan for planning-relevant changes
+  const planningRelevantKeys = ['active', 'status', 'hasAMS', 'amsSlots', 'amsMode'];
+  const hasRelevantChange = Object.keys(updates).some(key => planningRelevantKeys.includes(key));
+  if (hasRelevantChange) {
+    scheduleAutoReplan('printer_updated');
+  }
+  
   return printers[index];
 };
 
@@ -846,6 +891,9 @@ export const consumeMaterial = (
 
   // Persist updated spools
   setItem(KEYS.SPOOLS, updatedSpools);
+  
+  // Schedule auto-replan after material consumption
+  scheduleAutoReplan('material_consumed');
 
   return {
     success: true,
@@ -1028,6 +1076,9 @@ export const saveFactorySettings = (settings: FactorySettings): void => {
     };
   });
   setItem(KEYS.PRINTERS, newPrinters);
+  
+  // Schedule auto-replan after factory settings change
+  scheduleAutoReplan('factory_settings_changed');
 };
 
 // ============= ONBOARDING =============
@@ -1054,16 +1105,27 @@ export const createSpool = (spool: Omit<Spool, 'id'>): Spool => {
   const newSpool = { ...spool, id: generateId() };
   const spools = getSpools();
   setItem(KEYS.SPOOLS, [...spools, newSpool]);
+  scheduleAutoReplan('spool_added');
   return newSpool;
 };
 
-export const updateSpool = (id: string, updates: Partial<Spool>): Spool | undefined => {
+export const updateSpool = (id: string, updates: Partial<Spool>, skipAutoReplan: boolean = false): Spool | undefined => {
   const spools = getSpools();
   const index = spools.findIndex(s => s.id === id);
   if (index === -1) return undefined;
   
   spools[index] = { ...spools[index], ...updates };
   setItem(KEYS.SPOOLS, spools);
+  
+  // Schedule auto-replan for inventory-affecting changes
+  if (!skipAutoReplan) {
+    const inventoryRelevantKeys = ['gramsRemainingEst', 'state', 'color'];
+    const hasRelevantChange = Object.keys(updates).some(key => inventoryRelevantKeys.includes(key));
+    if (hasRelevantChange) {
+      scheduleAutoReplan('spool_updated');
+    }
+  }
+  
   return spools[index];
 };
 

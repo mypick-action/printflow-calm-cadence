@@ -14,6 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { RefreshCw, Calendar, Lock, AlertCircle } from 'lucide-react';
 import { RecalculateScope, recalculatePlan, getPlannedCycles } from '@/services/storage';
+import { cancelPendingAutoReplan } from '@/services/autoReplan';
 import { toast } from 'sonner';
 
 interface RecalculateModalProps {
@@ -39,6 +40,9 @@ export const RecalculateModal: React.FC<RecalculateModalProps> = ({
 
   const handleRecalculate = async () => {
     setIsRecalculating(true);
+    
+    // Cancel any pending auto-replan since user is manually recalculating
+    cancelPendingAutoReplan();
     
     // Simulate a small delay for UX
     await new Promise(resolve => setTimeout(resolve, 500));
