@@ -17,6 +17,9 @@ import {
   Package, 
   RefreshCw,
   Calendar,
+  Info,
+  ArrowRight,
+  FolderOpen,
 } from 'lucide-react';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { PlannedCycle, Printer as PrinterType } from '@/services/storage';
@@ -41,6 +44,7 @@ interface DailyPlanDrawerProps {
   day: DayScheduleData | null;
   printers: PrinterType[];
   onRecalculateDay?: (date: Date) => void;
+  onNavigateToProjects?: () => void;
 }
 
 export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
@@ -49,6 +53,7 @@ export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
   day,
   printers,
   onRecalculateDay,
+  onNavigateToProjects,
 }) => {
   const { language, direction } = useLanguage();
 
@@ -68,6 +73,16 @@ export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
   };
 
   const hasCycles = day.cycles.length > 0;
+  
+  // Calculate summary stats
+  const totalUnits = day.cycles.reduce((sum, c) => sum + c.unitsPlanned, 0);
+  const totalCycles = day.cycles.length;
+  const endOfDayCycles = day.cycles.filter(c => c.shift === 'end_of_day').length;
+
+  // Explanation text
+  const explanationText = language === 'he'
+    ? 'זה התכנון ליום הזה לפי שעות העבודה והזמינות של המדפסות. אם אין מחזורים – כנראה שלא בוצע חישוב מחדש או שאין עבודות בתהליך.'
+    : "This is the plan for this day based on working hours and printer availability. If there are no cycles, either recalculation hasn't been run or there are no active jobs.";
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -102,6 +117,7 @@ export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
 
         {/* Content */}
         <div className="space-y-6">
+          {/* Day off state */}
           {!day.isWorkday ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Package className="w-12 h-12 mb-3 opacity-50" />
@@ -115,29 +131,66 @@ export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
               </p>
             </div>
           ) : !hasCycles ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            /* Empty state with friendly actions */
+            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
               <Package className="w-12 h-12 mb-3 opacity-50" />
               <p className="text-lg font-medium">
                 {language === 'he' ? 'אין תכנון ליום הזה עדיין' : 'No plan for this day yet'}
               </p>
-              <p className="text-sm text-center mt-2 max-w-xs">
+              <p className="text-sm text-center mt-2 max-w-xs text-muted-foreground">
                 {language === 'he' 
-                  ? 'לחצו "חישוב מחדש" כדי ליצור תכנון'
-                  : 'Click "Recalculate" to generate a plan'}
+                  ? 'ייתכן שלא בוצע חישוב מחדש או שאין פרויקטים פעילים'
+                  : 'Either recalculation has not been run or there are no active projects'}
               </p>
-              {onRecalculateDay && (
-                <Button 
-                  variant="outline" 
-                  className="mt-4 gap-2"
-                  onClick={() => onRecalculateDay(day.date)}
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  {language === 'he' ? 'חשב תכנון ליום הזה בלבד' : 'Recalculate only this day'}
-                </Button>
-              )}
+              
+              {/* Action buttons */}
+              <div className="flex flex-col gap-2 mt-6 w-full max-w-xs">
+                {onRecalculateDay && (
+                  <Button 
+                    variant="default" 
+                    className="w-full gap-2"
+                    onClick={() => onRecalculateDay(day.date)}
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    {language === 'he' ? 'חשב מחדש' : 'Recalculate'}
+                  </Button>
+                )}
+                {onNavigateToProjects && (
+                  <Button 
+                    variant="outline" 
+                    className="w-full gap-2"
+                    onClick={onNavigateToProjects}
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                    {language === 'he' ? 'לך לפרויקטים בתהליך' : 'Go to Active Projects'}
+                  </Button>
+                )}
+              </div>
             </div>
           ) : (
             <>
+              {/* Summary stats */}
+              <div className="grid grid-cols-3 gap-3 p-3 bg-muted/50 rounded-xl">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-foreground">{totalCycles}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {language === 'he' ? 'מחזורים' : 'Cycles'}
+                  </div>
+                </div>
+                <div className="text-center border-x border-border">
+                  <div className="text-2xl font-bold text-foreground">{totalUnits}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {language === 'he' ? 'יחידות' : 'Units'}
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-primary">{endOfDayCycles}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {language === 'he' ? 'סוף יום' : 'End of Day'}
+                  </div>
+                </div>
+              </div>
+
               {/* Printers with cycles */}
               {printers.map((printer) => {
                 const printerCycles = cyclesByPrinter[printer.id] || [];
@@ -172,7 +225,11 @@ export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
                               <div className="flex items-center gap-2 flex-wrap">
                                 <Clock className="w-4 h-4 text-muted-foreground" />
                                 <span className="text-sm text-muted-foreground font-mono">
-                                  {cycle.startTime} - {cycle.endTime}
+                                  {typeof cycle.startTime === 'string' && cycle.startTime.includes('T') 
+                                    ? format(new Date(cycle.startTime), 'HH:mm')
+                                    : cycle.startTime} - {typeof cycle.endTime === 'string' && cycle.endTime.includes('T')
+                                    ? format(new Date(cycle.endTime), 'HH:mm')
+                                    : cycle.endTime}
                                 </span>
                                 {cycle.shift === 'end_of_day' && (
                                   <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">
@@ -205,15 +262,25 @@ export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
                 );
               })}
 
+              {/* Explanation block */}
+              <div className="p-3 bg-primary/5 rounded-lg border border-primary/20">
+                <div className="flex items-start gap-2">
+                  <Info className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                  <p className="text-xs text-muted-foreground">
+                    {explanationText}
+                  </p>
+                </div>
+              </div>
+
               {/* Recalculate button for days with cycles too */}
               {onRecalculateDay && (
                 <Button 
                   variant="outline" 
-                  className="w-full gap-2 mt-4"
+                  className="w-full gap-2"
                   onClick={() => onRecalculateDay(day.date)}
                 >
                   <RefreshCw className="w-4 h-4" />
-                  {language === 'he' ? 'חשב תכנון ליום הזה בלבד' : 'Recalculate only this day'}
+                  {language === 'he' ? 'חשב תכנון מחדש' : 'Recalculate Plan'}
                 </Button>
               )}
             </>

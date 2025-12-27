@@ -3,6 +3,7 @@
 // NO AI, NO Cloud - Pure local logic
 
 import { toast } from 'sonner';
+import { saveSnapshotAfterPlan } from './planningSnapshot';
 
 // Debounce configuration
 const DEBOUNCE_MS = 1500; // 1.5 seconds debounce
@@ -72,6 +73,8 @@ const executeAutoReplan = async (): Promise<void> => {
     
     const result = recalculatePlan('from_now', true);
     
+    // Save snapshot after successful plan
+    saveSnapshotAfterPlan();
     setLastAutoReplanTime();
 
     if (result.success) {
