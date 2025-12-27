@@ -220,19 +220,28 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
   const spools = getSpools();
   const suggestedSpools = spools.filter(s => recommendation.suggestedSpoolIds.includes(s.id));
 
+  const handleClick = (e: React.MouseEvent) => {
+    console.log('[RecommendationCard] onClick fired', recommendation.printerId);
+    e.stopPropagation();
+    onClick?.();
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    console.log('[RecommendationCard] onPointerDown fired', recommendation.printerId);
+  };
+
   return (
-    <div 
+    <button 
+      type="button"
       className={cn(
-        "p-3 rounded-lg border transition-colors",
+        "w-full text-left p-3 rounded-lg border transition-colors",
         recommendation.priority === 'high' && "border-warning/50 bg-warning/5",
         recommendation.priority === 'medium' && "border-muted bg-muted/30",
         recommendation.priority === 'low' && "border-border bg-background",
-        onClick && "cursor-pointer hover:bg-accent/50"
+        "cursor-pointer hover:bg-accent/50 focus:outline-none focus:ring-2 focus:ring-primary"
       )}
-      onClick={onClick}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
+      onClick={handleClick}
+      onPointerDown={handlePointerDown}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -287,7 +296,7 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
           <span> • {recommendation.affectedProjectNames.slice(0, 2).join(', ')}</span>
         )}
       </div>
-    </div>
+    </button>
   );
 };
 
