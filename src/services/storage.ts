@@ -584,6 +584,36 @@ export const createProduct = (product: Omit<Product, 'id'>): Product => {
   return newProduct;
 };
 
+export const deleteProduct = (id: string): boolean => {
+  const products = getProducts();
+  const filtered = products.filter(p => p.id !== id);
+  if (filtered.length === products.length) return false;
+  setItem(KEYS.PRODUCTS, filtered);
+  return true;
+};
+
+export const deleteProducts = (ids: string[]): number => {
+  const products = getProducts();
+  const idsSet = new Set(ids);
+  const filtered = products.filter(p => !idsSet.has(p.id));
+  const deletedCount = products.length - filtered.length;
+  if (deletedCount > 0) {
+    setItem(KEYS.PRODUCTS, filtered);
+  }
+  return deletedCount;
+};
+
+export const deleteProjects = (ids: string[]): number => {
+  const projects = getProjects();
+  const idsSet = new Set(ids);
+  const filtered = projects.filter(p => !idsSet.has(p.id));
+  const deletedCount = projects.length - filtered.length;
+  if (deletedCount > 0) {
+    setItem(KEYS.PROJECTS, filtered);
+  }
+  return deletedCount;
+};
+
 // ============= PROJECTS =============
 
 export const getProjects = (): Project[] => {

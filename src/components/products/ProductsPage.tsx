@@ -3,6 +3,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -11,11 +12,24 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Package, Pencil, Star, Check } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Plus, Package, Pencil, Star, Check, Trash2 } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
 import { 
   getProducts, 
   Product, 
   getGramsPerCycle,
+  deleteProduct,
+  deleteProducts,
 } from '@/services/storage';
 import { ProductEditorModal } from './ProductEditorModal';
 
@@ -25,6 +39,9 @@ export const ProductsPage: React.FC = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
 
   useEffect(() => {
     setProducts(getProducts());
@@ -40,6 +57,56 @@ export const ProductsPage: React.FC = () => {
     setEditingProduct(null);
   };
 
+  const handleToggleSelect = (id: string) => {
+    const newSelected = new Set(selectedIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedIds(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedIds.size === products.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(products.map(p => p.id)));
+    }
+  };
+
+  const handleDeleteSingle = (product: Product) => {
+    setProductToDelete(product);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteSelected = () => {
+    setProductToDelete(null);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (productToDelete) {
+      // Single delete
+      deleteProduct(productToDelete.id);
+      toast({
+        title: language === 'he' ? 'המוצר נמחק' : 'Product deleted',
+        description: productToDelete.name,
+      });
+    } else {
+      // Batch delete
+      const count = deleteProducts(Array.from(selectedIds));
+      toast({
+        title: language === 'he' ? 'מוצרים נמחקו' : 'Products deleted',
+        description: language === 'he' ? `${count} מוצרים נמחקו` : `${count} products deleted`,
+      });
+      setSelectedIds(new Set());
+    }
+    setProducts(getProducts());
+    setDeleteDialogOpen(false);
+    setProductToDelete(null);
+  };
+
   const getRiskBadge = (level: 'low' | 'medium' | 'high') => {
     const config = {
       low: { label: language === 'he' ? 'נמוך' : 'Low', className: 'bg-success/10 text-success border-success/20' },
@@ -48,6 +115,9 @@ export const ProductsPage: React.FC = () => {
     };
     return <Badge variant="outline" className={config[level].className}>{config[level].label}</Badge>;
   };
+
+  const isAllSelected = products.length > 0 && selectedIds.size === products.length;
+  const isSomeSelected = selectedIds.size > 0;
 
   return (
     <div className="space-y-6">
@@ -67,11 +137,42 @@ export const ProductsPage: React.FC = () => {
           </div>
         </div>
         
-        <Button className="gap-2" onClick={() => handleOpenDialog()}>
-          <Plus className="w-4 h-4" />
-          {language === 'he' ? 'מוצר חדש' : 'New Product'}
-        </Button>
+        <div className="flex items-center gap-2">
+          {isSomeSelected && (
+            <Button 
+              variant="destructive" 
+              className="gap-2"
+              onClick={handleDeleteSelected}
+            >
+              <Trash2 className="w-4 h-4" />
+              {language === 'he' ? `מחק ${selectedIds.size}` : `Delete ${selectedIds.size}`}
+            </Button>
+          )}
+          <Button className="gap-2" onClick={() => handleOpenDialog()}>
+            <Plus className="w-4 h-4" />
+            {language === 'he' ? 'מוצר חדש' : 'New Product'}
+          </Button>
+        </div>
       </div>
+
+      {/* Select All */}
+      {products.length > 0 && (
+        <div className="flex items-center gap-2 px-2">
+          <Checkbox 
+            id="select-all"
+            checked={isAllSelected}
+            onCheckedChange={handleSelectAll}
+          />
+          <label htmlFor="select-all" className="text-sm text-muted-foreground cursor-pointer">
+            {language === 'he' ? 'סמן את כולם' : 'Select all'}
+          </label>
+          {isSomeSelected && (
+            <span className="text-sm text-muted-foreground">
+              ({selectedIds.size} {language === 'he' ? 'נבחרו' : 'selected'})
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Product Editor Modal */}
       <ProductEditorModal
@@ -81,16 +182,54 @@ export const ProductsPage: React.FC = () => {
         onProductSaved={handleProductSaved}
       />
 
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {language === 'he' ? 'מחיקת מוצר' : 'Delete Product'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {productToDelete 
+                ? (language === 'he' 
+                    ? `האם אתה בטוח שברצונך למחוק את "${productToDelete.name}"?` 
+                    : `Are you sure you want to delete "${productToDelete.name}"?`)
+                : (language === 'he'
+                    ? `האם אתה בטוח שברצונך למחוק ${selectedIds.size} מוצרים?`
+                    : `Are you sure you want to delete ${selectedIds.size} products?`)
+              }
+              <br />
+              <span className="text-destructive">
+                {language === 'he' ? 'פעולה זו לא ניתנת לביטול.' : 'This action cannot be undone.'}
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {language === 'he' ? 'מחק' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Products List */}
       <div className="space-y-4">
         {products.map((product) => (
-          <Card key={product.id} className="overflow-hidden">
+          <Card key={product.id} className={`overflow-hidden transition-all ${selectedIds.has(product.id) ? 'ring-2 ring-primary' : ''}`}>
             <div 
               className="p-4 cursor-pointer hover:bg-accent/50 transition-colors"
               onClick={() => setExpandedProductId(expandedProductId === product.id ? null : product.id)}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
+                  <Checkbox 
+                    checked={selectedIds.has(product.id)}
+                    onCheckedChange={() => handleToggleSelect(product.id)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
                   <div className="p-2 bg-primary/10 rounded-lg">
                     <Package className="w-5 h-5 text-primary" />
                   </div>
@@ -101,13 +240,21 @@ export const ProductsPage: React.FC = () => {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <Button 
                     variant="ghost" 
                     size="sm" 
                     onClick={(e) => { e.stopPropagation(); handleOpenDialog(product); }}
                   >
                     <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={(e) => { e.stopPropagation(); handleDeleteSingle(product); }}
+                  >
+                    <Trash2 className="w-4 h-4" />
                   </Button>
                 </div>
               </div>
