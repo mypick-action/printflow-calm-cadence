@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +14,6 @@ import {
   ChevronDown,
   ChevronUp,
   Printer as PrinterIcon,
-  ArrowRight,
 } from 'lucide-react';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { generateLoadRecommendations, LoadRecommendationsResult, getActionSummary } from '@/services/loadRecommendations';
@@ -203,46 +201,34 @@ const ShortageAlert: React.FC<{ shortage: MaterialShortage; language: string }> 
 };
 
 const RecommendationCard: React.FC<{ recommendation: LoadRecommendation; language: string }> = ({ recommendation, language }) => {
-  const navigate = useNavigate();
   const spools = getSpools();
   const suggestedSpools = spools.filter(s => recommendation.suggestedSpoolIds.includes(s.id));
 
-  // Navigate to printers page with auto-open param
-  const handleClick = () => {
-    navigate(`/inventory/printers?openPrinterId=${recommendation.printerId}&color=${encodeURIComponent(recommendation.color)}`);
-  };
-
   return (
-    <div 
-      onClick={handleClick}
-      className={cn(
-        "p-3 rounded-lg border cursor-pointer transition-all hover:scale-[1.01] hover:shadow-md",
-        recommendation.priority === 'high' && "border-warning/50 bg-warning/5 hover:border-warning",
-        recommendation.priority === 'medium' && "border-muted bg-muted/30 hover:border-primary/50",
-        recommendation.priority === 'low' && "border-border bg-background hover:border-primary/50",
-      )}
-    >
+    <div className={cn(
+      "p-3 rounded-lg border",
+      recommendation.priority === 'high' && "border-warning/50 bg-warning/5",
+      recommendation.priority === 'medium' && "border-muted bg-muted/30",
+      recommendation.priority === 'low' && "border-border bg-background",
+    )}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           <PrinterIcon className="w-4 h-4 text-muted-foreground" />
           <span className="font-medium text-sm">{recommendation.printerName}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge 
-            variant="outline" 
-            className={cn(
-              "text-xs",
-              recommendation.priority === 'high' && "bg-warning/10 text-warning border-warning/30",
-              recommendation.priority === 'medium' && "bg-muted text-muted-foreground",
-              recommendation.priority === 'low' && "bg-background text-muted-foreground",
-            )}
-          >
-            {recommendation.priority === 'high' && (language === 'he' ? 'דחוף' : 'Urgent')}
-            {recommendation.priority === 'medium' && (language === 'he' ? 'רגיל' : 'Normal')}
-            {recommendation.priority === 'low' && (language === 'he' ? 'נמוך' : 'Low')}
-          </Badge>
-          <ArrowRight className="w-4 h-4 text-muted-foreground" />
-        </div>
+        <Badge 
+          variant="outline" 
+          className={cn(
+            "text-xs",
+            recommendation.priority === 'high' && "bg-warning/10 text-warning border-warning/30",
+            recommendation.priority === 'medium' && "bg-muted text-muted-foreground",
+            recommendation.priority === 'low' && "bg-background text-muted-foreground",
+          )}
+        >
+          {recommendation.priority === 'high' && (language === 'he' ? 'דחוף' : 'Urgent')}
+          {recommendation.priority === 'medium' && (language === 'he' ? 'רגיל' : 'Normal')}
+          {recommendation.priority === 'low' && (language === 'he' ? 'נמוך' : 'Low')}
+        </Badge>
       </div>
 
       <div className="mt-2 flex items-center gap-2">
