@@ -111,13 +111,22 @@ export const PlanningPage: React.FC = () => {
   const [suggestedSpoolIdsForLoad, setSuggestedSpoolIdsForLoad] = useState<string[]>([]);
 
   const handleLoadSpoolRequest = (printer: PrinterTypeStorage, color: string, suggestedSpoolIds: string[]) => {
-    setSelectedPrinterForLoad(printer);
-    setSelectedColorForLoad(color);
-    setSuggestedSpoolIdsForLoad(suggestedSpoolIds);
-    setLoadSpoolDialogOpen(true);
+    // Close first if already open, then reopen with new values
+    setLoadSpoolDialogOpen(false);
+    // Use requestAnimationFrame to ensure state update before reopening
+    requestAnimationFrame(() => {
+      setSelectedPrinterForLoad(printer);
+      setSelectedColorForLoad(color);
+      setSuggestedSpoolIdsForLoad(suggestedSpoolIds);
+      setLoadSpoolDialogOpen(true);
+    });
   };
 
   const handleLoadSpoolComplete = () => {
+    setLoadSpoolDialogOpen(false);
+    setSelectedPrinterForLoad(null);
+    setSelectedColorForLoad('');
+    setSuggestedSpoolIdsForLoad([]);
     refreshData();
   };
 
@@ -296,6 +305,7 @@ export const PlanningPage: React.FC = () => {
 
       {/* Load Spool Dialog - Rendered at top level for proper z-index */}
       <LoadSpoolDialog
+        key={selectedPrinterForLoad?.id || 'no-printer'}
         open={loadSpoolDialogOpen}
         onOpenChange={setLoadSpoolDialogOpen}
         printer={selectedPrinterForLoad}
