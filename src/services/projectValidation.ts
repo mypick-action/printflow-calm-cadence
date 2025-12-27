@@ -148,7 +148,7 @@ export const validateProjectForPlanning = (project: Project): ProjectValidationR
     }
   }
 
-  // Check 5: Material availability (warning only)
+  // Check 5: Material availability with 3-state status (PRD requirement)
   if (product && product.gramsPerUnit > 0 && project.quantityTarget > 0) {
     const spools = getSpools();
     const color = project.color.toLowerCase();
@@ -158,12 +158,37 @@ export const validateProjectForPlanning = (project: Project): ProjectValidationR
     
     const neededGrams = product.gramsPerUnit * project.quantityTarget;
     
-    if (availableGrams < neededGrams) {
+    // Calculate spool ordering using PRD 150g threshold
+    const SAFETY_THRESHOLD = 150;
+    const SPOOL_SIZE = 1000;
+    const missingGrams = Math.max(0, neededGrams - availableGrams);
+    
+    // Determine material status (PRD: 3-state)
+    let materialStatus: 'full' | 'partial' | 'none';
+    if (availableGrams >= neededGrams) {
+      materialStatus = 'full';
+    } else if (availableGrams > 0) {
+      materialStatus = 'partial';
+    } else {
+      materialStatus = 'none';
+    }
+    
+    if (materialStatus !== 'full') {
+      // Calculate spools to order using PRD logic
+      const baseSpools = Math.ceil(missingGrams / SPOOL_SIZE);
+      const remainingAfterOrder = (baseSpools * SPOOL_SIZE) - missingGrams;
+      const needsExtra = remainingAfterOrder < SAFETY_THRESHOLD;
+      const spoolsToOrder = needsExtra ? baseSpools + 1 : baseSpools;
+      
+      const statusText = materialStatus === 'partial' 
+        ? (language => language === 'he' ? 'חומר חלקי' : 'Partial material')
+        : (language => language === 'he' ? 'אין חומר' : 'No material');
+      
       issues.push({
         type: 'warning',
-        code: 'INSUFFICIENT_MATERIAL',
-        message: `אין מספיק חומר בצבע ${project.color}: נדרשים ${Math.ceil(neededGrams)}g, זמינים ${Math.ceil(availableGrams)}g`,
-        messageEn: `Insufficient ${project.color} material: need ${Math.ceil(neededGrams)}g, have ${Math.ceil(availableGrams)}g`,
+        code: materialStatus === 'partial' ? 'PARTIAL_MATERIAL' : 'NO_MATERIAL',
+        message: `${statusText('he')}: ${project.color} - נדרשים ${Math.ceil(neededGrams)}g, זמינים ${Math.ceil(availableGrams)}g. הזמן ${spoolsToOrder} גלילים.`,
+        messageEn: `${statusText('en')}: ${project.color} - need ${Math.ceil(neededGrams)}g, have ${Math.ceil(availableGrams)}g. Order ${spoolsToOrder} spool(s).`,
       });
     }
   }

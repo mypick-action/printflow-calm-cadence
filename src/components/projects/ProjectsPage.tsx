@@ -58,6 +58,9 @@ import {
   Filter,
   Flame,
   Trash2,
+  CircleDot,
+  CircleSlash,
+  Circle,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from '@/hooks/use-toast';
@@ -72,6 +75,15 @@ import {
   calculateDaysRemaining,
 } from '@/services/storage';
 import { validateProjectForPlanning, getValidationSummary } from '@/services/projectValidation';
+import { 
+  getProjectMaterialStatus, 
+  getMaterialStatusForColor,
+  formatMaterialStatus, 
+  generateOrderRecommendationText,
+  calculateSpoolsNeeded,
+  ProjectMaterialStatus,
+  MaterialStatusType,
+} from '@/services/materialStatus';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { ProductEditorModal } from '@/components/products/ProductEditorModal';
 import {
@@ -90,6 +102,75 @@ const availableColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yell
 // Status type definitions
 type ProjectStatus = 'pending' | 'in_progress' | 'on_hold' | 'completed';
 type ProjectPriority = 'normal' | 'urgent' | 'critical';
+
+// Material Status Preview Component (PRD: immediate feedback on project creation)
+const MaterialStatusPreview: React.FC<{
+  productId: string;
+  color: string;
+  quantity: number;
+  language: 'he' | 'en';
+  products: Product[];
+}> = ({ productId, color, quantity, language, products }) => {
+  const product = products.find(p => p.id === productId);
+  if (!product || !product.gramsPerUnit) return null;
+  
+  const requiredGrams = product.gramsPerUnit * quantity;
+  const materialStatus = getMaterialStatusForColor(color, requiredGrams);
+  const { label, className } = formatMaterialStatus(materialStatus.status, language);
+  
+  // Calculate spool recommendation if needed
+  let spoolsToOrder = 0;
+  if (materialStatus.missingGrams > 0) {
+    const { spoolsNeeded } = calculateSpoolsNeeded(materialStatus.missingGrams);
+    spoolsToOrder = spoolsNeeded;
+  }
+  
+  const icon = materialStatus.status === 'full' 
+    ? <CircleDot className="w-4 h-4" />
+    : materialStatus.status === 'partial'
+    ? <Circle className="w-4 h-4" />
+    : <CircleSlash className="w-4 h-4" />;
+  
+  return (
+    <div className={`p-3 rounded-lg border ${className}`}>
+      <div className="flex items-center gap-2 font-medium">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <div className="mt-2 space-y-1 text-sm">
+        <div className="flex justify-between">
+          <span>{language === 'he' ? 'נדרש:' : 'Required:'}</span>
+          <span className="font-medium">{Math.ceil(requiredGrams)}g</span>
+        </div>
+        <div className="flex justify-between">
+          <span>{language === 'he' ? 'זמין:' : 'Available:'}</span>
+          <span className="font-medium">{Math.ceil(materialStatus.availableGrams)}g</span>
+        </div>
+        {materialStatus.missingGrams > 0 && (
+          <>
+            <div className="flex justify-between text-error">
+              <span>{language === 'he' ? 'חסר:' : 'Missing:'}</span>
+              <span className="font-medium">{Math.ceil(materialStatus.missingGrams)}g</span>
+            </div>
+            <div className="pt-2 border-t mt-2">
+              <div className="flex justify-between font-medium">
+                <span>{language === 'he' ? 'הזמנה מומלצת:' : 'Recommended order:'}</span>
+                <span>
+                  {spoolsToOrder} {language === 'he' ? 'גלילים' : 'spool(s)'}
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {language === 'he' 
+                  ? `לפי סף ביטחון של 150g` 
+                  : `Based on 150g safety threshold`}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export const ProjectsPage: React.FC = () => {
   const { language } = useLanguage();
@@ -242,6 +323,44 @@ export const ProjectsPage: React.FC = () => {
       critical: active.filter(p => p.urgency === 'critical').length,
     };
   }, [projects]);
+
+  // Material status for each project (PRD: 3-state status)
+  const projectMaterialStatuses = useMemo(() => {
+    const statuses = new Map<string, ProjectMaterialStatus>();
+    for (const project of projects) {
+      if (project.status !== 'completed') {
+        statuses.set(project.id, getProjectMaterialStatus(project));
+      }
+    }
+    return statuses;
+  }, [projects]);
+
+  // Helper to get material status badge
+  const getMaterialStatusBadge = (projectId: string) => {
+    const materialStatus = projectMaterialStatuses.get(projectId);
+    if (!materialStatus) return null;
+    
+    const { label, className } = formatMaterialStatus(materialStatus.status, language);
+    const icon = materialStatus.status === 'full' 
+      ? <CircleDot className="w-3 h-3" />
+      : materialStatus.status === 'partial'
+      ? <Circle className="w-3 h-3" />
+      : <CircleSlash className="w-3 h-3" />;
+    
+    return (
+      <div className="space-y-1">
+        <Badge variant="outline" className={`gap-1 ${className}`}>
+          {icon}
+          {label}
+        </Badge>
+        {materialStatus.orderRecommendation && materialStatus.orderRecommendation.spoolsToOrder > 0 && (
+          <div className="text-xs text-muted-foreground">
+            {generateOrderRecommendationText(materialStatus.orderRecommendation, language)}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Calculate auto-priority when due date changes
   const getCalculatedPriority = () => {
@@ -610,6 +729,17 @@ export const ProjectsPage: React.FC = () => {
                 </div>
               )}
               
+              {/* Material Status Preview (PRD: immediate feedback) */}
+              {newProject.productId && newProject.color && newProject.quantityTarget > 0 && (
+                <MaterialStatusPreview
+                  productId={newProject.productId}
+                  color={newProject.color}
+                  quantity={newProject.quantityTarget}
+                  language={language}
+                  products={products}
+                />
+              )}
+              
               <Button 
                 onClick={handleAddProject} 
                 className="w-full"
@@ -772,6 +902,7 @@ export const ProjectsPage: React.FC = () => {
                 <TableRow>
                   <TableHead>{language === 'he' ? 'שם הפרויקט' : 'Project Name'}</TableHead>
                   <TableHead>{language === 'he' ? 'מוצר' : 'Product'}</TableHead>
+                  <TableHead>{language === 'he' ? 'חומר' : 'Material'}</TableHead>
                   <TableHead>{language === 'he' ? 'התקדמות' : 'Progress'}</TableHead>
                   <TableHead>{language === 'he' ? 'תאריך יעד' : 'Due Date'}</TableHead>
                   <TableHead>{language === 'he' ? 'מצב' : 'Status'}</TableHead>
@@ -798,6 +929,13 @@ export const ProjectsPage: React.FC = () => {
                       </div>
                     </TableCell>
                     <TableCell>{project.productName}</TableCell>
+                    <TableCell>
+                      {project.status !== 'completed' ? getMaterialStatusBadge(project.id) : (
+                        <Badge variant="outline" className="bg-muted text-muted-foreground">
+                          {language === 'he' ? 'הושלם' : 'Done'}
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-sm">
