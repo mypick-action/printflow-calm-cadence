@@ -201,13 +201,17 @@ export const generateLoadRecommendations = (
     const color = cycle.requiredColor || '';
 
     // RULE A.3: Check if same color spool is already mounted (no change needed)
+    // Check both mountedSpoolId AND mountedColor - user may load color without specific spool
     let isSameColorMounted = false;
-    if (printer.hasAMS && printer.amsSlotStates) {
+    if (printer.hasAMS && printer.amsSlotStates && printer.amsSlotStates.length > 0) {
+      // For AMS: check if any slot has the required color (with or without specific spool)
       isSameColorMounted = printer.amsSlotStates.some(s => 
-        normalizeColor(s.color) === colorKey && !!s.spoolId
+        normalizeColor(s.color) === colorKey
       );
-    } else if (printer.mountedSpoolId) {
-      isSameColorMounted = normalizeColor(printer.mountedColor) === colorKey;
+    } else {
+      // For non-AMS: check mountedColor OR currentColor
+      const printerColor = printer.mountedColor || printer.currentColor;
+      isSameColorMounted = printerColor ? normalizeColor(printerColor) === colorKey : false;
     }
     
     // If same color is mounted, no action needed - mark printer as handled and skip
