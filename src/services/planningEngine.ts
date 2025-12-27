@@ -325,8 +325,9 @@ const scheduleCyclesForDay = (
   projectStates: ProjectPlanningState[],
   settings: FactorySettings,
   materialTracker: Map<string, number>,
-  existingCycles: PlannedCycle[]
-): { dayPlan: DayPlan; updatedProjectStates: ProjectPlanningState[]; updatedMaterialTracker: Map<string, number> } => {
+  existingCycles: PlannedCycle[],
+  spoolAssignmentTracker: Map<string, Set<string>> // NEW: tracks which spools are assigned to which printers
+): { dayPlan: DayPlan; updatedProjectStates: ProjectPlanningState[]; updatedMaterialTracker: Map<string, number>; updatedSpoolAssignments: Map<string, Set<string>> } => {
   const dayStart = createDateWithTime(date, schedule.startTime);
   const dayEnd = createDateWithTime(date, schedule.endTime);
   const dateString = formatDateString(date);
@@ -362,6 +363,12 @@ const scheduleCyclesForDay = (
   let workingStates = projectStates.map(s => ({ ...s }));
   const workingMaterial = new Map(materialTracker);
   
+  // Clone spool assignment tracker (color -> set of printer IDs using that color simultaneously)
+  const workingSpoolAssignments = new Map<string, Set<string>>();
+  for (const [color, printerSet] of spoolAssignmentTracker) {
+    workingSpoolAssignments.set(color, new Set(printerSet));
+  }
+  
   // Schedule cycles until no more can be scheduled
   let moreToSchedule = true;
   while (moreToSchedule) {
@@ -379,7 +386,7 @@ const scheduleCyclesForDay = (
         // Check if cycle fits in day
         if (cycleEndTime > slot.endOfDayTime) continue;
         
-        // Calculate material needs (but DON'T block on it - per PRD)
+        // Calculate material needs
         const gramsNeeded = getGramsPerCycle(state.product, state.preset);
         const colorKey = state.project.color.toLowerCase();
         const availableMaterial = workingMaterial.get(colorKey) || 0;
@@ -387,6 +394,29 @@ const scheduleCyclesForDay = (
         // Determine units for this cycle
         const unitsThisCycle = Math.min(state.preset.unitsPerPlate, state.remainingUnits);
         const gramsThisCycle = unitsThisCycle * state.product.gramsPerUnit;
+        
+        // ============= CRITICAL: SPOOL-LIMITED SCHEDULING (PRD RULE) =============
+        // 1 physical spool = 1 printer at a time
+        // Count available spools for this color
+        const allSpools = getSpools();
+        const availableSpoolsForColor = allSpools.filter(s => 
+          s.color.toLowerCase() === colorKey && 
+          s.state !== 'empty' &&
+          s.gramsRemainingEst > 0
+        );
+        const totalSpoolCount = availableSpoolsForColor.length;
+        
+        // Get how many printers are ALREADY assigned to this color (in current time slot)
+        const printersUsingColor = workingSpoolAssignments.get(colorKey) || new Set<string>();
+        
+        // Check if this printer already has this color assigned
+        const thisPrinterHasColor = printersUsingColor.has(slot.printerId);
+        
+        // If printer doesn't have color and we've reached spool limit, skip
+        if (!thisPrinterHasColor && printersUsingColor.size >= totalSpoolCount) {
+          // Cannot assign - not enough physical spools for parallel operation
+          continue;
+        }
         
         // Determine plate type
         let plateType: 'full' | 'reduced' | 'closeout' = 'full';
@@ -399,7 +429,6 @@ const scheduleCyclesForDay = (
         const isEndOfDayCycle = remainingDayHours < 2;
         
         // Determine readiness state based on material availability and spool mounting
-        // Per PRD: Planning does NOT depend on spool mounting - we plan first, then guide execution
         let readinessState: 'ready' | 'waiting_for_spool' | 'blocked_inventory' = 'waiting_for_spool';
         let readinessDetails: string | undefined;
         const suggestedSpoolIds: string[] = [];
@@ -413,26 +442,18 @@ const scheduleCyclesForDay = (
           readinessDetails = `Insufficient ${state.project.color} material: need ${gramsThisCycle}g, available ${Math.floor(availableMaterial)}g`;
         } else {
           // Material exists in inventory - find suitable spools to suggest
-          const spools = getSpools();
-          const matchingSpools = spools.filter(s => 
-            s.color.toLowerCase() === colorKey && 
-            s.state !== 'empty' &&
-            s.gramsRemainingEst >= gramsThisCycle
-          );
+          const matchingSpools = availableSpoolsForColor.filter(s => s.gramsRemainingEst >= gramsThisCycle);
           
           // Check if a spool is already mounted on this printer
-          // v2: mountedSpoolId is REQUIRED for "ready" state - mountedColor alone is NOT enough
-          const printers = getPrinters();
-          const printer = printers.find(p => p.id === slot.printerId);
+          const allPrinters = getPrinters();
+          const printer = allPrinters.find(p => p.id === slot.printerId);
           
           let isSpoolMounted = false;
           if (printer?.hasAMS && printer.amsSlotStates) {
-            // For AMS: check if any slot has the matching color AND a spoolId
             isSpoolMounted = printer.amsSlotStates.some(s => 
               s.color?.toLowerCase() === colorKey && !!s.spoolId
             );
           } else {
-            // For non-AMS: require mountedSpoolId (not just mountedColor)
             isSpoolMounted = !!printer?.mountedSpoolId && 
               printer?.mountedColor?.toLowerCase() === colorKey;
           }
@@ -444,7 +465,6 @@ const scheduleCyclesForDay = (
             readinessState = 'waiting_for_spool';
             readinessDetails = `Load ${state.project.color} spool on ${slot.printerName}`;
             
-            // Suggest specific spools from inventory
             for (const spool of matchingSpools.slice(0, 3)) {
               suggestedSpoolIds.push(spool.id);
             }
@@ -481,6 +501,12 @@ const scheduleCyclesForDay = (
         if (hasEnoughInventory) {
           workingMaterial.set(colorKey, availableMaterial - gramsThisCycle);
         }
+        
+        // Track this printer as using this color (for spool-limiting)
+        if (!workingSpoolAssignments.has(colorKey)) {
+          workingSpoolAssignments.set(colorKey, new Set());
+        }
+        workingSpoolAssignments.get(colorKey)!.add(slot.printerId);
         
         moreToSchedule = true;
         break; // Move to next printer slot
@@ -530,6 +556,7 @@ const scheduleCyclesForDay = (
     dayPlan,
     updatedProjectStates: workingStates,
     updatedMaterialTracker: workingMaterial,
+    updatedSpoolAssignments: workingSpoolAssignments,
   };
 };
 
@@ -640,6 +667,8 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   const days: DayPlan[] = [];
   let workingProjectStates = [...projectStates];
   let workingMaterialTracker = new Map(materialTracker);
+  // Track spool assignments per color -> set of printer IDs (for 1 spool = 1 printer rule)
+  let workingSpoolAssignments = new Map<string, Set<string>>();
   
   for (let dayOffset = 0; dayOffset < daysToPlane; dayOffset++) {
     const planDate = new Date(startDate);
@@ -672,19 +701,22 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     }
     
     // Schedule cycles for this day
-    const { dayPlan, updatedProjectStates, updatedMaterialTracker } = scheduleCyclesForDay(
+    // Pass spool assignment tracker to enforce 1 spool = 1 printer rule
+    const { dayPlan, updatedProjectStates, updatedMaterialTracker, updatedSpoolAssignments } = scheduleCyclesForDay(
       planDate,
       schedule,
       printers,
       workingProjectStates,
       settings,
       workingMaterialTracker,
-      existingCycles
+      existingCycles,
+      workingSpoolAssignments
     );
     
     days.push(dayPlan);
     workingProjectStates = updatedProjectStates;
     workingMaterialTracker = updatedMaterialTracker;
+    workingSpoolAssignments = updatedSpoolAssignments;
     
     // If all projects are scheduled, no need to continue
     if (workingProjectStates.length === 0) break;
