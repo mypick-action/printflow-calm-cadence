@@ -555,23 +555,23 @@ export const InventoryPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <Label>{language === 'he' ? 'מדפסת מוקצית' : 'Assigned Printer'}</Label>
-                <Select 
-                  value={editingSpool.assignedPrinterId || 'none'} 
-                  onValueChange={(v) => setEditingSpool({...editingSpool, assignedPrinterId: v === 'none' ? undefined : v})}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-background border shadow-lg">
-                    <SelectItem value="none">{language === 'he' ? 'ללא' : 'None'}</SelectItem>
-                    {printers.map(p => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* Show assigned printer as read-only info */}
+              {editingSpool.assignedPrinterId && (
+                <div className="space-y-1 p-3 rounded-lg bg-muted/50 border">
+                  <Label className="text-sm text-muted-foreground">
+                    {language === 'he' ? 'טעון על מדפסת' : 'Loaded on Printer'}
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <PrinterIcon className="w-4 h-4 text-primary" />
+                    <span className="font-medium">{getPrinterName(editingSpool.assignedPrinterId)}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {language === 'he' 
+                      ? 'לשינוי הגליל על המדפסת, עבור לדף מדפסות'
+                      : 'To change spool on printer, go to Printers page'}
+                  </p>
+                </div>
+              )}
 
               <div className="flex gap-2 pt-4 border-t">
                 <Button variant="outline" onClick={() => setEditDialogOpen(false)} className="flex-1">

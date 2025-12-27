@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Sheet,
   SheetContent,
@@ -36,19 +37,25 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Printer as PrinterIcon, Settings2, CircleDot, Box, Layers, Plus, AlertTriangle, Power, PowerOff, RefreshCw } from 'lucide-react';
+import { Printer as PrinterIcon, Settings2, CircleDot, Box, Layers, Plus, AlertTriangle, Power, PowerOff, RefreshCw, Package, ArrowRight } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
+import { cn } from '@/lib/utils';
 import { 
   getPrinters, 
   updatePrinter,
   createPrinter,
   getSpools,
+  updateSpool,
   getPlannedCycles,
   updatePlannedCycle,
   getNextPrinterNumber,
   getFactorySettings,
   markCapacityChanged,
+  setLoadedSpoolsInitialized,
+  FilamentEstimate,
+  AMSSlotState,
   Printer, 
   Spool,
   PlannedCycle,
@@ -81,6 +88,15 @@ export const PrintersPage: React.FC = () => {
   // Cycle reassignment alert
   const [cycleAlertOpen, setCycleAlertOpen] = useState(false);
   const [affectedCycles, setAffectedCycles] = useState<PlannedCycle[]>([]);
+  
+  // Load spool dialog
+  const [loadSpoolDialogOpen, setLoadSpoolDialogOpen] = useState(false);
+  const [loadSpoolPrinter, setLoadSpoolPrinter] = useState<Printer | null>(null);
+  const [loadSpoolMode, setLoadSpoolMode] = useState<'color' | 'spool'>('color');
+  const [selectedColor, setSelectedColor] = useState('');
+  const [selectedSpoolId, setSelectedSpoolId] = useState('');
+  const [selectedEstimate, setSelectedEstimate] = useState<FilamentEstimate>('medium');
+  const [loadSlotIndex, setLoadSlotIndex] = useState<number | null>(null); // null = main spool, number = AMS slot
 
   useEffect(() => {
     refreshData();
@@ -239,6 +255,157 @@ export const PrintersPage: React.FC = () => {
     return spools.filter(s => s.assignedPrinterId === printerId && s.state !== 'empty');
   };
 
+  // Open load spool dialog
+  const handleOpenLoadSpoolDialog = (printer: Printer, slotIndex?: number) => {
+    setLoadSpoolPrinter(printer);
+    setLoadSlotIndex(slotIndex ?? null);
+    setLoadSpoolMode('color');
+    setSelectedColor(printer.currentColor || '');
+    setSelectedSpoolId('');
+    setSelectedEstimate('medium');
+    setLoadSpoolDialogOpen(true);
+  };
+
+  // Handle loading a spool onto a printer
+  const handleLoadSpool = () => {
+    if (!loadSpoolPrinter) return;
+
+    const color = loadSpoolMode === 'spool' && selectedSpoolId 
+      ? spools.find(s => s.id === selectedSpoolId)?.color || selectedColor
+      : selectedColor;
+
+    if (!color) {
+      toast({
+        title: language === 'he' ? 'בחר צבע' : 'Select a color',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Handle previous spool - return to stock
+    if (loadSpoolMode === 'spool' && selectedSpoolId) {
+      // Unload previous spool from this printer
+      const previousSpools = spools.filter(s => 
+        s.assignedPrinterId === loadSpoolPrinter.id && 
+        (loadSlotIndex === null || s.amsSlotIndex === loadSlotIndex)
+      );
+      previousSpools.forEach(s => {
+        updateSpool(s.id, { 
+          location: 'stock', 
+          assignedPrinterId: undefined,
+          amsSlotIndex: undefined 
+        }, true);
+      });
+
+      // Mount new spool
+      updateSpool(selectedSpoolId, {
+        location: loadSlotIndex !== null ? 'ams' : 'printer',
+        assignedPrinterId: loadSpoolPrinter.id,
+        amsSlotIndex: loadSlotIndex ?? undefined,
+      }, true);
+    }
+
+    if (loadSpoolPrinter.hasAMS && loadSlotIndex !== null) {
+      // Update AMS slot
+      const currentSlots = loadSpoolPrinter.amsSlotStates || [];
+      const existingSlotIdx = currentSlots.findIndex(s => s.slotIndex === loadSlotIndex);
+      
+      let newSlots: AMSSlotState[];
+      const newSlot: AMSSlotState = {
+        slotIndex: loadSlotIndex,
+        spoolId: loadSpoolMode === 'spool' ? selectedSpoolId : null,
+        color,
+        estimate: selectedEstimate,
+      };
+
+      if (existingSlotIdx >= 0) {
+        newSlots = [...currentSlots];
+        newSlots[existingSlotIdx] = newSlot;
+      } else {
+        newSlots = [...currentSlots, newSlot];
+      }
+
+      updatePrinter(loadSpoolPrinter.id, { 
+        amsSlotStates: newSlots,
+        currentColor: newSlots[0]?.color || color,
+      });
+    } else {
+      // Update main spool
+      updatePrinter(loadSpoolPrinter.id, {
+        mountedSpoolId: loadSpoolMode === 'spool' ? selectedSpoolId : null,
+        mountedColor: color,
+        mountedEstimate: selectedEstimate,
+        currentColor: color,
+      });
+    }
+
+    // Mark loaded spools as initialized
+    setLoadedSpoolsInitialized(true);
+
+    refreshData();
+    setLoadSpoolDialogOpen(false);
+
+    toast({
+      title: language === 'he' ? 'גליל נטען' : 'Spool loaded',
+      description: `${color} → ${loadSpoolPrinter.name}`,
+    });
+  };
+
+  // Clear loaded spool from printer
+  const handleUnloadSpool = (printer: Printer, slotIndex?: number) => {
+    // Return spool to stock
+    const spoolsToUnload = spools.filter(s => 
+      s.assignedPrinterId === printer.id && 
+      (slotIndex === undefined || s.amsSlotIndex === slotIndex)
+    );
+    spoolsToUnload.forEach(s => {
+      updateSpool(s.id, { 
+        location: 'stock', 
+        assignedPrinterId: undefined,
+        amsSlotIndex: undefined 
+      }, true);
+    });
+
+    if (printer.hasAMS && slotIndex !== undefined) {
+      // Remove AMS slot
+      const newSlots = (printer.amsSlotStates || []).filter(s => s.slotIndex !== slotIndex);
+      updatePrinter(printer.id, { amsSlotStates: newSlots });
+    } else {
+      // Clear main spool
+      updatePrinter(printer.id, {
+        mountedSpoolId: null,
+        mountedColor: undefined,
+        mountedEstimate: undefined,
+        currentColor: undefined,
+      });
+    }
+
+    refreshData();
+    toast({
+      title: language === 'he' ? 'גליל הוסר' : 'Spool unloaded',
+    });
+  };
+
+  // Get available spools for loading (not already on a printer)
+  const getAvailableSpools = () => {
+    return spools.filter(s => 
+      s.state !== 'empty' && 
+      s.location === 'stock' &&
+      (!selectedColor || s.color.toLowerCase() === selectedColor.toLowerCase())
+    );
+  };
+
+  // Get loaded state display for a printer
+  const getLoadedSpoolDisplay = (printer: Printer) => {
+    if (printer.hasAMS && printer.amsSlotStates && printer.amsSlotStates.length > 0) {
+      return printer.amsSlotStates;
+    }
+    if (printer.mountedColor) {
+      return { color: printer.mountedColor, estimate: printer.mountedEstimate };
+    }
+    return null;
+  };
+
   const getAmsModeBadge = (printer: Printer) => {
     if (!printer.hasAMS) return null;
     
@@ -322,9 +489,10 @@ export const PrintersPage: React.FC = () => {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {activePrinters.map((printer) => {
           const assignedSpools = getAssignedSpools(printer.id);
+          const loadedState = getLoadedSpoolDisplay(printer);
           
           return (
-            <Card key={printer.id} className="cursor-pointer transition-all hover:shadow-md">
+            <Card key={printer.id} className="transition-all hover:shadow-md">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -352,24 +520,105 @@ export const PrintersPage: React.FC = () => {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-3" onClick={() => handleEditPrinter(printer)}>
-                {/* Current color/material */}
-                <div className="flex items-center gap-2">
-                  <CircleDot className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm">
-                    {printer.currentColor || (language === 'he' ? 'לא מוגדר' : 'Not set')}
-                  </span>
-                  {printer.currentMaterial && (
-                    <span className="text-xs text-muted-foreground">({printer.currentMaterial})</span>
+              <CardContent className="space-y-3">
+                {/* Loaded Spool Section */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {language === 'he' ? 'גליל טעון' : 'Loaded Spool'}
+                    </span>
+                    {!printer.hasAMS && (
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="h-7 text-xs gap-1"
+                        onClick={() => handleOpenLoadSpoolDialog(printer)}
+                      >
+                        <Package className="w-3 h-3" />
+                        {loadedState ? (language === 'he' ? 'החלף' : 'Replace') : (language === 'he' ? 'טען' : 'Load')}
+                      </Button>
+                    )}
+                  </div>
+                  
+                  {printer.hasAMS ? (
+                    // AMS Slots Display
+                    <div className="grid grid-cols-2 gap-2">
+                      {Array.from({ length: printer.amsSlots || 4 }, (_, i) => {
+                        const slot = printer.amsSlotStates?.find(s => s.slotIndex === i);
+                        return (
+                          <div 
+                            key={i} 
+                            className={cn(
+                              "p-2 rounded-lg border text-center cursor-pointer transition-colors",
+                              slot?.color 
+                                ? "bg-primary/5 border-primary/30 hover:bg-primary/10" 
+                                : "bg-muted/30 border-dashed hover:bg-muted/50"
+                            )}
+                            onClick={() => handleOpenLoadSpoolDialog(printer, i)}
+                          >
+                            {slot?.color ? (
+                              <div className="flex flex-col items-center gap-1">
+                                <SpoolIcon color={getSpoolColor(slot.color)} size={24} />
+                                <span className="text-xs font-medium">{slot.color}</span>
+                                <Badge variant="outline" className="text-[10px] h-4">
+                                  {slot.estimate === 'low' ? '🔴' : slot.estimate === 'medium' ? '🟡' : slot.estimate === 'high' ? '🟢' : '❓'}
+                                </Badge>
+                              </div>
+                            ) : (
+                              <div className="py-2 text-xs text-muted-foreground">
+                                {language === 'he' ? `חריץ ${i + 1}` : `Slot ${i + 1}`}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    // Single spool display
+                    loadedState && typeof loadedState === 'object' && 'color' in loadedState ? (
+                      <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/30">
+                        <div className="flex items-center gap-3">
+                          <SpoolIcon color={getSpoolColor(loadedState.color)} size={32} />
+                          <div>
+                            <span className="font-medium">{loadedState.color}</span>
+                            <div className="text-xs text-muted-foreground">
+                              {loadedState.estimate === 'low' 
+                                ? (language === 'he' ? 'כמות נמוכה' : 'Low amount')
+                                : loadedState.estimate === 'medium'
+                                  ? (language === 'he' ? 'כמות בינונית' : 'Medium amount')
+                                  : loadedState.estimate === 'high'
+                                    ? (language === 'he' ? 'כמות גבוהה' : 'High amount')
+                                    : (language === 'he' ? 'לא ידוע' : 'Unknown')}
+                            </div>
+                          </div>
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="text-muted-foreground hover:text-error"
+                          onClick={() => handleUnloadSpool(printer)}
+                        >
+                          ✕
+                        </Button>
+                      </div>
+                    ) : (
+                      <div 
+                        className="p-4 rounded-lg border border-dashed text-center text-muted-foreground cursor-pointer hover:bg-muted/30 transition-colors"
+                        onClick={() => handleOpenLoadSpoolDialog(printer)}
+                      >
+                        <Package className="w-6 h-6 mx-auto mb-1 opacity-50" />
+                        <span className="text-sm">{language === 'he' ? 'לחץ לטעינת גליל' : 'Click to load spool'}</span>
+                      </div>
+                    )
                   )}
                 </div>
                 
-                {/* AMS Status */}
-                <div className="flex items-center gap-2">
+                {/* AMS Status Badge */}
+                <div className="flex items-center gap-2 pt-2 border-t">
                   <Box className="w-4 h-4 text-muted-foreground" />
                   {printer.hasAMS ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-sm">AMS ({printer.amsSlots || 4} slots)</span>
+                      <span className="text-sm">AMS ({printer.amsSlots || 4})</span>
                       {getAmsModeBadge(printer)}
                     </div>
                   ) : (
@@ -377,20 +626,7 @@ export const PrintersPage: React.FC = () => {
                       {language === 'he' ? 'ללא AMS' : 'No AMS'}
                     </span>
                   )}
-                </div>
-
-                {/* Assigned spools for AMS backup mode */}
-                {printer.hasAMS && printer.amsMode === 'backup_same_color' && assignedSpools.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm">
-                      {assignedSpools.length} {language === 'he' ? 'גלילים מוקצים' : 'spools assigned'}
-                    </span>
-                  </div>
-                )}
-
-                {/* Status badge */}
-                <div className="pt-2 border-t">
+                  <div className="flex-1" />
                   {getStatusBadge(printer)}
                 </div>
               </CardContent>
@@ -846,6 +1082,138 @@ export const PrintersPage: React.FC = () => {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Load Spool Dialog */}
+      <Dialog open={loadSpoolDialogOpen} onOpenChange={setLoadSpoolDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="w-5 h-5 text-primary" />
+              {language === 'he' ? 'טעינת גליל' : 'Load Spool'}
+              {loadSpoolPrinter && (
+                <span className="text-muted-foreground font-normal">
+                  → {loadSpoolPrinter.name}
+                  {loadSlotIndex !== null && ` (Slot ${loadSlotIndex + 1})`}
+                </span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {/* Mode Selection */}
+            <div className="space-y-2">
+              <Label>{language === 'he' ? 'בחר לפי' : 'Select by'}</Label>
+              <RadioGroup
+                value={loadSpoolMode}
+                onValueChange={(v) => setLoadSpoolMode(v as 'color' | 'spool')}
+                className="flex gap-4"
+              >
+                <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                  <RadioGroupItem value="color" id="mode-color" />
+                  <Label htmlFor="mode-color" className="cursor-pointer">
+                    {language === 'he' ? 'צבע בלבד' : 'Color only'}
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                  <RadioGroupItem value="spool" id="mode-spool" />
+                  <Label htmlFor="mode-spool" className="cursor-pointer">
+                    {language === 'he' ? 'גליל מהמלאי' : 'Spool from inventory'}
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
+
+            {/* Color Selection */}
+            <div className="space-y-2">
+              <Label>{language === 'he' ? 'צבע' : 'Color'}</Label>
+              <Select value={selectedColor} onValueChange={setSelectedColor}>
+                <SelectTrigger>
+                  <SelectValue placeholder={language === 'he' ? 'בחר צבע' : 'Select color'} />
+                </SelectTrigger>
+                <SelectContent className="bg-popover z-50">
+                  {availableColors.filter(c => c && c.trim()).map(c => (
+                    <SelectItem key={c} value={c}>
+                      <div className="flex items-center gap-2">
+                        <SpoolIcon color={getSpoolColor(c)} size={16} />
+                        {c}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Spool Selection (if mode is spool) */}
+            {loadSpoolMode === 'spool' && selectedColor && (
+              <div className="space-y-2">
+                <Label>{language === 'he' ? 'בחר גליל מהמלאי' : 'Select spool from inventory'}</Label>
+                {getAvailableSpools().length > 0 ? (
+                  <Select value={selectedSpoolId} onValueChange={setSelectedSpoolId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={language === 'he' ? 'בחר גליל' : 'Select spool'} />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover z-50">
+                      {getAvailableSpools().map(s => (
+                        <SelectItem key={s.id} value={s.id}>
+                          <div className="flex items-center gap-2">
+                            <SpoolIcon color={getSpoolColor(s.color)} size={16} />
+                            <span>{s.color}</span>
+                            <span className="text-muted-foreground">
+                              {s.gramsRemainingEst}g • {s.material}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning">
+                    {language === 'he' 
+                      ? `אין גלילים ${selectedColor} זמינים במלאי`
+                      : `No ${selectedColor} spools available in inventory`}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Estimate */}
+            <div className="space-y-2">
+              <Label>{language === 'he' ? 'כמה נשאר בערך?' : 'How much is left?'}</Label>
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  { value: 'unknown' as FilamentEstimate, labelHe: 'לא יודע', labelEn: "Don't know" },
+                  { value: 'low' as FilamentEstimate, labelHe: 'מעט', labelEn: 'Low' },
+                  { value: 'medium' as FilamentEstimate, labelHe: 'בינוני', labelEn: 'Medium' },
+                  { value: 'high' as FilamentEstimate, labelHe: 'הרבה', labelEn: 'High' },
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setSelectedEstimate(opt.value)}
+                    className={cn(
+                      "px-3 py-1.5 text-sm rounded-lg transition-colors",
+                      selectedEstimate === opt.value
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted hover:bg-muted/80"
+                    )}
+                  >
+                    {language === 'he' ? opt.labelHe : opt.labelEn}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLoadSpoolDialogOpen(false)}>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </Button>
+            <Button onClick={handleLoadSpool} disabled={!selectedColor}>
+              <ArrowRight className="w-4 h-4 mr-1" />
+              {language === 'he' ? 'טען גליל' : 'Load Spool'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
