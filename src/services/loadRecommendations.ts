@@ -44,6 +44,7 @@ const calculateRemainingDemandByColor = (): Map<string, {
 }> => {
   const projects = getProjects();
   const products = getProducts();
+  const spools = getSpools();
   const demandByColor = new Map<string, {
     totalGrams: number;
     projectIds: string[];
@@ -70,6 +71,27 @@ const calculateRemainingDemandByColor = (): Map<string, {
     // Calculate grams needed for remaining units (Product.gramsPerUnit)
     const gramsPerUnit = product.gramsPerUnit || 0;
     const gramsNeeded = unitsRemaining * gramsPerUnit;
+
+    // DEBUG: Log for projects with "green" color to diagnose key mismatch
+    if (color.includes('green') || color.includes('ירוק') || project.name.includes('מלפפון')) {
+      const inventoryForColor = spools.filter(s => 
+        s.color.toLowerCase() === color && 
+        s.state !== 'empty' && 
+        s.gramsRemainingEst > 0
+      );
+      const inventoryGrams = inventoryForColor.reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+      
+      console.log(`[DEBUG Material Alert] Project: "${project.name}"`, {
+        '1. project.color': project.color,
+        '2. colorKey (lowercase)': color,
+        '3. product.gramsPerUnit': gramsPerUnit,
+        '4. unitsRemaining': unitsRemaining,
+        '5. gramsNeeded': gramsNeeded,
+        '6. inventorySpoolColors': spools.map(s => ({ color: s.color, colorLower: s.color.toLowerCase(), grams: s.gramsRemainingEst, state: s.state })),
+        '7. matchingSpools': inventoryForColor.map(s => ({ id: s.id, color: s.color, grams: s.gramsRemainingEst })),
+        '8. totalInventoryGrams': inventoryGrams,
+      });
+    }
 
     const existing = demandByColor.get(color) || {
       totalGrams: 0,
