@@ -54,7 +54,6 @@ import {
   getFactorySettings,
   markCapacityChanged,
   setLoadedSpoolsInitialized,
-  FilamentEstimate,
   AMSSlotState,
   Printer, 
   Spool,
@@ -95,7 +94,6 @@ export const PrintersPage: React.FC = () => {
   const [loadSpoolMode, setLoadSpoolMode] = useState<'color' | 'spool'>('color');
   const [selectedColor, setSelectedColor] = useState('');
   const [selectedSpoolId, setSelectedSpoolId] = useState('');
-  const [selectedEstimate, setSelectedEstimate] = useState<FilamentEstimate>('medium');
   const [loadSlotIndex, setLoadSlotIndex] = useState<number | null>(null); // null = main spool, number = AMS slot
 
   useEffect(() => {
@@ -259,10 +257,9 @@ export const PrintersPage: React.FC = () => {
   const handleOpenLoadSpoolDialog = (printer: Printer, slotIndex?: number) => {
     setLoadSpoolPrinter(printer);
     setLoadSlotIndex(slotIndex ?? null);
-    setLoadSpoolMode('color');
+    setLoadSpoolMode('spool'); // v2: default to spool mode
     setSelectedColor(printer.currentColor || '');
     setSelectedSpoolId('');
-    setSelectedEstimate('medium');
     setLoadSpoolDialogOpen(true);
   };
 
@@ -579,13 +576,9 @@ export const PrintersPage: React.FC = () => {
                           <div>
                             <span className="font-medium">{loadedState.color}</span>
                             <div className="text-xs text-muted-foreground">
-                              {loadedState.estimate === 'low' 
-                                ? (language === 'he' ? 'כמות נמוכה' : 'Low amount')
-                                : loadedState.estimate === 'medium'
-                                  ? (language === 'he' ? 'כמות בינונית' : 'Medium amount')
-                                  : loadedState.estimate === 'high'
-                                    ? (language === 'he' ? 'כמות גבוהה' : 'High amount')
-                                    : (language === 'he' ? 'לא ידוע' : 'Unknown')}
+                              {loadedState.spoolId 
+                                ? (language === 'he' ? 'גליל מהמלאי' : 'From inventory')
+                                : (language === 'he' ? 'צבע בלבד - בחר גליל' : 'Color only - select spool')}
                             </div>
                           </div>
                         </div>
@@ -1173,31 +1166,29 @@ export const PrintersPage: React.FC = () => {
               </div>
             )}
 
-            {/* Estimate */}
-            <div className="space-y-2">
-              <Label>{language === 'he' ? 'כמה נשאר בערך?' : 'How much is left?'}</Label>
-              <div className="flex gap-2 flex-wrap">
-                {[
-                  { value: 'unknown' as FilamentEstimate, labelHe: 'לא יודע', labelEn: "Don't know" },
-                  { value: 'low' as FilamentEstimate, labelHe: 'מעט', labelEn: 'Low' },
-                  { value: 'medium' as FilamentEstimate, labelHe: 'בינוני', labelEn: 'Medium' },
-                  { value: 'high' as FilamentEstimate, labelHe: 'הרבה', labelEn: 'High' },
-                ].map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setSelectedEstimate(opt.value)}
-                    className={cn(
-                      "px-3 py-1.5 text-sm rounded-lg transition-colors",
-                      selectedEstimate === opt.value
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted hover:bg-muted/80"
-                    )}
-                  >
-                    {language === 'he' ? opt.labelHe : opt.labelEn}
-                  </button>
-                ))}
+            {/* v2: Show selected spool info from inventory */}
+            {loadSpoolMode === 'spool' && selectedSpoolId && (
+              <div className="space-y-2">
+                <Label>{language === 'he' ? 'גליל נבחר' : 'Selected spool'}</Label>
+                {(() => {
+                  const spool = spools.find(s => s.id === selectedSpoolId);
+                  if (!spool) return null;
+                  return (
+                    <div className="p-3 rounded-lg bg-primary/5 border border-primary/30">
+                      <div className="flex items-center gap-3">
+                        <SpoolIcon color={getSpoolColor(spool.color)} size={32} />
+                        <div>
+                          <span className="font-medium">{spool.color}</span>
+                          <div className="text-sm text-muted-foreground">
+                            {spool.gramsRemainingEst}g • {spool.material || 'PLA'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
-            </div>
+            )}
           </div>
 
           <DialogFooter>
