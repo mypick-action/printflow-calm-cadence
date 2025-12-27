@@ -315,7 +315,6 @@ export const PrintersPage: React.FC = () => {
         slotIndex: loadSlotIndex,
         spoolId: loadSpoolMode === 'spool' ? selectedSpoolId : null,
         color,
-        estimate: selectedEstimate,
       };
 
       if (existingSlotIdx >= 0) {
@@ -334,7 +333,6 @@ export const PrintersPage: React.FC = () => {
       updatePrinter(loadSpoolPrinter.id, {
         mountedSpoolId: loadSpoolMode === 'spool' ? selectedSpoolId : null,
         mountedColor: color,
-        mountedEstimate: selectedEstimate,
         currentColor: color,
       });
     }
@@ -375,7 +373,6 @@ export const PrintersPage: React.FC = () => {
       updatePrinter(printer.id, {
         mountedSpoolId: null,
         mountedColor: undefined,
-        mountedEstimate: undefined,
         currentColor: undefined,
       });
     }
@@ -401,7 +398,7 @@ export const PrintersPage: React.FC = () => {
       return printer.amsSlotStates;
     }
     if (printer.mountedColor) {
-      return { color: printer.mountedColor, estimate: printer.mountedEstimate };
+      return { color: printer.mountedColor, spoolId: printer.mountedSpoolId };
     }
     return null;
   };
@@ -561,7 +558,7 @@ export const PrintersPage: React.FC = () => {
                                 <SpoolIcon color={getSpoolColor(slot.color)} size={24} />
                                 <span className="text-xs font-medium">{slot.color}</span>
                                 <Badge variant="outline" className="text-[10px] h-4">
-                                  {slot.estimate === 'low' ? '🔴' : slot.estimate === 'medium' ? '🟡' : slot.estimate === 'high' ? '🟢' : '❓'}
+                                  {slot.spoolId ? '✓' : '⚠️'}
                                 </Badge>
                               </div>
                             ) : (

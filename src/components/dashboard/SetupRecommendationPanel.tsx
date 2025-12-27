@@ -21,7 +21,6 @@ import {
   isLoadedSpoolsInitialized,
   Printer as PrinterType,
   PlannedCycle,
-  FilamentEstimate,
 } from '@/services/storage';
 import { isSameDay } from 'date-fns';
 
@@ -30,7 +29,7 @@ interface SetupRecommendation {
   printerName: string;
   status: 'ready' | 'needs_change' | 'warning' | 'unknown';
   currentColor?: string;
-  currentEstimate?: FilamentEstimate;
+  hasActualSpool?: boolean; // v2: whether a real spool from inventory is mounted
   requiredColor: string;
   hasInventory: boolean;
   message: string;
@@ -95,25 +94,30 @@ export const SetupRecommendationPanel: React.FC<SetupRecommendationPanelProps> =
       const printer = printers.find(p => p.id === printerId);
       if (!printer) return;
 
-      // Determine current mounted color and estimate
+      // Determine current mounted color and spool status
+      // In v2: we check for mountedSpoolId to determine "ready" state, not just color
       let currentColor: string | undefined;
-      let currentEstimate: FilamentEstimate | undefined;
+      let hasActualSpool = false; // Whether a real spool from inventory is mounted
 
       if (printer.hasAMS && printer.amsSlotStates && printer.amsSlotStates.length > 0) {
-        // For AMS, check if any slot has the required color
+        // For AMS, check if any slot has the required color AND a spool
         const matchingSlot = printer.amsSlotStates.find(
-          s => s.color?.toLowerCase() === req.color.toLowerCase()
+          s => s.color?.toLowerCase() === req.color.toLowerCase() && s.spoolId
         );
         if (matchingSlot) {
           currentColor = matchingSlot.color;
-          currentEstimate = matchingSlot.estimate;
+          hasActualSpool = !!matchingSlot.spoolId;
         } else {
-          currentColor = printer.amsSlotStates[0]?.color;
-          currentEstimate = printer.amsSlotStates[0]?.estimate;
+          // Check for color-only slot (needs spool selection)
+          const colorOnlySlot = printer.amsSlotStates.find(
+            s => s.color?.toLowerCase() === req.color.toLowerCase()
+          );
+          currentColor = colorOnlySlot?.color || printer.amsSlotStates[0]?.color;
+          hasActualSpool = !!printer.amsSlotStates[0]?.spoolId;
         }
       } else {
         currentColor = printer.mountedColor || printer.currentColor;
-        currentEstimate = printer.mountedEstimate;
+        hasActualSpool = !!printer.mountedSpoolId;
       }
 
       // Check inventory for required color
@@ -143,16 +147,11 @@ export const SetupRecommendationPanel: React.FC<SetupRecommendationPanelProps> =
           messageEn = `Load ${req.color} spool`;
         }
       } else if (colorsMatch) {
-        if (currentEstimate === 'low') {
+        if (!hasActualSpool) {
+          // Color matches but no spool selected from inventory
           status = 'warning';
-          message = `${req.color} - כמות נמוכה, הכן גליל נוסף`;
-          messageEn = `${req.color} - low amount, prepare backup`;
-          hasLowEstimate = true;
-        } else if (currentEstimate === 'unknown') {
-          status = 'ready';
-          message = `${req.color} - מתאים (כמות לא ידועה)`;
-          messageEn = `${req.color} - matches (unknown amount)`;
-          hasUnknown = true;
+          message = `${req.color} - בחר גליל מהמלאי`;
+          messageEn = `${req.color} - select spool from inventory`;
         } else {
           status = 'ready';
           message = `${req.color} - כבר מתאים`;
@@ -176,7 +175,7 @@ export const SetupRecommendationPanel: React.FC<SetupRecommendationPanelProps> =
         printerName: printer.name,
         status,
         currentColor,
-        currentEstimate,
+        hasActualSpool,
         requiredColor: req.color,
         hasInventory,
         message,
