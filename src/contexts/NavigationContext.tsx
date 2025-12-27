@@ -22,9 +22,12 @@ export const NavigationProvider: React.FC<{
   const [navigationState, setNavigationState] = useState<NavigationState>({});
 
   const navigateTo = useCallback((page: string, state?: NavigationState) => {
+    console.log('[NavigationContext] navigateTo called:', page, state);
     if (state) {
+      console.log('[NavigationContext] Setting navigationState:', state);
       setNavigationState(state);
     }
+    console.log('[NavigationContext] Calling onNavigate:', page);
     onNavigate(page);
   }, [onNavigate]);
 
