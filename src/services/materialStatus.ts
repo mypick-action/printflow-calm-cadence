@@ -260,7 +260,8 @@ export const getAggregatedMaterialStatus = (projects: Project[]): Map<string, {
     const product = products.find(p => p.id === project.productId);
     if (!product || !product.gramsPerUnit) continue;
     
-    const colorKey = project.color.toLowerCase();
+    // FIXED: Use normalizeColor for consistent matching
+    const colorKey = normalizeColor(project.color);
     const remainingQty = Math.max(0, project.quantityTarget - project.quantityGood);
     const gramsNeeded = product.gramsPerUnit * remainingQty;
     
@@ -286,8 +287,9 @@ export const getAggregatedMaterialStatus = (projects: Project[]): Map<string, {
   const spools = getSpools();
   
   for (const [colorKey, data] of aggregated) {
+    // FIXED: Use normalizeColor for consistent matching with spools
     const matchingSpools = spools.filter(s =>
-      s.color.toLowerCase() === colorKey &&
+      normalizeColor(s.color) === colorKey &&
       s.state !== 'empty' &&
       s.gramsRemainingEst > 0
     );

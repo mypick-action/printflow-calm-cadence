@@ -99,6 +99,8 @@ export const PlanningPage: React.FC = () => {
   // For mobile info popovers
   const [recalculateInfoOpen, setRecalculateInfoOpen] = useState(false);
   const [overrideInfoOpen, setOverrideInfoOpen] = useState(false);
+  // Track which day is being viewed in the bottom table
+  const [viewedTableDate, setViewedTableDate] = useState<Date>(new Date());
 
   const refreshData = () => {
     setSettings(getFactorySettings());
@@ -238,6 +240,7 @@ export const PlanningPage: React.FC = () => {
   const handleDayClick = (day: DaySchedule) => {
     setSelectedDay(day);
     setDailyDrawerOpen(true);
+    setViewedTableDate(day.date); // Update which day the bottom table shows
   };
 
   const handleRecalculateDay = (date: Date) => {
@@ -547,19 +550,23 @@ export const PlanningPage: React.FC = () => {
         })}
       </div>
 
-      {/* Printer End-of-Day Summary */}
+      {/* Printer End-of-Day Summary - shows cycles for the VIEWED day, not just today */}
       <Card variant="elevated">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <Moon className="w-5 h-5 text-primary" />
             {language === 'he' ? 'מחזורי סוף יום למדפסות' : 'End-of-Day Cycles by Printer'}
+            <span className="text-sm font-normal text-muted-foreground ms-2">
+              ({format(viewedTableDate, 'dd/MM')})
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {printers.map((printer) => {
-              const todayCycles = weekDays.find(d => isSameDay(d.date, new Date()))?.cycles || [];
-              const printerEodCycle = todayCycles.find(c => c.printerId === printer.id && c.shift === 'end_of_day');
+              // FIXED: Use viewedTableDate instead of always today
+              const viewedDayCycles = weekDays.find(d => isSameDay(d.date, viewedTableDate))?.cycles || [];
+              const printerEodCycle = viewedDayCycles.find(c => c.printerId === printer.id && c.shift === 'end_of_day');
               
               return (
                 <div 
