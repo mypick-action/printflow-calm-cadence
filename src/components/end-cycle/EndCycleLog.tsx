@@ -1,17 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { 
   ClipboardCheck, 
@@ -24,58 +16,38 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { 
+  getPrinters, 
+  getActiveCycleForPrinter, 
+  getProject,
+  logCycle,
+  Printer as PrinterType,
+  PlannedCycle
+} from '@/services/storage';
 
 type CycleResult = 'completed' | 'completed_with_scrap' | 'failed';
 type WasteMethod = 'quick' | 'estimate' | 'manual';
 
-interface ActiveCycle {
-  id: string;
-  projectName: string;
-  unitsPlanned: number;
-  startTime: string;
-  color: string;
-}
-
-// Mock data for printers and their active cycles
-const mockPrinterCycles: Record<string, ActiveCycle | null> = {
-  'printer-1': {
-    id: 'cycle-1',
-    projectName: 'Phone Stands - Batch A',
-    unitsPlanned: 8,
-    startTime: '08:30',
-    color: 'Black',
-  },
-  'printer-2': {
-    id: 'cycle-2',
-    projectName: 'Cable Organizers - Client B',
-    unitsPlanned: 12,
-    startTime: '09:00',
-    color: 'White',
-  },
-  'printer-3': null, // No active cycle
-};
-
-const mockPrinters = [
-  { id: 'printer-1', name: 'Printer 1' },
-  { id: 'printer-2', name: 'Printer 2' },
-  { id: 'printer-3', name: 'Printer 3' },
-];
-
 export const EndCycleLog: React.FC = () => {
   const { language } = useLanguage();
+  const [printers, setPrinters] = useState<PrinterType[]>([]);
   const [step, setStep] = useState(1);
   const [selectedPrinter, setSelectedPrinter] = useState('');
-  const [activeCycle, setActiveCycle] = useState<ActiveCycle | null>(null);
+  const [activeCycle, setActiveCycle] = useState<PlannedCycle | null>(null);
   const [result, setResult] = useState<CycleResult | ''>('');
   const [scrapUnits, setScrapUnits] = useState(0);
   const [wasteMethod, setWasteMethod] = useState<WasteMethod>('quick');
   const [wastedGrams, setWastedGrams] = useState(0);
   const [quickPickGrams, setQuickPickGrams] = useState<number | null>(null);
 
+  useEffect(() => {
+    setPrinters(getPrinters().filter(p => p.active));
+  }, []);
+
   const handlePrinterSelect = (printerId: string) => {
     setSelectedPrinter(printerId);
-    const cycle = mockPrinterCycles[printerId];
-    setActiveCycle(cycle);
+    const cycle = getActiveCycleForPrinter(printerId);
+    setActiveCycle(cycle || null);
     if (cycle) {
       setStep(2);
     }
