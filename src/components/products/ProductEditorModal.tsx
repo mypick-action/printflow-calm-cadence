@@ -288,7 +288,10 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
             </div>
 
             {errors.presets && (
-              <p className="text-sm text-error">{errors.presets}</p>
+              <div className="flex items-center gap-2 p-3 bg-warning/10 border border-warning/30 rounded-lg animate-pulse">
+                <span className="text-warning text-lg">👆</span>
+                <p className="text-sm font-medium text-warning">{errors.presets}</p>
+              </div>
             )}
 
             {/* Existing presets */}
