@@ -974,6 +974,9 @@ export const consumeMaterial = (
   
   // Schedule auto-replan after material consumption
   scheduleAutoReplan('material_consumed');
+  
+  // Immediately notify UI components to refresh material alerts
+  notifyInventoryChanged();
 
   return {
     success: true,
@@ -1336,6 +1339,9 @@ export const mountSpool = (
   // Update cycle readiness states and promote projects
   updateCycleReadinessAfterMount(printerId, spool.color);
   
+  // Notify UI components to refresh material alerts after mount
+  notifyInventoryChanged();
+  
   return updatedPrinter;
 };
 
@@ -1390,6 +1396,9 @@ export const updateAMSSlot = (
   // Update cycle readiness states and promote projects
   updateCycleReadinessAfterMount(printerId, spool.color);
   
+  // Notify UI components to refresh material alerts after AMS slot update
+  notifyInventoryChanged();
+  
   return updatedPrinter;
 };
 
@@ -1400,14 +1409,20 @@ export const clearPrinterMountedState = (printerId: string): Printer | undefined
   const printer = getPrinter(printerId);
   if (!printer) return undefined;
   
+  let result: Printer | undefined;
   if (printer.hasAMS) {
-    return updatePrinter(printerId, { amsSlotStates: [] });
+    result = updatePrinter(printerId, { amsSlotStates: [] });
   } else {
-    return updatePrinter(printerId, { 
+    result = updatePrinter(printerId, { 
       mountedSpoolId: null, 
       mountedColor: undefined,
     });
   }
+  
+  // Notify UI components to refresh material alerts after clearing mounted state
+  notifyInventoryChanged();
+  
+  return result;
 };
 
 /**
@@ -1526,6 +1541,29 @@ export const updateSpool = (id: string, updates: Partial<Spool>, skipAutoReplan:
   notifyInventoryChanged();
   
   return spools[index];
+};
+
+export const deleteSpool = (id: string): boolean => {
+  const spools = getSpools();
+  const filtered = spools.filter(s => s.id !== id);
+  if (filtered.length === spools.length) return false;
+  setItem(KEYS.SPOOLS, filtered);
+  scheduleAutoReplan('spool_deleted');
+  notifyInventoryChanged();
+  return true;
+};
+
+export const deleteSpools = (ids: string[]): number => {
+  const spools = getSpools();
+  const idsSet = new Set(ids);
+  const filtered = spools.filter(s => !idsSet.has(s.id));
+  const deletedCount = spools.length - filtered.length;
+  if (deletedCount > 0) {
+    setItem(KEYS.SPOOLS, filtered);
+    scheduleAutoReplan('spools_deleted');
+    notifyInventoryChanged();
+  }
+  return deletedCount;
 };
 
 // ============= QUOTE CHECK SIMULATION =============
