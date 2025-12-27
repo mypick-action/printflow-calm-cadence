@@ -4,6 +4,7 @@ import { OnboardingWizard, OnboardingData } from '@/components/onboarding/Onboar
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Dashboard } from '@/components/dashboard/Dashboard';
 import { ProjectsPage } from '@/components/projects/ProjectsPage';
+import { ProductsPage } from '@/components/products/ProductsPage';
 import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
 import { QuoteCheckPage } from '@/components/quote-check/QuoteCheckPage';
 import { SettingsPage } from '@/components/settings/SettingsPage';
@@ -62,6 +63,8 @@ const PrintFlowApp: React.FC = () => {
         );
       case 'projects':
         return <ProjectsPage />;
+      case 'products':
+        return <ProductsPage />;
       case 'endCycleLog':
         return <EndCycleLog />;
       case 'quoteCheck':

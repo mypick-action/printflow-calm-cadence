@@ -3,23 +3,35 @@
 
 // ============= TYPES =============
 
+export interface PlatePreset {
+  id: string;
+  name: string;
+  unitsPerPlate: number;
+  cycleHours: number;
+  riskLevel: 'low' | 'medium' | 'high';
+  allowedForNightCycle: boolean;
+  isRecommended: boolean;
+  notes?: string;
+}
+
 export interface Product {
   id: string;
   name: string;
   gramsPerUnit: number;
-  cycleHours: number;
-  safeUnitsFullPlate: number;
-  safeUnitsReducedPlate: number;
-  hasReducedPlate: boolean;
-  riskType: 'stable' | 'sensitive' | 'high_risk';
-  nightAllowed: 'yes' | 'no' | 'reduced_only';
+  platePresets: PlatePreset[];
 }
+
+// Computed helper for grams per cycle
+export const getGramsPerCycle = (product: Product, preset: PlatePreset): number => {
+  return product.gramsPerUnit * preset.unitsPerPlate;
+};
 
 export interface Project {
   id: string;
   name: string;
   productId: string;
   productName: string;
+  preferredPresetId?: string; // optional: override default preset
   quantityTarget: number;
   quantityGood: number;
   quantityScrap: number;
@@ -302,11 +314,52 @@ const setItem = <T>(key: string, value: T): void => {
 // ============= INITIAL/MOCK DATA =============
 
 const initialProducts: Product[] = [
-  { id: 'prod-1', name: 'Phone Stand', gramsPerUnit: 45, cycleHours: 2.5, safeUnitsFullPlate: 8, safeUnitsReducedPlate: 4, hasReducedPlate: true, riskType: 'stable', nightAllowed: 'yes' },
-  { id: 'prod-2', name: 'Cable Organizer', gramsPerUnit: 12, cycleHours: 1.5, safeUnitsFullPlate: 20, safeUnitsReducedPlate: 10, hasReducedPlate: true, riskType: 'stable', nightAllowed: 'yes' },
-  { id: 'prod-3', name: 'Pen Holder', gramsPerUnit: 85, cycleHours: 4, safeUnitsFullPlate: 4, safeUnitsReducedPlate: 2, hasReducedPlate: true, riskType: 'sensitive', nightAllowed: 'reduced_only' },
-  { id: 'prod-4', name: 'Wall Hook', gramsPerUnit: 18, cycleHours: 1, safeUnitsFullPlate: 24, safeUnitsReducedPlate: 12, hasReducedPlate: false, riskType: 'stable', nightAllowed: 'yes' },
-  { id: 'prod-5', name: 'Coaster Set', gramsPerUnit: 32, cycleHours: 2, safeUnitsFullPlate: 6, safeUnitsReducedPlate: 3, hasReducedPlate: true, riskType: 'sensitive', nightAllowed: 'no' },
+  { 
+    id: 'prod-1', 
+    name: 'Phone Stand', 
+    gramsPerUnit: 45, 
+    platePresets: [
+      { id: 'preset-1-1', name: 'Full', unitsPerPlate: 8, cycleHours: 2.5, riskLevel: 'low', allowedForNightCycle: true, isRecommended: true },
+      { id: 'preset-1-2', name: 'Safe', unitsPerPlate: 6, cycleHours: 2, riskLevel: 'low', allowedForNightCycle: true, isRecommended: false },
+      { id: 'preset-1-3', name: 'Night', unitsPerPlate: 4, cycleHours: 1.5, riskLevel: 'low', allowedForNightCycle: true, isRecommended: false },
+    ]
+  },
+  { 
+    id: 'prod-2', 
+    name: 'Cable Organizer', 
+    gramsPerUnit: 12, 
+    platePresets: [
+      { id: 'preset-2-1', name: 'Full', unitsPerPlate: 20, cycleHours: 1.5, riskLevel: 'low', allowedForNightCycle: true, isRecommended: true },
+      { id: 'preset-2-2', name: 'Safe', unitsPerPlate: 15, cycleHours: 1.2, riskLevel: 'low', allowedForNightCycle: true, isRecommended: false },
+    ]
+  },
+  { 
+    id: 'prod-3', 
+    name: 'Pen Holder', 
+    gramsPerUnit: 85, 
+    platePresets: [
+      { id: 'preset-3-1', name: 'Full', unitsPerPlate: 4, cycleHours: 4, riskLevel: 'medium', allowedForNightCycle: false, isRecommended: false },
+      { id: 'preset-3-2', name: 'Safe', unitsPerPlate: 2, cycleHours: 2.5, riskLevel: 'low', allowedForNightCycle: true, isRecommended: true },
+    ]
+  },
+  { 
+    id: 'prod-4', 
+    name: 'Wall Hook', 
+    gramsPerUnit: 18, 
+    platePresets: [
+      { id: 'preset-4-1', name: 'Full', unitsPerPlate: 24, cycleHours: 1, riskLevel: 'low', allowedForNightCycle: true, isRecommended: true },
+      { id: 'preset-4-2', name: 'Low Risk', unitsPerPlate: 16, cycleHours: 0.75, riskLevel: 'low', allowedForNightCycle: true, isRecommended: false },
+    ]
+  },
+  { 
+    id: 'prod-5', 
+    name: 'Coaster Set', 
+    gramsPerUnit: 32, 
+    platePresets: [
+      { id: 'preset-5-1', name: 'Full', unitsPerPlate: 6, cycleHours: 2, riskLevel: 'medium', allowedForNightCycle: false, isRecommended: false },
+      { id: 'preset-5-2', name: 'Safe', unitsPerPlate: 4, cycleHours: 1.5, riskLevel: 'low', allowedForNightCycle: true, isRecommended: true },
+    ]
+  },
 ];
 
 const initialProjects: Project[] = [
@@ -765,11 +818,22 @@ export const simulateQuote = (
   const printers = getPrinters().filter(p => p.active);
   const activeProjects = getActiveProjects();
   
-  // Calculate daily capacity
+  // Calculate daily capacity using recommended preset
+  const recommendedPreset = product.platePresets.find(p => p.isRecommended) || product.platePresets[0];
+  if (!recommendedPreset) {
+    return {
+      canAccept: false,
+      canAcceptWithAdjustment: false,
+      requiredDays: 0,
+      availableCapacityUnits: 0,
+      message: 'Product has no presets',
+    };
+  }
+  
   const workHoursPerDay = settings ? 
-    (parseFloat(settings.endTime.replace(':', '.')) - parseFloat(settings.startTime.replace(':', '.'))) * (100/60) : 8;
-  const cyclesPerPrinterPerDay = Math.floor(workHoursPerDay / product.cycleHours);
-  const unitsPerPrinterPerDay = cyclesPerPrinterPerDay * product.safeUnitsFullPlate;
+    (parseFloat(settings.endTime?.replace(':', '.') || '17') - parseFloat(settings.startTime?.replace(':', '.') || '9')) * (100/60) : 8;
+  const cyclesPerPrinterPerDay = Math.floor(workHoursPerDay / recommendedPreset.cycleHours);
+  const unitsPerPrinterPerDay = cyclesPerPrinterPerDay * recommendedPreset.unitsPerPlate;
   const totalDailyCapacity = unitsPerPrinterPerDay * printers.length;
   
   // Calculate days until due

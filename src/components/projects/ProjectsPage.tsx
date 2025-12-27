@@ -73,6 +73,7 @@ export const ProjectsPage: React.FC = () => {
   const [newProject, setNewProject] = useState({
     name: '',
     productId: '',
+    preferredPresetId: '', // optional preset override
     quantityTarget: 100,
     dueDate: '',
     color: 'Black',
@@ -117,6 +118,7 @@ export const ProjectsPage: React.FC = () => {
       name: newProject.name,
       productId: newProject.productId,
       productName: product.name,
+      preferredPresetId: newProject.preferredPresetId || undefined,
       quantityTarget: newProject.quantityTarget,
       dueDate: newProject.dueDate,
       urgency: finalUrgency,
@@ -131,6 +133,7 @@ export const ProjectsPage: React.FC = () => {
     setNewProject({
       name: '',
       productId: '',
+      preferredPresetId: '',
       quantityTarget: 100,
       dueDate: '',
       color: 'Black',
@@ -154,12 +157,9 @@ export const ProjectsPage: React.FC = () => {
     const created = createProduct({
       name: newProduct.name,
       gramsPerUnit: newProduct.gramsPerUnit,
-      cycleHours: 2,
-      safeUnitsFullPlate: 8,
-      safeUnitsReducedPlate: 4,
-      hasReducedPlate: true,
-      riskType: 'stable',
-      nightAllowed: 'yes',
+      platePresets: [
+        { id: `preset-${Date.now()}`, name: 'Full', unitsPerPlate: 8, cycleHours: 2, riskLevel: 'low', allowedForNightCycle: true, isRecommended: true },
+      ],
     });
     
     // Refresh products and select the new one
