@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -94,13 +95,13 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
               ? 'יש לגשת לדף מדפסות ולהזין לפי הרשימה' 
               : 'Go to Printers page and load according to the list'}
           </span>
-          <a 
-            href="/printers" 
+          <Link 
+            to="/printers" 
             className="text-primary hover:underline text-sm font-medium flex items-center gap-1"
           >
             {language === 'he' ? 'לדף מדפסות' : 'Go to Printers'}
             <ArrowRight className="w-3 h-3" />
-          </a>
+          </Link>
         </AlertDescription>
       </Alert>
     );
