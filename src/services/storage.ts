@@ -117,6 +117,9 @@ export interface WeeklySchedule {
   saturday: DaySchedule;
 }
 
+// Cycle readiness state - indicates what's needed before execution
+export type CycleReadinessState = 'ready' | 'waiting_for_spool' | 'blocked_inventory';
+
 export interface PlannedCycle {
   id: string;
   projectId: string;
@@ -129,6 +132,40 @@ export interface PlannedCycle {
   shift: 'day' | 'end_of_day';
   suggestedSpoolId?: string;
   status: 'planned' | 'in_progress' | 'completed' | 'failed';
+  // New fields for execution readiness
+  readinessState: CycleReadinessState;
+  readinessDetails?: string; // Human-readable explanation
+  requiredColor?: string;
+  requiredMaterial?: string;
+  requiredGrams?: number;
+}
+
+// Load recommendation for operators
+export interface LoadRecommendation {
+  id: string;
+  printerId: string;
+  printerName: string;
+  action: 'load_spool' | 'order_material';
+  priority: 'high' | 'medium' | 'low';
+  color: string;
+  material?: string;
+  gramsNeeded: number;
+  suggestedSpoolIds: string[]; // Spools from inventory that could be used
+  affectedCycleIds: string[];
+  affectedProjectNames: string[];
+  message: string;
+  messageEn: string;
+}
+
+// Material shortage alert
+export interface MaterialShortage {
+  color: string;
+  material?: string;
+  requiredGrams: number;
+  availableGrams: number;
+  shortfallGrams: number;
+  affectedProjectIds: string[];
+  affectedProjectNames: string[];
 }
 
 export interface CycleLog {
@@ -534,6 +571,9 @@ const getInitialPlannedCycles = (): PlannedCycle[] => {
       endTime: '11:00',
       shift: 'day',
       status: 'in_progress',
+      readinessState: 'ready',
+      requiredColor: 'Black',
+      requiredGrams: 360,
     },
     {
       id: 'cycle-2',
@@ -546,6 +586,9 @@ const getInitialPlannedCycles = (): PlannedCycle[] => {
       endTime: '10:30',
       shift: 'day',
       status: 'in_progress',
+      readinessState: 'ready',
+      requiredColor: 'White',
+      requiredGrams: 240,
     },
     {
       id: 'cycle-3',
@@ -558,6 +601,10 @@ const getInitialPlannedCycles = (): PlannedCycle[] => {
       endTime: '13:45',
       shift: 'day',
       status: 'planned',
+      readinessState: 'waiting_for_spool',
+      readinessDetails: 'Load Black spool on Printer 1',
+      requiredColor: 'Black',
+      requiredGrams: 360,
     },
     {
       id: 'cycle-4',
@@ -570,6 +617,10 @@ const getInitialPlannedCycles = (): PlannedCycle[] => {
       endTime: '19:30',
       shift: 'end_of_day',
       status: 'planned',
+      readinessState: 'waiting_for_spool',
+      readinessDetails: 'Load Black spool on Printer 1',
+      requiredColor: 'Black',
+      requiredGrams: 180,
     },
   ];
 };

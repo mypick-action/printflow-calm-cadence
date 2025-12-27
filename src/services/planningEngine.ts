@@ -45,6 +45,12 @@ export interface ScheduledCycle {
   plateType: 'full' | 'reduced' | 'closeout';
   shift: 'day' | 'end_of_day';
   isEndOfDayCycle: boolean;
+  // Readiness tracking (new for PRD compliance)
+  readinessState: 'ready' | 'waiting_for_spool' | 'blocked_inventory';
+  readinessDetails?: string;
+  requiredColor: string;
+  requiredGrams: number;
+  suggestedSpoolIds?: string[];
 }
 
 export interface DayPlan {
@@ -373,12 +379,10 @@ const scheduleCyclesForDay = (
         // Check if cycle fits in day
         if (cycleEndTime > slot.endOfDayTime) continue;
         
-        // Check material availability
+        // Calculate material needs (but DON'T block on it - per PRD)
         const gramsNeeded = getGramsPerCycle(state.product, state.preset);
         const colorKey = state.project.color.toLowerCase();
         const availableMaterial = workingMaterial.get(colorKey) || 0;
-        
-        if (gramsNeeded > availableMaterial) continue;
         
         // Determine units for this cycle
         const unitsThisCycle = Math.min(state.preset.unitsPerPlate, state.remainingUnits);
@@ -394,7 +398,49 @@ const scheduleCyclesForDay = (
         const remainingDayHours = (slot.endOfDayTime.getTime() - cycleEndTime.getTime()) / (1000 * 60 * 60);
         const isEndOfDayCycle = remainingDayHours < 2;
         
-        // Create the scheduled cycle
+        // Determine readiness state based on material availability and spool mounting
+        // Per PRD: Planning does NOT depend on spool mounting - we plan first, then guide execution
+        let readinessState: 'ready' | 'waiting_for_spool' | 'blocked_inventory' = 'waiting_for_spool';
+        let readinessDetails: string | undefined;
+        const suggestedSpoolIds: string[] = [];
+        
+        // Check if material is available in inventory at all
+        const hasEnoughInventory = availableMaterial >= gramsThisCycle;
+        
+        if (!hasEnoughInventory) {
+          // Not enough material in inventory - this is a blocking issue
+          readinessState = 'blocked_inventory';
+          readinessDetails = `Insufficient ${state.project.color} material: need ${gramsThisCycle}g, available ${Math.floor(availableMaterial)}g`;
+        } else {
+          // Material exists in inventory - find suitable spools to suggest
+          const spools = getSpools();
+          const matchingSpools = spools.filter(s => 
+            s.color.toLowerCase() === colorKey && 
+            s.state !== 'empty' &&
+            s.gramsRemainingEst >= gramsThisCycle
+          );
+          
+          // Check if a spool is already mounted on this printer
+          const printers = getPrinters();
+          const printer = printers.find(p => p.id === slot.printerId);
+          const isMounted = printer?.mountedSpoolId || 
+            (printer?.mountedColor?.toLowerCase() === colorKey);
+          
+          if (isMounted) {
+            readinessState = 'ready';
+            readinessDetails = undefined;
+          } else {
+            readinessState = 'waiting_for_spool';
+            readinessDetails = `Load ${state.project.color} spool on ${slot.printerName}`;
+            
+            // Suggest specific spools from inventory
+            for (const spool of matchingSpools.slice(0, 3)) {
+              suggestedSpoolIds.push(spool.id);
+            }
+          }
+        }
+        
+        // Create the scheduled cycle (ALWAYS create it, per PRD - planning is separate from execution)
         const scheduledCycle: ScheduledCycle = {
           id: generateId(),
           projectId: state.project.id,
@@ -406,6 +452,11 @@ const scheduleCyclesForDay = (
           plateType,
           shift: isEndOfDayCycle ? 'end_of_day' : 'day',
           isEndOfDayCycle,
+          readinessState,
+          readinessDetails,
+          requiredColor: state.project.color,
+          requiredGrams: gramsThisCycle,
+          suggestedSpoolIds: suggestedSpoolIds.length > 0 ? suggestedSpoolIds : undefined,
         };
         
         // Update slot
@@ -415,8 +466,10 @@ const scheduleCyclesForDay = (
         // Update project state
         state.remainingUnits -= unitsThisCycle;
         
-        // Update material tracker
-        workingMaterial.set(colorKey, availableMaterial - gramsThisCycle);
+        // Only deduct material if we have it (for tracking purposes)
+        if (hasEnoughInventory) {
+          workingMaterial.set(colorKey, availableMaterial - gramsThisCycle);
+        }
         
         moreToSchedule = true;
         break; // Move to next printer slot
@@ -655,6 +708,12 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
           endTime: cycle.endTime.toISOString(),
           shift: cycle.shift,
           status: 'planned',
+          // New readiness fields per PRD
+          readinessState: cycle.readinessState,
+          readinessDetails: cycle.readinessDetails,
+          requiredColor: cycle.requiredColor,
+          requiredGrams: cycle.requiredGrams,
+          suggestedSpoolId: cycle.suggestedSpoolIds?.[0],
         });
       }
     }
