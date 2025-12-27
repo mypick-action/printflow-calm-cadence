@@ -165,9 +165,13 @@ export const generateLoadRecommendations = (
   });
 
   // ============= RULE A: Only show NEXT actionable load per printer =============
+  // CRITICAL FIX: Check the FIRST cycle per printer, not just cycles with waiting_for_spool
+  // The readinessState is cached from planning and may not reflect current printer state
+  
   // 1. If printer has an in_progress cycle, do NOT show any recommendation (printer is busy)
-  // 2. Only show the first waiting_for_spool cycle per printer
-  // 3. If next cycle uses same color as currently mounted, skip (no action needed)
+  // 2. For each printer, check only the FIRST planned cycle
+  // 3. If that first cycle's color matches loaded color, no action needed (skip printer entirely)
+  // 4. If color doesn't match, show recommendation for that first cycle only
   
   // Find printers that are currently running a cycle
   const printersWithRunningCycle = new Set<string>();
@@ -177,22 +181,21 @@ export const generateLoadRecommendations = (
     }
   }
 
-  // Track which printers we've already added a recommendation for
-  const printersWithRecommendation = new Set<string>();
+  // Group cycles by printer and find the FIRST cycle for each
+  const firstCycleByPrinter = new Map<string, PlannedCycle>();
+  for (const cycle of sortedActiveCycles) {
+    if (cycle.status !== 'planned') continue;
+    if (!firstCycleByPrinter.has(cycle.printerId)) {
+      firstCycleByPrinter.set(cycle.printerId, cycle);
+    }
+  }
+
   const recommendations: LoadRecommendation[] = [];
 
-  for (const cycle of sortedActiveCycles) {
-    const printerId = cycle.printerId;
-    
+  // For each printer, check only its FIRST cycle
+  for (const [printerId, cycle] of firstCycleByPrinter.entries()) {
     // RULE A.1: Skip if printer is currently running a cycle (not actionable now)
     if (printersWithRunningCycle.has(printerId)) continue;
-    
-    // Skip if we already have a recommendation for this printer (ONE per printer max)
-    if (printersWithRecommendation.has(printerId)) continue;
-
-    // Only process cycles that need a spool action
-    if (cycle.readinessState === 'ready') continue;
-    if (cycle.status !== 'planned') continue; // Only planned, not in_progress
 
     const printer = allPrinters.find(p => p.id === printerId);
     if (!printer) continue;
@@ -200,11 +203,11 @@ export const generateLoadRecommendations = (
     const colorKey = normalizeColor(cycle.requiredColor);
     const color = cycle.requiredColor || '';
 
-    // RULE A.3: Check if same color spool is already mounted (no change needed)
-    // Check both mountedSpoolId AND mountedColor - user may load color without specific spool
+    // RULE A.3: Check if same color spool is already mounted for the FIRST cycle
+    // Ignore cached readinessState - check current printer state directly
     let isSameColorMounted = false;
     if (printer.hasAMS && printer.amsSlotStates && printer.amsSlotStates.length > 0) {
-      // For AMS: check if any slot has the required color (with or without specific spool)
+      // For AMS: check if any slot has the required color
       isSameColorMounted = printer.amsSlotStates.some(s => {
         if (!s.color) return false;
         return normalizeColor(s.color) === colorKey;
@@ -217,11 +220,8 @@ export const generateLoadRecommendations = (
       }
     }
     
-    // Debug removed - issue was user expectation vs actual state
-    
-    // If same color is mounted, no action needed - mark printer as handled and skip
+    // If same color is mounted for the FIRST cycle, no action needed - skip this printer
     if (isSameColorMounted) {
-      printersWithRecommendation.add(printerId); // No more recommendations for this printer
       continue;
     }
 
@@ -256,9 +256,6 @@ export const generateLoadRecommendations = (
       message: `טען גליל ${color} על ${printer.name} (${projectName})`,
       messageEn: `Load ${color} spool on ${printer.name} (${projectName})`,
     });
-
-    // Mark this printer as having a recommendation - no more for this printer
-    printersWithRecommendation.add(printerId);
   }
 
   // Sort recommendations by priority
