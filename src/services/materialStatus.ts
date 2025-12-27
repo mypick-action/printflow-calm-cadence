@@ -9,6 +9,7 @@ import {
   Product,
   Spool,
 } from './storage';
+import { normalizeColor } from './colorNormalization';
 
 // ============= CONSTANTS (PRD-defined) =============
 
@@ -124,11 +125,11 @@ export const getMaterialStatusForColor = (
   material?: string
 ): MaterialStatus => {
   const spools = getSpools();
-  const colorKey = color.toLowerCase();
+  const colorKey = normalizeColor(color);
   
   // Get available grams for this color/material
   const matchingSpools = spools.filter(s => 
-    s.color.toLowerCase() === colorKey &&
+    normalizeColor(s.color) === colorKey &&
     s.state !== 'empty' &&
     s.gramsRemainingEst > 0 &&
     (!material || s.material.toLowerCase() === material.toLowerCase())
