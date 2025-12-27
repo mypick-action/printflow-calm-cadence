@@ -217,6 +217,12 @@ export const PlanningPage: React.FC = () => {
     setCurrentWeekStart(prev => addDays(prev, direction === 'next' ? 7 : -7));
   };
 
+  // Calculate actual planned units for a day from cycles (not theoretical capacity)
+  const calculateDayPlannedUnits = (day: DaySchedule): number => {
+    return day.cycles.reduce((sum, cycle) => sum + cycle.unitsPlanned, 0);
+  };
+
+  // Calculate theoretical daily capacity (for reference/comparison)
   const calculateDailyCapacity = (day: DaySchedule): number => {
     if (!day.isWorkday || !settings) return 0;
     
@@ -445,7 +451,7 @@ export const PlanningPage: React.FC = () => {
       <div className="grid grid-cols-7 gap-2">
         {weekDays.map((day, index) => {
           const isToday = isSameDay(day.date, new Date());
-          const capacity = calculateDailyCapacity(day);
+          const plannedUnits = calculateDayPlannedUnits(day); // Use actual planned units
           const endOfDayCycles = getEndOfDayCycles(day);
           
           return (
@@ -489,7 +495,7 @@ export const PlanningPage: React.FC = () => {
                     
                     {/* Capacity */}
                     <div className="p-2 bg-muted rounded-lg text-center">
-                      <div className="text-lg font-bold text-foreground">{capacity}</div>
+                      <div className="text-lg font-bold text-foreground">{plannedUnits}</div>
                       <div className="text-xs text-muted-foreground">
                         {language === 'he' ? 'יחידות' : 'units'}
                       </div>
