@@ -4,6 +4,7 @@ import { OnboardingWizard, OnboardingData } from '@/components/onboarding/Onboar
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Dashboard } from '@/components/dashboard/Dashboard';
 import { ProjectsPage } from '@/components/projects/ProjectsPage';
+import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Construction } from 'lucide-react';
 
@@ -43,6 +44,8 @@ const PrintFlowApp: React.FC = () => {
         return <Dashboard printerNames={factoryData?.printerNames || []} />;
       case 'projects':
         return <ProjectsPage />;
+      case 'endCycleLog':
+        return <EndCycleLog />;
       default:
         return (
           <Card variant="elevated">
