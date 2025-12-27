@@ -421,12 +421,23 @@ const scheduleCyclesForDay = (
           );
           
           // Check if a spool is already mounted on this printer
+          // v2: mountedSpoolId is REQUIRED for "ready" state - mountedColor alone is NOT enough
           const printers = getPrinters();
           const printer = printers.find(p => p.id === slot.printerId);
-          const isMounted = printer?.mountedSpoolId || 
-            (printer?.mountedColor?.toLowerCase() === colorKey);
           
-          if (isMounted) {
+          let isSpoolMounted = false;
+          if (printer?.hasAMS && printer.amsSlotStates) {
+            // For AMS: check if any slot has the matching color AND a spoolId
+            isSpoolMounted = printer.amsSlotStates.some(s => 
+              s.color?.toLowerCase() === colorKey && !!s.spoolId
+            );
+          } else {
+            // For non-AMS: require mountedSpoolId (not just mountedColor)
+            isSpoolMounted = !!printer?.mountedSpoolId && 
+              printer?.mountedColor?.toLowerCase() === colorKey;
+          }
+          
+          if (isSpoolMounted) {
             readinessState = 'ready';
             readinessDetails = undefined;
           } else {

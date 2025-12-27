@@ -29,7 +29,6 @@ import {
   updatePrinter,
   setLoadedSpoolsInitialized,
   setMountedStateUnknown,
-  FilamentEstimate,
   AMSSlotState,
   Printer as PrinterType,
   Spool,
@@ -46,19 +45,21 @@ type InitialChoice = 'has_spools' | 'no_spools' | 'skip';
 
 interface PrinterMountState {
   printerId: string;
-  color: string;
-  estimate: FilamentEstimate;
-  spoolId?: string;
+  spoolId?: string; // v2: Required for ready state
+  color?: string; // Derived from spool
   amsMode?: 'backup_same_color' | 'multi_color';
-  amsSlots?: Array<{ slotIndex: number; color: string; estimate: FilamentEstimate; spoolId?: string }>;
+  amsSlots?: Array<{ slotIndex: number; spoolId?: string; color?: string }>;
 }
 
-const ESTIMATE_OPTIONS: { value: FilamentEstimate; labelHe: string; labelEn: string }[] = [
-  { value: 'unknown', labelHe: 'לא יודע', labelEn: "Don't know" },
-  { value: 'low', labelHe: 'מעט', labelEn: 'Low' },
-  { value: 'medium', labelHe: 'בינוני', labelEn: 'Medium' },
-  { value: 'high', labelHe: 'הרבה', labelEn: 'High' },
-];
+// Get available spools for a color from inventory
+const getAvailableSpoolsForColor = (spools: Spool[], color: string): Spool[] => {
+  return spools.filter(s => 
+    s.color.toLowerCase() === color.toLowerCase() && 
+    s.state !== 'empty' && 
+    s.gramsRemainingEst > 0 &&
+    s.location === 'stock'
+  );
+};
 
 export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
   open,
@@ -88,15 +89,18 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
       activePrinters.forEach(p => {
         states.set(p.id, {
           printerId: p.id,
-          color: p.currentColor || '',
-          estimate: 'unknown',
+          spoolId: p.mountedSpoolId || undefined,
+          color: p.mountedColor || p.currentColor || undefined,
           amsMode: p.hasAMS ? (p.amsMode || 'backup_same_color') : undefined,
           amsSlots: p.hasAMS 
-            ? Array.from({ length: p.amsSlots || 4 }, (_, i) => ({
-                slotIndex: i,
-                color: '',
-                estimate: 'unknown' as FilamentEstimate,
-              }))
+            ? Array.from({ length: p.amsSlots || 4 }, (_, i) => {
+                const existingSlot = p.amsSlotStates?.find(s => s.slotIndex === i);
+                return {
+                  slotIndex: i,
+                  spoolId: existingSlot?.spoolId || undefined,
+                  color: existingSlot?.color || undefined,
+                };
+              })
             : undefined,
         });
       });
@@ -154,7 +158,7 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
   const updateAMSSlotState = (
     printerId: string, 
     slotIndex: number, 
-    updates: Partial<{ color: string; estimate: FilamentEstimate; spoolId?: string }>
+    updates: Partial<{ spoolId?: string; color?: string }>
   ) => {
     setPrinterStates(prev => {
       const newMap = new Map(prev);
@@ -178,15 +182,17 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
       if (!printer) return;
 
       if (printer.hasAMS) {
-        // Save AMS slots
+        // Save AMS slots - v2: derive color from spool
         const amsSlotStates: AMSSlotState[] = (state.amsSlots || [])
-          .filter(s => s.color) // Only save slots with a color selected
-          .map(s => ({
-            slotIndex: s.slotIndex,
-            spoolId: s.spoolId || null,
-            color: s.color,
-            estimate: s.estimate,
-          }));
+          .filter(s => s.spoolId) // Only save slots with a spool selected
+          .map(s => {
+            const spool = spools.find(sp => sp.id === s.spoolId);
+            return {
+              slotIndex: s.slotIndex,
+              spoolId: s.spoolId || null,
+              color: spool?.color || s.color,
+            };
+          });
 
         updatePrinter(printerId, {
           amsSlotStates,
@@ -339,54 +345,59 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
               </RadioGroup>
             </div>
 
-            {/* AMS Slots */}
+            {/* AMS Slots - v2: Select spool from inventory */}
             <div className="grid grid-cols-2 gap-2">
-              {state.amsSlots?.map((slot, idx) => (
-                <div key={idx} className="p-3 rounded-lg border bg-muted/30 space-y-2">
-                  <div className="text-xs text-muted-foreground">
-                    {language === 'he' ? `חריץ ${idx + 1}` : `Slot ${idx + 1}`}
-                  </div>
-                  <Select
-                    value={slot.color}
-                    onValueChange={(v) => updateAMSSlotState(printer.id, idx, { color: v })}
-                  >
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder={language === 'he' ? 'בחר צבע' : 'Select color'} />
-                    </SelectTrigger>
-                    <SelectContent className="bg-popover z-50">
-                      <SelectItem value="">
-                        {language === 'he' ? 'ריק' : 'Empty'}
-                      </SelectItem>
-                      {colors.map(c => (
-                        <SelectItem key={c} value={c}>
-                          <div className="flex items-center gap-2">
-                            <SpoolIcon color={getSpoolColor(c)} size={16} />
-                            {c}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {slot.color && (
-                    <div className="flex gap-1 flex-wrap">
-                      {ESTIMATE_OPTIONS.map(opt => (
-                        <button
-                          key={opt.value}
-                          onClick={() => updateAMSSlotState(printer.id, idx, { estimate: opt.value })}
-                          className={cn(
-                            "px-2 py-0.5 text-xs rounded-full transition-colors",
-                            slot.estimate === opt.value
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted hover:bg-muted/80"
-                          )}
-                        >
-                          {language === 'he' ? opt.labelHe : opt.labelEn}
-                        </button>
-                      ))}
+              {state.amsSlots?.map((slot, idx) => {
+                const availableSpools = spools.filter(s => 
+                  s.state !== 'empty' && 
+                  s.gramsRemainingEst > 0 &&
+                  s.location === 'stock'
+                );
+                const selectedSpool = slot.spoolId ? spools.find(s => s.id === slot.spoolId) : null;
+                
+                return (
+                  <div key={idx} className="p-3 rounded-lg border bg-muted/30 space-y-2">
+                    <div className="text-xs text-muted-foreground">
+                      {language === 'he' ? `חריץ ${idx + 1}` : `Slot ${idx + 1}`}
                     </div>
-                  )}
-                </div>
-              ))}
+                    <Select
+                      value={slot.spoolId || ''}
+                      onValueChange={(v) => {
+                        const spool = spools.find(s => s.id === v);
+                        updateAMSSlotState(printer.id, idx, { 
+                          spoolId: v || undefined, 
+                          color: spool?.color 
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder={language === 'he' ? 'בחר גליל' : 'Select spool'} />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover z-50">
+                        <SelectItem value="">
+                          {language === 'he' ? 'ריק' : 'Empty'}
+                        </SelectItem>
+                        {availableSpools.map(s => (
+                          <SelectItem key={s.id} value={s.id}>
+                            <div className="flex items-center gap-2">
+                              <SpoolIcon color={getSpoolColor(s.color)} size={16} />
+                              <span>{s.color}</span>
+                              <span className="text-muted-foreground text-xs">
+                                {s.gramsRemainingEst}g
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedSpool && (
+                      <div className="text-xs text-muted-foreground">
+                        {selectedSpool.gramsRemainingEst}g {selectedSpool.material || 'PLA'}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -402,57 +413,77 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
             <span className="font-medium">{printer.name}</span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Select
-              value={state.color}
-              onValueChange={(v) => updatePrinterState(printer.id, { color: v })}
-            >
-              <SelectTrigger className="flex-1">
-                <SelectValue placeholder={language === 'he' ? 'בחר צבע' : 'Select color'} />
-              </SelectTrigger>
-              <SelectContent className="bg-popover z-50">
-                <SelectItem value="">
-                  {language === 'he' ? 'ריק / לא יודע' : 'Empty / Unknown'}
-                </SelectItem>
-                {colors.map(c => (
-                  <SelectItem key={c} value={c}>
-                    <div className="flex items-center gap-2">
-                      <SpoolIcon color={getSpoolColor(c)} size={16} />
-                      {c}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {state.color && (
-              <SpoolIcon color={getSpoolColor(state.color)} size={32} />
-            )}
-          </div>
-
-          {state.color && (
-            <div className="space-y-2">
-              <Label className="text-sm text-muted-foreground">
-                {language === 'he' ? 'כמה נשאר בערך?' : 'How much is left?'}
-              </Label>
-              <div className="flex gap-2 flex-wrap">
-                {ESTIMATE_OPTIONS.map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => updatePrinterState(printer.id, { estimate: opt.value })}
-                    className={cn(
-                      "px-3 py-1.5 text-sm rounded-lg transition-colors",
-                      state.estimate === opt.value
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted hover:bg-muted/80"
-                    )}
+          {/* v2: Select spool from inventory instead of color + estimate */}
+          <div className="space-y-2">
+            <Label className="text-sm text-muted-foreground">
+              {language === 'he' ? 'בחר גליל מהמלאי' : 'Select spool from inventory'}
+            </Label>
+            {(() => {
+              const availableSpools = spools.filter(s => 
+                s.state !== 'empty' && 
+                s.gramsRemainingEst > 0 &&
+                s.location === 'stock'
+              );
+              const selectedSpool = state.spoolId ? spools.find(s => s.id === state.spoolId) : null;
+              
+              return (
+                <>
+                  <Select
+                    value={state.spoolId || ''}
+                    onValueChange={(v) => {
+                      const spool = spools.find(s => s.id === v);
+                      updatePrinterState(printer.id, { 
+                        spoolId: v || undefined, 
+                        color: spool?.color 
+                      });
+                    }}
                   >
-                    {language === 'he' ? opt.labelHe : opt.labelEn}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+                    <SelectTrigger>
+                      <SelectValue placeholder={language === 'he' ? 'בחר גליל' : 'Select spool'} />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover z-50">
+                      <SelectItem value="">
+                        {language === 'he' ? 'ריק / לא טעון' : 'Empty / Not loaded'}
+                      </SelectItem>
+                      {availableSpools.map(s => (
+                        <SelectItem key={s.id} value={s.id}>
+                          <div className="flex items-center gap-2">
+                            <SpoolIcon color={getSpoolColor(s.color)} size={16} />
+                            <span>{s.color}</span>
+                            <span className="text-muted-foreground text-xs">
+                              {s.gramsRemainingEst}g • {s.material || 'PLA'}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  
+                  {selectedSpool && (
+                    <div className="p-3 rounded-lg bg-primary/5 border border-primary/30">
+                      <div className="flex items-center gap-3">
+                        <SpoolIcon color={getSpoolColor(selectedSpool.color)} size={32} />
+                        <div>
+                          <span className="font-medium">{selectedSpool.color}</span>
+                          <div className="text-sm text-muted-foreground">
+                            {selectedSpool.gramsRemainingEst}g • {selectedSpool.material || 'PLA'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {availableSpools.length === 0 && (
+                    <div className="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning">
+                      {language === 'he' 
+                        ? 'אין גלילים זמינים במלאי'
+                        : 'No spools available in inventory'}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </div>
         </CardContent>
       </Card>
     );
@@ -462,8 +493,8 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
     <div className="space-y-4">
       <DialogDescription className="text-base">
         {language === 'he' 
-          ? 'עדכן את הצבע והכמות המשוערת על כל מדפסת'
-          : 'Update the color and estimated amount on each printer'}
+          ? 'בחר גליל מהמלאי לכל מדפסת'
+          : 'Select a spool from inventory for each printer'}
       </DialogDescription>
 
       <div className="max-h-[400px] overflow-y-auto space-y-3 pr-1">
