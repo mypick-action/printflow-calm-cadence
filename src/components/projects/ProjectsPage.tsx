@@ -56,6 +56,7 @@ import {
   PlayCircle,
   Filter,
   Flame,
+  Trash2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from '@/hooks/use-toast';
@@ -63,6 +64,7 @@ import {
   getProjects, 
   getProducts, 
   createProject,
+  deleteProject,
   Project, 
   Product,
   calculatePriorityFromDueDate,
@@ -70,6 +72,16 @@ import {
 } from '@/services/storage';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { ProductEditorModal } from '@/components/products/ProductEditorModal';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 const availableColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
 
@@ -88,6 +100,8 @@ export const ProjectsPage: React.FC = () => {
   const [reportIssueProjectId, setReportIssueProjectId] = useState<string | undefined>(undefined);
   const [productEditorOpen, setProductEditorOpen] = useState(false);
   const [productEditorInitialName, setProductEditorInitialName] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   
   // Filter state - Status filter (primary, default to in_progress only)
   const [statusFilters, setStatusFilters] = useState<Record<ProjectStatus, boolean>>({
@@ -113,6 +127,24 @@ export const ProjectsPage: React.FC = () => {
   const handleReportIssue = (projectId: string) => {
     setReportIssueProjectId(projectId);
     setReportIssueOpen(true);
+  };
+
+  const handleDeleteProject = (project: Project) => {
+    setProjectToDelete(project);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDeleteProject = () => {
+    if (projectToDelete) {
+      deleteProject(projectToDelete.id);
+      setProjects(getProjects());
+      toast({
+        title: language === 'he' ? 'הפרויקט נמחק' : 'Project deleted',
+        description: projectToDelete.name,
+      });
+    }
+    setDeleteDialogOpen(false);
+    setProjectToDelete(null);
   };
 
   useEffect(() => {
@@ -779,6 +811,13 @@ export const ProjectsPage: React.FC = () => {
                             <AlertTriangle className="w-4 h-4 mr-2 text-warning" />
                             {language === 'he' ? 'דווח על בעיה' : 'Report Issue'}
                           </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            onClick={() => handleDeleteProject(project)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            {language === 'he' ? 'מחק פרויקט' : 'Delete Project'}
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -814,6 +853,34 @@ export const ProjectsPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {language === 'he' ? 'מחיקת פרויקט' : 'Delete Project'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {language === 'he' 
+                ? `האם אתה בטוח שברצונך למחוק את "${projectToDelete?.name}"?` 
+                : `Are you sure you want to delete "${projectToDelete?.name}"?`}
+              <br />
+              <span className="text-destructive">
+                {language === 'he' ? 'פעולה זו לא ניתנת לביטול.' : 'This action cannot be undone.'}
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteProject} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {language === 'he' ? 'מחק' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Report Issue Modal */}
       <ReportIssueFlow
