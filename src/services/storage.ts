@@ -539,7 +539,31 @@ export const getProducts = (): Product[] => {
     setItem(KEYS.PRODUCTS, initialProducts);
     return initialProducts;
   }
-  return products;
+  // Migrate old products without platePresets
+  const migratedProducts = products.map(p => {
+    if (!p.platePresets || !Array.isArray(p.platePresets)) {
+      // Convert legacy product to new format
+      const legacyProduct = p as any;
+      return {
+        ...p,
+        platePresets: [{
+          id: `preset-${p.id}-1`,
+          name: 'Full',
+          unitsPerPlate: legacyProduct.safeUnitsFullPlate || 8,
+          cycleHours: legacyProduct.cycleHours || 2,
+          riskLevel: 'low' as const,
+          allowedForNightCycle: legacyProduct.nightAllowed !== 'no',
+          isRecommended: true,
+        }],
+      };
+    }
+    return p;
+  });
+  // Save migrated data if any changes were made
+  if (migratedProducts.some((p, i) => p !== products[i])) {
+    setItem(KEYS.PRODUCTS, migratedProducts);
+  }
+  return migratedProducts;
 };
 
 export const getProduct = (id: string): Product | undefined => {
