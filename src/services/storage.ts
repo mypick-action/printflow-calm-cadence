@@ -989,77 +989,72 @@ export const triggerPlanningRecalculation = (reason: string): void => {
 export const recalculatePlan = (
   scope: RecalculateScope,
   lockStarted: boolean = true
-): { success: boolean; cyclesModified: number; summary: string } => {
+): { success: boolean; cyclesModified: number; summary: string; summaryHe: string } => {
+  // Import planning engine dynamically to avoid circular deps
+  const { generatePlan } = require('./planningEngine');
+  
   const cycles = getPlannedCycles();
   const settings = getFactorySettings();
   const printers = getActivePrinters();
-  const projects = getActiveProjects();
   
   if (!settings || printers.length === 0) {
-    return { success: false, cyclesModified: 0, summary: 'No settings or printers available' };
+    return { 
+      success: false, 
+      cyclesModified: 0, 
+      summary: 'No settings or printers available',
+      summaryHe: 'חסרות הגדרות או מדפסות'
+    };
   }
 
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const weekEnd = new Date(today);
-  weekEnd.setDate(weekEnd.getDate() + 7);
 
-  // Determine which cycles to keep vs rebuild
-  let cyclesToKeep: PlannedCycle[] = [];
-  let cyclesToRebuild: PlannedCycle[] = [];
+  // Determine start date based on scope
+  let startDate: Date;
+  switch (scope) {
+    case 'from_now':
+      startDate = now;
+      break;
+    case 'from_tomorrow':
+      startDate = tomorrow;
+      break;
+    case 'whole_week':
+      startDate = today;
+      break;
+    default:
+      startDate = now;
+  }
 
-  cycles.forEach(cycle => {
+  // Determine which cycles to keep (completed, failed, or in-progress if locked)
+  const cyclesToKeep: PlannedCycle[] = cycles.filter(cycle => {
     const cycleDate = new Date(cycle.startTime);
     const isStarted = cycle.status === 'in_progress';
     const isCompleted = cycle.status === 'completed' || cycle.status === 'failed';
 
-    // Never modify completed/failed cycles
-    if (isCompleted) {
-      cyclesToKeep.push(cycle);
-      return;
-    }
+    // Always keep completed/failed cycles
+    if (isCompleted) return true;
 
-    // Lock started cycles if option enabled
-    if (lockStarted && isStarted) {
-      cyclesToKeep.push(cycle);
-      return;
-    }
+    // Keep in-progress if locked
+    if (lockStarted && isStarted) return true;
 
-    // Apply scope filter
-    switch (scope) {
-      case 'from_now':
-        if (cycleDate >= now) {
-          cyclesToRebuild.push(cycle);
-        } else {
-          cyclesToKeep.push(cycle);
-        }
-        break;
-      case 'from_tomorrow':
-        if (cycleDate >= tomorrow) {
-          cyclesToRebuild.push(cycle);
-        } else {
-          cyclesToKeep.push(cycle);
-        }
-        break;
-      case 'whole_week':
-        if (cycleDate >= today && cycleDate <= weekEnd) {
-          if (lockStarted && isStarted) {
-            cyclesToKeep.push(cycle);
-          } else {
-            cyclesToRebuild.push(cycle);
-          }
-        } else {
-          cyclesToKeep.push(cycle);
-        }
-        break;
-    }
+    // Keep cycles before start date
+    if (cycleDate < startDate) return true;
+
+    return false;
   });
 
-  // For now, just clear the cycles that need rebuilding and mark as recalculated
-  // A real implementation would redistribute projects across available capacity
-  const newCycles = [...cyclesToKeep];
+  // Generate new plan using the planning engine
+  const planResult = generatePlan({
+    startDate,
+    daysToPlane: 7,
+    scope,
+    lockInProgress: lockStarted,
+  });
+
+  // Merge kept cycles with new plan cycles
+  const newCycles = [...cyclesToKeep, ...planResult.cycles];
 
   // Save the updated cycles
   setItem(KEYS.PLANNED_CYCLES, newCycles);
@@ -1071,10 +1066,30 @@ export const recalculatePlan = (
     lastCapacityChangeReason: undefined,
   });
 
+  const cyclesModified = planResult.cycles.length;
+  
+  // Build summary
+  let summary = '';
+  let summaryHe = '';
+  
+  if (planResult.success) {
+    summary = `Generated ${cyclesModified} cycles for ${planResult.totalUnitsPlanned} units`;
+    summaryHe = `נוצרו ${cyclesModified} מחזורים עבור ${planResult.totalUnitsPlanned} יחידות`;
+    
+    if (planResult.warnings.length > 0) {
+      summary += ` with ${planResult.warnings.length} warning(s)`;
+      summaryHe += ` עם ${planResult.warnings.length} אזהרות`;
+    }
+  } else {
+    summary = `Planning failed: ${planResult.blockingIssues.map(i => i.messageEn).join(', ')}`;
+    summaryHe = `התכנון נכשל: ${planResult.blockingIssues.map(i => i.message).join(', ')}`;
+  }
+
   return {
-    success: true,
-    cyclesModified: cyclesToRebuild.length,
-    summary: `Recalculated ${cyclesToRebuild.length} cycles based on current capacity`,
+    success: planResult.success,
+    cyclesModified,
+    summary,
+    summaryHe,
   };
 };
 
