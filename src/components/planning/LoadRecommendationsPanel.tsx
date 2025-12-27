@@ -221,12 +221,15 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
   const suggestedSpools = spools.filter(s => recommendation.suggestedSpoolIds.includes(s.id));
 
   const handleClick = (e: React.MouseEvent) => {
-    console.log('[RecommendationCard] onClick fired', recommendation.printerId);
+    e.preventDefault();
     e.stopPropagation();
+    alert('CLICK: ' + recommendation.printerName);
+    console.log('[RecommendationCard] onClick fired', recommendation.printerId);
     onClick?.();
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    alert('POINTER DOWN: ' + recommendation.printerName);
     console.log('[RecommendationCard] onPointerDown fired', recommendation.printerId);
   };
 
