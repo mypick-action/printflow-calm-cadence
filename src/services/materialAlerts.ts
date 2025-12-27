@@ -32,7 +32,10 @@ export interface MaterialAlert {
   threshold?: number;
 }
 
-const LOW_MATERIAL_THRESHOLD_GRAMS = 200; // Alert when spool has less than 200g
+// Import from materialStatus service for consistency - PRD mandates 150g
+import { SAFETY_THRESHOLD_GRAMS } from './materialStatus';
+
+const LOW_MATERIAL_THRESHOLD_GRAMS = SAFETY_THRESHOLD_GRAMS; // PRD: 150g threshold
 
 /**
  * Generate all material-related alerts
