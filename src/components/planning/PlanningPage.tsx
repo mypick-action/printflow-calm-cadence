@@ -40,10 +40,14 @@ import {
   getPrinters, 
   getPlannedCycles,
   getProject,
+  getPlanningMeta,
   FactorySettings,
   Printer as PrinterType,
   PlannedCycle
 } from '@/services/storage';
+import { RecalculateButton } from './RecalculateButton';
+import { RecalculateModal } from './RecalculateModal';
+import { CapacityChangeBanner } from './CapacityChangeBanner';
 
 interface ScheduleOverride {
   id: string;
@@ -82,11 +86,20 @@ export const PlanningPage: React.FC = () => {
   });
   const [startDateOpen, setStartDateOpen] = useState(false);
   const [endDateOpen, setEndDateOpen] = useState(false);
+  const [recalculateModalOpen, setRecalculateModalOpen] = useState(false);
+  const [planningMeta, setPlanningMeta] = useState(getPlanningMeta());
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  const refreshData = () => {
+    setSettings(getFactorySettings());
+    setPrinters(getPrinters().filter(p => p.status === 'active'));
+    setPlannedCycles(getPlannedCycles());
+    setPlanningMeta(getPlanningMeta());
+    setBannerDismissed(false);
+  };
 
   useEffect(() => {
-    setSettings(getFactorySettings());
-    setPrinters(getPrinters().filter(p => p.active));
-    setPlannedCycles(getPlannedCycles());
+    refreshData();
     
     // Load overrides from localStorage
     const savedOverrides = localStorage.getItem('printflow_schedule_overrides');
@@ -217,6 +230,22 @@ export const PlanningPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Capacity Change Banner */}
+      {planningMeta.capacityChangedSinceLastRecalculation && !bannerDismissed && (
+        <CapacityChangeBanner
+          reason={planningMeta.lastCapacityChangeReason}
+          onRecalculate={() => setRecalculateModalOpen(true)}
+          onDismiss={() => setBannerDismissed(true)}
+        />
+      )}
+
+      {/* Recalculate Modal */}
+      <RecalculateModal
+        open={recalculateModalOpen}
+        onOpenChange={setRecalculateModalOpen}
+        onRecalculated={refreshData}
+      />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -232,20 +261,26 @@ export const PlanningPage: React.FC = () => {
             </p>
           </div>
         </div>
+
+        <div className="flex items-center gap-3">
+          <RecalculateButton 
+            onClick={() => setRecalculateModalOpen(true)} 
+            showLastCalculated={true}
+          />
         
-        <Dialog open={overrideDialogOpen} onOpenChange={setOverrideDialogOpen}>
-          <DialogTrigger asChild>
-            <Button variant="outline" className="gap-2">
-              <Settings2 className="w-4 h-4" />
-              {language === 'he' ? 'שינוי לוח זמנים זמני' : 'Temporary Override'}
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>
-                {language === 'he' ? 'שינוי לוח זמנים זמני' : 'Temporary Schedule Override'}
-              </DialogTitle>
-            </DialogHeader>
+          <Dialog open={overrideDialogOpen} onOpenChange={setOverrideDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2">
+                <Settings2 className="w-4 h-4" />
+                {language === 'he' ? 'שינוי לוח זמנים זמני' : 'Temporary Override'}
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>
+                  {language === 'he' ? 'שינוי לוח זמנים זמני' : 'Temporary Schedule Override'}
+                </DialogTitle>
+              </DialogHeader>
             <div className="space-y-4 py-4">
               {/* Date Range */}
               <div className="grid grid-cols-2 gap-4">
@@ -385,6 +420,7 @@ export const PlanningPage: React.FC = () => {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Active Overrides */}

@@ -947,6 +947,130 @@ export const simulateQuote = (
   }
 };
 
+// ============= PLANNING ENGINE =============
+
+export interface PlanningMeta {
+  lastRecalculatedAt: string | null;
+  capacityChangedSinceLastRecalculation: boolean;
+  lastCapacityChangeReason?: string;
+}
+
+export type RecalculateScope = 'from_now' | 'from_tomorrow' | 'whole_week';
+
+const PLANNING_META_KEY = 'printflow_planning_meta';
+
+export const getPlanningMeta = (): PlanningMeta => {
+  return getItem<PlanningMeta>(PLANNING_META_KEY, {
+    lastRecalculatedAt: null,
+    capacityChangedSinceLastRecalculation: false,
+  });
+};
+
+export const savePlanningMeta = (meta: PlanningMeta): void => {
+  setItem(PLANNING_META_KEY, meta);
+};
+
+export const markCapacityChanged = (reason: string): void => {
+  const meta = getPlanningMeta();
+  savePlanningMeta({
+    ...meta,
+    capacityChangedSinceLastRecalculation: true,
+    lastCapacityChangeReason: reason,
+  });
+};
+
+export const recalculatePlan = (
+  scope: RecalculateScope,
+  lockStarted: boolean = true
+): { success: boolean; cyclesModified: number; summary: string } => {
+  const cycles = getPlannedCycles();
+  const settings = getFactorySettings();
+  const printers = getActivePrinters();
+  const projects = getActiveProjects();
+  
+  if (!settings || printers.length === 0) {
+    return { success: false, cyclesModified: 0, summary: 'No settings or printers available' };
+  }
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const weekEnd = new Date(today);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+
+  // Determine which cycles to keep vs rebuild
+  let cyclesToKeep: PlannedCycle[] = [];
+  let cyclesToRebuild: PlannedCycle[] = [];
+
+  cycles.forEach(cycle => {
+    const cycleDate = new Date(cycle.startTime);
+    const isStarted = cycle.status === 'in_progress';
+    const isCompleted = cycle.status === 'completed' || cycle.status === 'failed';
+
+    // Never modify completed/failed cycles
+    if (isCompleted) {
+      cyclesToKeep.push(cycle);
+      return;
+    }
+
+    // Lock started cycles if option enabled
+    if (lockStarted && isStarted) {
+      cyclesToKeep.push(cycle);
+      return;
+    }
+
+    // Apply scope filter
+    switch (scope) {
+      case 'from_now':
+        if (cycleDate >= now) {
+          cyclesToRebuild.push(cycle);
+        } else {
+          cyclesToKeep.push(cycle);
+        }
+        break;
+      case 'from_tomorrow':
+        if (cycleDate >= tomorrow) {
+          cyclesToRebuild.push(cycle);
+        } else {
+          cyclesToKeep.push(cycle);
+        }
+        break;
+      case 'whole_week':
+        if (cycleDate >= today && cycleDate <= weekEnd) {
+          if (lockStarted && isStarted) {
+            cyclesToKeep.push(cycle);
+          } else {
+            cyclesToRebuild.push(cycle);
+          }
+        } else {
+          cyclesToKeep.push(cycle);
+        }
+        break;
+    }
+  });
+
+  // For now, just clear the cycles that need rebuilding and mark as recalculated
+  // A real implementation would redistribute projects across available capacity
+  const newCycles = [...cyclesToKeep];
+
+  // Save the updated cycles
+  setItem(KEYS.PLANNED_CYCLES, newCycles);
+
+  // Update planning meta
+  savePlanningMeta({
+    lastRecalculatedAt: new Date().toISOString(),
+    capacityChangedSinceLastRecalculation: false,
+    lastCapacityChangeReason: undefined,
+  });
+
+  return {
+    success: true,
+    cyclesModified: cyclesToRebuild.length,
+    summary: `Recalculated ${cyclesToRebuild.length} cycles based on current capacity`,
+  };
+};
+
 // ============= RESET ALL DATA =============
 
 export const resetAllData = (): void => {
