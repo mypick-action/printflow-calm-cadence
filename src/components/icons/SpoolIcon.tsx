@@ -82,3 +82,21 @@ export const getSpoolColor = (colorName: string): string => {
   const lowerName = colorName.toLowerCase();
   return SPOOL_COLORS[lowerName] || SPOOL_COLORS[colorName] || '#6B7280';
 };
+
+// Get text color style for displaying spool color name
+export const getSpoolTextStyle = (colorName: string): React.CSSProperties => {
+  const color = getSpoolColor(colorName);
+  // For light colors (white, yellow, transparent), use a darker shade for readability
+  const lowerName = colorName.toLowerCase();
+  const lightColors = ['white', 'לבן', 'yellow', 'צהוב', 'transparent', 'שקוף'];
+  
+  if (lightColors.includes(lowerName)) {
+    // Use a darker version or add text shadow for visibility
+    return { 
+      color: lowerName.includes('white') || lowerName === 'לבן' ? '#374151' : color,
+      textShadow: '0 0 1px rgba(0,0,0,0.3)'
+    };
+  }
+  
+  return { color };
+};

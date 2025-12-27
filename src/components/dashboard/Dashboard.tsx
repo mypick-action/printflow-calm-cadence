@@ -7,7 +7,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
+import { SpoolIcon, getSpoolColor, getSpoolTextStyle } from '@/components/icons/SpoolIcon';
 import { 
   Sun, 
   AlertTriangle, 
@@ -212,9 +212,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
               
               {/* Leave spool instruction */}
               {plan.lastColor && (
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-success/5 border border-success/30">
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border/50">
                   <SpoolIcon color={getSpoolColor(plan.lastColor)} size={28} />
-                  <span className="text-sm font-medium text-success">
+                  <span className="text-sm font-medium" style={getSpoolTextStyle(plan.lastColor)}>
                     {language === 'he' 
                       ? `השאר גליל ${plan.lastColor}` 
                       : `Leave ${plan.lastColor} spool`}
