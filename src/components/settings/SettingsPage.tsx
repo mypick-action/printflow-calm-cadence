@@ -3,15 +3,28 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { 
   Settings, 
   Clock, 
-  Save
+  Save,
+  Trash2,
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { getPriorityRules, savePriorityRules, PriorityRules } from '@/services/storage';
+import { getPriorityRules, savePriorityRules, PriorityRules, resetAllPrintFlowData, isDemoMode } from '@/services/storage';
 import { WorkScheduleSection } from './WorkScheduleSection';
 
 export const SettingsPage: React.FC = () => {
@@ -21,6 +34,8 @@ export const SettingsPage: React.FC = () => {
     criticalDaysThreshold: 7,
   });
   const [hasChanges, setHasChanges] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const demoMode = isDemoMode();
 
   useEffect(() => {
     const currentRules = getPriorityRules();
@@ -50,18 +65,20 @@ export const SettingsPage: React.FC = () => {
     });
   };
 
+  const handleReset = () => {
+    setIsResetting(true);
+    // Small delay for visual feedback
+    setTimeout(() => {
+      resetAllPrintFlowData();
+      // Reload the page to show bootstrap screen
+      window.location.reload();
+    }, 300);
+  };
+
   const updateRules = (updates: Partial<PriorityRules>) => {
     setRules(prev => ({ ...prev, ...updates }));
     setHasChanges(true);
   };
-
-  const getPriorityPreview = (days: number) => {
-    if (days < rules.criticalDaysThreshold) return 'critical';
-    if (days < rules.urgentDaysThreshold) return 'urgent';
-    return 'normal';
-  };
-
-  const previewDays = [3, 7, 10, 14, 21, 30];
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -70,7 +87,7 @@ export const SettingsPage: React.FC = () => {
         <div className="p-2 bg-primary/10 rounded-xl">
           <Settings className="w-6 h-6 text-primary" />
         </div>
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold text-foreground">
             {language === 'he' ? 'הגדרות' : 'Settings'}
           </h1>
@@ -78,7 +95,13 @@ export const SettingsPage: React.FC = () => {
             {language === 'he' ? 'הגדרות המערכת' : 'System settings'}
           </p>
         </div>
+        {demoMode && (
+          <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
+            {language === 'he' ? 'מצב הדגמה' : 'Demo Mode'}
+          </Badge>
+        )}
       </div>
+
       {/* Work Schedule Section - First */}
       <WorkScheduleSection />
 
@@ -172,6 +195,73 @@ export const SettingsPage: React.FC = () => {
             <Save className="w-4 h-4" />
             {language === 'he' ? 'שמור שינויים' : 'Save Changes'}
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* Reset System Card */}
+      <Card variant="elevated" className="border-error/20">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg text-error">
+            <RotateCcw className="w-5 h-5" />
+            {language === 'he' ? 'איפוס מערכת' : 'Reset System'}
+          </CardTitle>
+          <CardDescription>
+            {language === 'he' 
+              ? 'מחיקת כל הנתונים וחזרה למסך הפתיחה'
+              : 'Delete all data and return to first-run screen'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="p-4 bg-error/5 rounded-lg border border-error/20 mb-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-error mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">
+                  {language === 'he' ? 'פעולה זו לא ניתנת לביטול' : 'This action cannot be undone'}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {language === 'he' 
+                    ? 'כל הפרויקטים, המוצרים, המדפסות וההיסטוריה יימחקו לצמיתות.'
+                    : 'All projects, products, printers, and history will be permanently deleted.'}
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" className="w-full gap-2">
+                <Trash2 className="w-4 h-4" />
+                {language === 'he' ? 'איפוס מערכת / התחל מחדש' : 'Reset System / Start Over'}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {language === 'he' ? 'אישור איפוס מערכת' : 'Confirm System Reset'}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {language === 'he' 
+                    ? 'זה ימחק את כל הנתונים מהמכשיר הזה. להמשיך?'
+                    : 'This will delete all data on this device. Continue?'}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>
+                  {language === 'he' ? 'ביטול' : 'Cancel'}
+                </AlertDialogCancel>
+                <AlertDialogAction 
+                  onClick={handleReset}
+                  className="bg-error hover:bg-error/90"
+                  disabled={isResetting}
+                >
+                  {isResetting 
+                    ? (language === 'he' ? 'מאפס...' : 'Resetting...') 
+                    : (language === 'he' ? 'כן, אפס הכל' : 'Yes, Reset Everything')}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </CardContent>
       </Card>
     </div>

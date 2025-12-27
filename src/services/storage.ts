@@ -297,6 +297,8 @@ const KEYS = {
   ISSUE_REPORTS: 'printflow_issue_reports',
   FACTORY_SETTINGS: 'printflow_factory_settings',
   ONBOARDING_COMPLETE: 'printflow_onboarding_complete',
+  BOOTSTRAPPED: 'printflow_bootstrapped',
+  DEMO_MODE: 'printflow_demo_mode',
 };
 
 // ============= HELPERS =============
@@ -544,9 +546,9 @@ const getInitialPlannedCycles = (): PlannedCycle[] => {
 
 export const getProducts = (): Product[] => {
   const products = getItem<Product[]>(KEYS.PRODUCTS, []);
+  // Don't auto-populate with demo data - respect bootstrap choice
   if (products.length === 0) {
-    setItem(KEYS.PRODUCTS, initialProducts);
-    return initialProducts;
+    return [];
   }
   // Migrate old products without platePresets
   const migratedProducts = products.map(p => {
@@ -642,10 +644,7 @@ export const deleteProjects = (ids: string[]): number => {
 
 export const getProjects = (): Project[] => {
   const projects = getItem<Project[]>(KEYS.PROJECTS, []);
-  if (projects.length === 0) {
-    setItem(KEYS.PROJECTS, initialProjects);
-    return initialProjects;
-  }
+  // Don't auto-populate with demo data - respect bootstrap choice
   return projects;
 };
 
@@ -704,10 +703,9 @@ export const deleteProject = (id: string): boolean => {
 
 export const getPrinters = (): Printer[] => {
   const printers = getItem<Printer[]>(KEYS.PRINTERS, []);
+  // Don't auto-populate - printers created during onboarding
   if (printers.length === 0) {
-    const initial = getInitialPrinters();
-    setItem(KEYS.PRINTERS, initial);
-    return initial;
+    return [];
   }
   // Migrate old printers without new fields
   const migratedPrinters = printers.map((p, idx) => ({
@@ -765,11 +763,7 @@ export const getNextPrinterNumber = (): number => {
 
 export const getPlannedCycles = (): PlannedCycle[] => {
   const cycles = getItem<PlannedCycle[]>(KEYS.PLANNED_CYCLES, []);
-  if (cycles.length === 0) {
-    const initial = getInitialPlannedCycles();
-    setItem(KEYS.PLANNED_CYCLES, initial);
-    return initial;
-  }
+  // Don't auto-populate - respect bootstrap choice
   return cycles;
 };
 
@@ -1093,6 +1087,70 @@ export const completeOnboarding = (): void => {
 
 export const resetOnboarding = (): void => {
   setItem(KEYS.ONBOARDING_COMPLETE, false);
+};
+
+// ============= BOOTSTRAP & RESET =============
+
+/**
+ * Check if the app has been bootstrapped (first run completed)
+ */
+export const isBootstrapped = (): boolean => {
+  return getItem<boolean>(KEYS.BOOTSTRAPPED, false);
+};
+
+/**
+ * Check if currently in demo mode
+ */
+export const isDemoMode = (): boolean => {
+  return getItem<boolean>(KEYS.DEMO_MODE, false);
+};
+
+/**
+ * Complete bootstrap with fresh start (no demo data)
+ */
+export const bootstrapFresh = (): void => {
+  setItem(KEYS.BOOTSTRAPPED, true);
+  setItem(KEYS.DEMO_MODE, false);
+  // Initialize with empty arrays
+  setItem(KEYS.PRODUCTS, []);
+  setItem(KEYS.PROJECTS, []);
+  setItem(KEYS.PRINTERS, []);
+  setItem(KEYS.SPOOLS, []);
+  setItem(KEYS.PLANNED_CYCLES, []);
+  setItem(KEYS.CYCLE_LOGS, []);
+  setItem(KEYS.ISSUE_REPORTS, []);
+};
+
+/**
+ * Complete bootstrap with demo data loaded
+ */
+export const bootstrapWithDemo = (): void => {
+  setItem(KEYS.BOOTSTRAPPED, true);
+  setItem(KEYS.DEMO_MODE, true);
+  // Load demo data
+  setItem(KEYS.PRODUCTS, initialProducts);
+  setItem(KEYS.PROJECTS, initialProjects);
+  setItem(KEYS.PLANNED_CYCLES, getInitialPlannedCycles());
+  // Printers will be created during onboarding based on count
+  setItem(KEYS.PRINTERS, []);
+  setItem(KEYS.SPOOLS, []);
+  setItem(KEYS.CYCLE_LOGS, []);
+  setItem(KEYS.ISSUE_REPORTS, []);
+};
+
+/**
+ * Reset all PrintFlow data and return to first-run state
+ */
+export const resetAllPrintFlowData = (): void => {
+  // Remove all keys that start with 'printflow_'
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('printflow_')) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach(key => localStorage.removeItem(key));
 };
 
 // ============= SPOOLS / INVENTORY =============
