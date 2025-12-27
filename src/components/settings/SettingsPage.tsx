@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,10 +23,21 @@ import {
   Save,
   Trash2,
   AlertTriangle,
-  RotateCcw
+  RotateCcw,
+  Zap,
+  Scale
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { getPriorityRules, savePriorityRules, PriorityRules, resetAllPrintFlowData, isDemoMode } from '@/services/storage';
+import { 
+  getPriorityRules, 
+  savePriorityRules, 
+  PriorityRules, 
+  resetAllPrintFlowData, 
+  isDemoMode,
+  getFactorySettings,
+  saveFactorySettings,
+  SchedulingStrategy
+} from '@/services/storage';
 import { WorkScheduleSection } from './WorkScheduleSection';
 
 export const SettingsPage: React.FC = () => {
@@ -33,6 +46,7 @@ export const SettingsPage: React.FC = () => {
     urgentDaysThreshold: 14,
     criticalDaysThreshold: 7,
   });
+  const [schedulingStrategy, setSchedulingStrategy] = useState<SchedulingStrategy>('compress');
   const [hasChanges, setHasChanges] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const demoMode = isDemoMode();
@@ -40,6 +54,11 @@ export const SettingsPage: React.FC = () => {
   useEffect(() => {
     const currentRules = getPriorityRules();
     setRules(currentRules);
+    
+    const settings = getFactorySettings();
+    if (settings?.schedulingStrategy) {
+      setSchedulingStrategy(settings.schedulingStrategy);
+    }
   }, []);
 
   const handleSave = () => {
@@ -56,12 +75,22 @@ export const SettingsPage: React.FC = () => {
     }
     
     savePriorityRules(rules);
+    
+    // Save scheduling strategy
+    const settings = getFactorySettings();
+    if (settings) {
+      saveFactorySettings({
+        ...settings,
+        schedulingStrategy,
+      });
+    }
+    
     setHasChanges(false);
     toast({
       title: language === 'he' ? 'נשמר בהצלחה' : 'Saved successfully',
       description: language === 'he' 
-        ? 'כללי העדיפות עודכנו'
-        : 'Priority rules have been updated',
+        ? 'ההגדרות עודכנו'
+        : 'Settings have been updated',
     });
   };
 
@@ -105,7 +134,65 @@ export const SettingsPage: React.FC = () => {
       {/* Work Schedule Section - First */}
       <WorkScheduleSection />
 
-      {/* Priority Rules Card - Second */}
+      {/* Scheduling Strategy Card */}
+      <Card variant="elevated">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Zap className="w-5 h-5 text-primary" />
+            {language === 'he' ? 'אסטרטגיית תזמון' : 'Scheduling Strategy'}
+          </CardTitle>
+          <CardDescription>
+            {language === 'he' 
+              ? 'בחר כיצד המערכת מתזמנת מחזורי הדפסה'
+              : 'Choose how the system schedules print cycles'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <RadioGroup
+            value={schedulingStrategy}
+            onValueChange={(value: SchedulingStrategy) => {
+              setSchedulingStrategy(value);
+              setHasChanges(true);
+            }}
+            className="space-y-3"
+          >
+            <div className="flex items-start space-x-3 rtl:space-x-reverse p-4 rounded-lg border border-border bg-muted/30 hover:bg-muted/50 transition-colors">
+              <RadioGroupItem value="compress" id="compress" className="mt-1" />
+              <Label htmlFor="compress" className="flex-1 cursor-pointer">
+                <div className="flex items-center gap-2 mb-1">
+                  <Zap className="w-4 h-4 text-success" />
+                  <span className="font-medium">
+                    {language === 'he' ? 'סיום מהיר (מומלץ)' : 'Finish ASAP (recommended)'}
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {language === 'he' 
+                    ? 'ממלא כל מדפסת למקסימום ומסיים עבודה מוקדם ככל האפשר'
+                    : 'Fills each printer to capacity and completes work as early as possible'}
+                </p>
+              </Label>
+            </div>
+            
+            <div className="flex items-start space-x-3 rtl:space-x-reverse p-4 rounded-lg border border-border bg-muted/30 hover:bg-muted/50 transition-colors">
+              <RadioGroupItem value="balance" id="balance" className="mt-1" />
+              <Label htmlFor="balance" className="flex-1 cursor-pointer">
+                <div className="flex items-center gap-2 mb-1">
+                  <Scale className="w-4 h-4 text-primary" />
+                  <span className="font-medium">
+                    {language === 'he' ? 'איזון עומסים' : 'Balance Load'}
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {language === 'he' 
+                    ? 'מפזר עבודה באופן שווה על פני ימים ומדפסות'
+                    : 'Spreads work evenly across days and printers'}
+                </p>
+              </Label>
+            </div>
+          </RadioGroup>
+        </CardContent>
+      </Card>
+
       <Card variant="elevated">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
