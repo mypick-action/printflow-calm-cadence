@@ -44,6 +44,7 @@ import { RecalculateModal } from './RecalculateModal';
 import { CapacityChangeBanner } from './CapacityChangeBanner';
 import { DailyPlanDrawer } from './DailyPlanDrawer';
 import { TemporaryOverrideModal } from './TemporaryOverrideModal';
+import { LoadRecommendationsPanel } from './LoadRecommendationsPanel';
 import { toast } from '@/hooks/use-toast';
 
 interface DayOverride {
@@ -259,6 +260,9 @@ export const PlanningPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Load Recommendations Panel - Per PRD: Always show execution guidance */}
+      <LoadRecommendationsPanel onRefresh={refreshData} />
+
       {/* Capacity Change Banner */}
       {planningMeta.capacityChangedSinceLastRecalculation && !bannerDismissed && (
         <CapacityChangeBanner
