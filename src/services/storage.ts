@@ -752,6 +752,143 @@ export const getCycleLogs = (): CycleLog[] => {
   return getItem<CycleLog[]>(KEYS.CYCLE_LOGS, []);
 };
 
+// ============= MATERIAL CONSUMPTION (FIFO) =============
+
+export interface MaterialConsumptionResult {
+  success: boolean;
+  gramsConsumed: number;
+  spoolsAffected: string[];
+  error?: string;
+  errorHe?: string;
+}
+
+/**
+ * Consume material from spools using FIFO logic.
+ * Consumes from oldest open spool first, then moves to next.
+ * @param color - The color to consume
+ * @param gramsNeeded - Total grams to consume
+ * @param printerId - Optional: prefer spools assigned to this printer
+ * @returns Result with success status and affected spools
+ */
+export const consumeMaterial = (
+  color: string,
+  gramsNeeded: number,
+  printerId?: string
+): MaterialConsumptionResult => {
+  if (gramsNeeded <= 0) {
+    return { success: true, gramsConsumed: 0, spoolsAffected: [] };
+  }
+
+  const spools = getSpools();
+  const colorLower = color.toLowerCase();
+  
+  // Find matching spools (same color, not empty)
+  // Sort by: assigned to printer first, then open before new, then by remaining grams (FIFO approximation)
+  const matchingSpools = spools
+    .filter(s => 
+      s.color.toLowerCase() === colorLower && 
+      s.state !== 'empty' &&
+      s.gramsRemainingEst > 0
+    )
+    .sort((a, b) => {
+      // Priority 1: Assigned to the same printer
+      if (printerId) {
+        const aAssigned = a.assignedPrinterId === printerId ? 0 : 1;
+        const bAssigned = b.assignedPrinterId === printerId ? 0 : 1;
+        if (aAssigned !== bAssigned) return aAssigned - bAssigned;
+      }
+      // Priority 2: Open spools before new (use open ones first)
+      const stateOrder = { 'open': 0, 'new': 1, 'empty': 2 };
+      if (stateOrder[a.state] !== stateOrder[b.state]) {
+        return stateOrder[a.state] - stateOrder[b.state];
+      }
+      // Priority 3: Less remaining grams first (finish smaller spools)
+      return a.gramsRemainingEst - b.gramsRemainingEst;
+    });
+
+  // Calculate total available
+  const totalAvailable = matchingSpools.reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+  
+  if (totalAvailable < gramsNeeded) {
+    return {
+      success: false,
+      gramsConsumed: 0,
+      spoolsAffected: [],
+      error: `Insufficient ${color} filament: need ${gramsNeeded}g, have ${totalAvailable}g`,
+      errorHe: `אין מספיק פילמנט ${color}: נדרשים ${gramsNeeded}g, זמינים ${totalAvailable}g`,
+    };
+  }
+
+  // Consume using FIFO
+  let remaining = gramsNeeded;
+  const affectedSpoolIds: string[] = [];
+  const updatedSpools = [...spools];
+
+  for (const spool of matchingSpools) {
+    if (remaining <= 0) break;
+
+    const spoolIndex = updatedSpools.findIndex(s => s.id === spool.id);
+    if (spoolIndex === -1) continue;
+
+    const consumeFromThis = Math.min(spool.gramsRemainingEst, remaining);
+    const newRemaining = spool.gramsRemainingEst - consumeFromThis;
+
+    updatedSpools[spoolIndex] = {
+      ...updatedSpools[spoolIndex],
+      gramsRemainingEst: Math.max(0, newRemaining),
+      state: newRemaining <= 0 ? 'empty' : 'open',
+      needsAudit: newRemaining < 100, // Flag for audit if low
+    };
+
+    remaining -= consumeFromThis;
+    affectedSpoolIds.push(spool.id);
+  }
+
+  // Persist updated spools
+  setItem(KEYS.SPOOLS, updatedSpools);
+
+  return {
+    success: true,
+    gramsConsumed: gramsNeeded - remaining,
+    spoolsAffected: affectedSpoolIds,
+  };
+};
+
+/**
+ * Check if there's enough material without consuming it.
+ */
+export const checkMaterialAvailability = (
+  color: string,
+  gramsNeeded: number
+): { available: boolean; totalGrams: number; shortfall: number } => {
+  const spools = getSpools();
+  const colorLower = color.toLowerCase();
+  
+  const totalGrams = spools
+    .filter(s => 
+      s.color.toLowerCase() === colorLower && 
+      s.state !== 'empty' &&
+      s.gramsRemainingEst > 0
+    )
+    .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+
+  return {
+    available: totalGrams >= gramsNeeded,
+    totalGrams,
+    shortfall: Math.max(0, gramsNeeded - totalGrams),
+  };
+};
+
+// ============= LOG CYCLE WITH MATERIAL CONSUMPTION =============
+
+export interface LogCycleResult {
+  success: boolean;
+  log?: CycleLog;
+  materialResult?: MaterialConsumptionResult;
+  error?: string;
+  errorHe?: string;
+}
+
 export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): CycleLog => {
   const newLog: CycleLog = {
     ...log,
@@ -779,6 +916,61 @@ export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): CycleLog => {
   }
   
   return newLog;
+};
+
+/**
+ * Log a cycle with automatic material consumption.
+ * This is the preferred method for production use.
+ */
+export const logCycleWithMaterialConsumption = (
+  log: Omit<CycleLog, 'id' | 'timestamp'>,
+  color: string,
+  gramsPerUnit: number,
+  printerId?: string
+): LogCycleResult => {
+  // Calculate total material consumed
+  // For completed/completed_with_scrap: good units + scrap units
+  // For failed: use the gramsWasted field (manually entered)
+  let gramsToConsume: number;
+  
+  if (log.result === 'failed') {
+    // For failed cycles, use the manually entered gramsWasted
+    gramsToConsume = log.gramsWasted;
+  } else {
+    // For completed cycles, calculate from units
+    const totalUnits = log.unitsCompleted + log.unitsScrap;
+    gramsToConsume = totalUnits * gramsPerUnit;
+  }
+
+  // Check availability first
+  const availability = checkMaterialAvailability(color, gramsToConsume);
+  if (!availability.available) {
+    return {
+      success: false,
+      error: `Insufficient ${color} filament: need ${gramsToConsume}g, have ${availability.totalGrams}g`,
+      errorHe: `אין מספיק פילמנט ${color}: נדרשים ${gramsToConsume}g, זמינים ${availability.totalGrams}g`,
+    };
+  }
+
+  // Consume material
+  const materialResult = consumeMaterial(color, gramsToConsume, printerId);
+  if (!materialResult.success) {
+    return {
+      success: false,
+      materialResult,
+      error: materialResult.error,
+      errorHe: materialResult.errorHe,
+    };
+  }
+
+  // Log the cycle
+  const cycleLog = logCycle(log);
+
+  return {
+    success: true,
+    log: cycleLog,
+    materialResult,
+  };
 };
 
 // ============= ISSUE REPORTS =============
