@@ -54,7 +54,18 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
     return unsubscribe;
   }, [refreshRecommendations]);
 
-  if (!result) return null;
+  // Early return states - but we still need to render the dialog
+  const renderDialog = () => (
+    <LoadSpoolDialog
+      open={dialogOpen}
+      onOpenChange={setDialogOpen}
+      printerId={selectedPrinterId}
+      suggestedColor={selectedColor}
+      onSuccess={refreshRecommendations}
+    />
+  );
+
+  if (!result) return <>{renderDialog()}</>;
 
   const { recommendations, materialShortages, summary } = result;
   const actionSummary = getActionSummary(result);
@@ -62,20 +73,23 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
   // If all cycles are ready, show a minimal success state
   if (!actionSummary.hasActions && summary.totalCycles > 0) {
     return (
-      <Alert className="border-success/30 bg-success/5">
-        <CheckCircle className="h-4 w-4 text-success" />
-        <AlertTitle className="text-success">
-          {language === 'he' ? 'מוכן לביצוע' : 'Ready to Execute'}
-        </AlertTitle>
-        <AlertDescription>
-          {language === 'he' ? actionSummary.message : actionSummary.messageEn}
-        </AlertDescription>
-      </Alert>
+      <>
+        <Alert className="border-success/30 bg-success/5">
+          <CheckCircle className="h-4 w-4 text-success" />
+          <AlertTitle className="text-success">
+            {language === 'he' ? 'מוכן לביצוע' : 'Ready to Execute'}
+          </AlertTitle>
+          <AlertDescription>
+            {language === 'he' ? actionSummary.message : actionSummary.messageEn}
+          </AlertDescription>
+        </Alert>
+        {renderDialog()}
+      </>
     );
   }
 
   if (summary.totalCycles === 0) {
-    return null; // No cycles, no panel
+    return <>{renderDialog()}</>;
   }
 
   return (
@@ -185,15 +199,7 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
           </div>
         </CardContent>
       )}
-      
-      {/* Load Spool Dialog */}
-      <LoadSpoolDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        printerId={selectedPrinterId}
-        suggestedColor={selectedColor}
-        onSuccess={refreshRecommendations}
-      />
+      {renderDialog()}
     </Card>
   );
 };
