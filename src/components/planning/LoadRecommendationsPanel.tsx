@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -19,19 +20,24 @@ import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { generateLoadRecommendations, LoadRecommendationsResult, getActionSummary } from '@/services/loadRecommendations';
 import { getSpools, getPrinters, LoadRecommendation, MaterialShortage, Printer } from '@/services/storage';
 import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
+import { LoadSpoolDialog } from '@/components/printers/LoadSpoolDialog';
 
 interface LoadRecommendationsPanelProps {
   onRefresh?: () => void;
-  onLoadSpoolRequest?: (printer: Printer, color: string, suggestedSpoolIds: string[]) => void;
 }
 
 export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> = ({ 
   onRefresh,
-  onLoadSpoolRequest,
 }) => {
   const { language } = useLanguage();
   const [result, setResult] = useState<LoadRecommendationsResult | null>(null);
   const [expanded, setExpanded] = useState(true);
+  
+  // Dialog state - managed here and rendered via portal
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedPrinter, setSelectedPrinter] = useState<Printer | null>(null);
+  const [selectedColor, setSelectedColor] = useState<string>('');
+  const [suggestedSpoolIds, setSuggestedSpoolIds] = useState<string[]>([]);
 
   const refreshRecommendations = useCallback(() => {
     const recommendations = generateLoadRecommendations();
@@ -43,9 +49,17 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
   const handleRecommendationClick = (recommendation: LoadRecommendation) => {
     const printers = getPrinters();
     const printer = printers.find(p => p.id === recommendation.printerId);
-    if (printer && onLoadSpoolRequest) {
-      onLoadSpoolRequest(printer, recommendation.color, recommendation.suggestedSpoolIds);
+    if (printer) {
+      setSelectedPrinter(printer);
+      setSelectedColor(recommendation.color);
+      setSuggestedSpoolIds(recommendation.suggestedSpoolIds);
+      setDialogOpen(true);
     }
+  };
+
+  const handleDialogComplete = () => {
+    setDialogOpen(false);
+    refreshRecommendations();
   };
 
   // Refresh on mount
@@ -85,110 +99,126 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
     return null; // No cycles, no panel
   }
 
+  // Render dialog via portal to document.body
+  const dialogPortal = dialogOpen && selectedPrinter ? ReactDOM.createPortal(
+    <LoadSpoolDialog
+      open={dialogOpen}
+      onOpenChange={setDialogOpen}
+      printer={selectedPrinter}
+      preSelectedColor={selectedColor}
+      suggestedSpoolIds={suggestedSpoolIds}
+      onComplete={handleDialogComplete}
+    />,
+    document.body
+  ) : null;
+
   return (
-    <Card variant="elevated" className="border-warning/30">
-      <CardHeader className="p-4 pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Package className="w-5 h-5 text-warning" />
-            <CardTitle className="text-base">
-              {language === 'he' ? 'פעולות נדרשות' : 'Required Actions'}
-            </CardTitle>
+    <>
+      {dialogPortal}
+      <Card variant="elevated" className="border-warning/30">
+        <CardHeader className="p-4 pb-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Package className="w-5 h-5 text-warning" />
+              <CardTitle className="text-base">
+                {language === 'he' ? 'פעולות נדרשות' : 'Required Actions'}
+              </CardTitle>
+            </div>
+            <div className="flex items-center gap-2">
+              {/* Summary badges */}
+              <div className="flex items-center gap-1">
+                {summary.cyclesReady > 0 && (
+                  <Badge variant="outline" className="bg-success/10 text-success border-success/30 text-xs">
+                    <CheckCircle className="w-3 h-3 mr-1" />
+                    {summary.cyclesReady}
+                  </Badge>
+                )}
+                {summary.cyclesWaitingForSpool > 0 && (
+                  <Badge variant="outline" className="bg-warning/10 text-warning border-warning/30 text-xs">
+                    <Clock className="w-3 h-3 mr-1" />
+                    {summary.cyclesWaitingForSpool}
+                  </Badge>
+                )}
+                {summary.cyclesBlockedInventory > 0 && (
+                  <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/30 text-xs">
+                    <XCircle className="w-3 h-3 mr-1" />
+                    {summary.cyclesBlockedInventory}
+                  </Badge>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setExpanded(!expanded)}
+              >
+                {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Summary badges */}
-            <div className="flex items-center gap-1">
-              {summary.cyclesReady > 0 && (
-                <Badge variant="outline" className="bg-success/10 text-success border-success/30 text-xs">
-                  <CheckCircle className="w-3 h-3 mr-1" />
-                  {summary.cyclesReady}
-                </Badge>
-              )}
-              {summary.cyclesWaitingForSpool > 0 && (
-                <Badge variant="outline" className="bg-warning/10 text-warning border-warning/30 text-xs">
-                  <Clock className="w-3 h-3 mr-1" />
-                  {summary.cyclesWaitingForSpool}
-                </Badge>
-              )}
-              {summary.cyclesBlockedInventory > 0 && (
-                <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/30 text-xs">
-                  <XCircle className="w-3 h-3 mr-1" />
-                  {summary.cyclesBlockedInventory}
-                </Badge>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setExpanded(!expanded)}
-            >
-              {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
+        </CardHeader>
 
-      {expanded && (
-        <CardContent className="p-4 pt-2 space-y-4">
-          {/* Material Shortages - Critical alerts first */}
-          {materialShortages.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium text-destructive flex items-center gap-1">
-                <AlertTriangle className="w-4 h-4" />
-                {language === 'he' ? 'חסר חומר גלם' : 'Material Shortage'}
-              </h4>
-              {materialShortages.map((shortage, idx) => (
-                <ShortageAlert key={idx} shortage={shortage} language={language} />
-              ))}
-            </div>
-          )}
+        {expanded && (
+          <CardContent className="p-4 pt-2 space-y-4">
+            {/* Material Shortages - Critical alerts first */}
+            {materialShortages.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium text-destructive flex items-center gap-1">
+                  <AlertTriangle className="w-4 h-4" />
+                  {language === 'he' ? 'חסר חומר גלם' : 'Material Shortage'}
+                </h4>
+                {materialShortages.map((shortage, idx) => (
+                  <ShortageAlert key={idx} shortage={shortage} language={language} />
+                ))}
+              </div>
+            )}
 
-          {/* Load Recommendations */}
-          {recommendations.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium text-warning flex items-center gap-1">
-                <Package className="w-4 h-4" />
-                {language === 'he' ? 'הנחיות טעינה' : 'Load Instructions'}
-              </h4>
-              {recommendations.map((rec) => (
-                <RecommendationCard 
-                  key={rec.id} 
-                  recommendation={rec} 
-                  language={language}
-                  onClick={() => handleRecommendationClick(rec)}
-                />
-              ))}
-            </div>
-          )}
+            {/* Load Recommendations */}
+            {recommendations.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium text-warning flex items-center gap-1">
+                  <Package className="w-4 h-4" />
+                  {language === 'he' ? 'הנחיות טעינה' : 'Load Instructions'}
+                </h4>
+                {recommendations.map((rec) => (
+                  <RecommendationCard 
+                    key={rec.id} 
+                    recommendation={rec} 
+                    language={language}
+                    onClick={() => handleRecommendationClick(rec)}
+                  />
+                ))}
+              </div>
+            )}
 
-          {/* Summary Stats */}
-          <div className="flex items-center justify-between pt-2 border-t text-sm text-muted-foreground">
-            <span>
-              {language === 'he' 
-                ? `${summary.totalCycles} מחזורים מתוכננים`
-                : `${summary.totalCycles} cycles planned`}
-            </span>
-            <div className="flex items-center gap-3">
-              <span className="flex items-center gap-1">
-                <CheckCircle className="w-3 h-3 text-success" />
-                {summary.cyclesReady} {language === 'he' ? 'מוכנים' : 'ready'}
+            {/* Summary Stats */}
+            <div className="flex items-center justify-between pt-2 border-t text-sm text-muted-foreground">
+              <span>
+                {language === 'he' 
+                  ? `${summary.totalCycles} מחזורים מתוכננים`
+                  : `${summary.totalCycles} cycles planned`}
               </span>
-              <span className="flex items-center gap-1">
-                <Clock className="w-3 h-3 text-warning" />
-                {summary.cyclesWaitingForSpool} {language === 'he' ? 'ממתינים' : 'waiting'}
-              </span>
-              {summary.cyclesBlockedInventory > 0 && (
+              <div className="flex items-center gap-3">
                 <span className="flex items-center gap-1">
-                  <XCircle className="w-3 h-3 text-destructive" />
-                  {summary.cyclesBlockedInventory} {language === 'he' ? 'חסומים' : 'blocked'}
+                  <CheckCircle className="w-3 h-3 text-success" />
+                  {summary.cyclesReady} {language === 'he' ? 'מוכנים' : 'ready'}
                 </span>
-              )}
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-warning" />
+                  {summary.cyclesWaitingForSpool} {language === 'he' ? 'ממתינים' : 'waiting'}
+                </span>
+                {summary.cyclesBlockedInventory > 0 && (
+                  <span className="flex items-center gap-1">
+                    <XCircle className="w-3 h-3 text-destructive" />
+                    {summary.cyclesBlockedInventory} {language === 'he' ? 'חסומים' : 'blocked'}
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-        </CardContent>
-      )}
-    </Card>
+          </CardContent>
+        )}
+      </Card>
+    </>
   );
 };
 
