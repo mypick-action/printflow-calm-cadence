@@ -11,6 +11,7 @@ import {
   KEYS,
 } from './storage';
 import { generatePlan } from './planningEngine';
+import { addPlanningLogEntry } from './planningLogger';
 
 // Re-export the KEYS constant for internal use
 const setItem = <T>(key: string, value: T): void => {
@@ -21,19 +22,34 @@ export type RecalculateScope = 'from_now' | 'from_tomorrow' | 'whole_week';
 
 export const recalculatePlan = (
   scope: RecalculateScope,
-  lockStarted: boolean = true
+  lockStarted: boolean = true,
+  reason: string = 'manual_replan'
 ): { success: boolean; cyclesModified: number; summary: string; summaryHe: string } => {
+  const startTime = Date.now();
   const cycles = getPlannedCycles();
   const settings = getFactorySettings();
   const printers = getActivePrinters();
   
   if (!settings || printers.length === 0) {
-    return { 
+    const result = { 
       success: false, 
       cyclesModified: 0, 
       summary: 'No settings or printers available',
       summaryHe: 'חסרות הגדרות או מדפסות'
     };
+    
+    // Log this attempt
+    addPlanningLogEntry({
+      reason: reason as any,
+      success: false,
+      cyclesCreated: 0,
+      unitsPlanned: 0,
+      warnings: [],
+      errors: [result.summary],
+      durationMs: Date.now() - startTime,
+    });
+    
+    return result;
   }
 
   const now = new Date();
@@ -115,6 +131,17 @@ export const recalculatePlan = (
     summaryHe = `התכנון נכשל: ${planResult.blockingIssues.map(i => i.message).join(', ')}`;
   }
 
+  // Log the result
+  addPlanningLogEntry({
+    reason: reason as any,
+    success: planResult.success,
+    cyclesCreated: cyclesModified,
+    unitsPlanned: planResult.totalUnitsPlanned,
+    warnings: planResult.warnings.map(w => w.messageEn),
+    errors: planResult.blockingIssues.map(i => i.messageEn),
+    durationMs: Date.now() - startTime,
+  });
+
   return {
     success: planResult.success,
     cyclesModified,
@@ -132,5 +159,5 @@ export const triggerPlanningRecalculation = (reason: string): void => {
     capacityChangedSinceLastRecalculation: true,
     lastCapacityChangeReason: reason,
   });
-  recalculatePlan('from_now', true);
+  recalculatePlan('from_now', true, reason);
 };

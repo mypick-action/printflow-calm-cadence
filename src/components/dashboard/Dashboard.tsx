@@ -36,6 +36,7 @@ import { RecalculateModal } from '@/components/planning/RecalculateModal';
 import { CapacityChangeBanner } from '@/components/planning/CapacityChangeBanner';
 import { LoadedSpoolsModal } from '@/components/planning/LoadedSpoolsModal';
 import { SetupRecommendationPanel } from './SetupRecommendationPanel';
+import { PlanningDebugPanel } from './PlanningDebugPanel';
 import { format } from 'date-fns';
 
 interface DashboardProps {
@@ -437,6 +438,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
         {language === 'he' ? 'חושב לאחרונה:' : 'Last calculated:'}{' '}
         {format(new Date(todayPlan.lastCalculatedAt), 'HH:mm:ss')}
       </div>
+
+      {/* Debug Panel */}
+      <PlanningDebugPanel />
     </div>
   );
 };
