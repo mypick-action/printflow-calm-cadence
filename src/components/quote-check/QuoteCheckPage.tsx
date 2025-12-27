@@ -68,7 +68,7 @@ export const QuoteCheckPage: React.FC = () => {
   const [quantity, setQuantity] = useState(100);
   const [dueDate, setDueDate] = useState('');
   const [urgency, setUrgency] = useState<'normal' | 'urgent' | 'critical'>('normal');
-  const [preferredColor, setPreferredColor] = useState('');
+  const [preferredColor, setPreferredColor] = useState('any');
   const [result, setResult] = useState<QuoteCheckResult | null>(null);
 
   const handleCheck = () => {
@@ -82,7 +82,7 @@ export const QuoteCheckPage: React.FC = () => {
     setQuantity(100);
     setDueDate('');
     setUrgency('normal');
-    setPreferredColor('');
+    setPreferredColor('any');
     setResult(null);
   };
 
@@ -129,7 +129,7 @@ export const QuoteCheckPage: React.FC = () => {
   };
 
   // Check if preferred color is in stock
-  const colorInStock = preferredColor 
+  const colorInStock = preferredColor && preferredColor !== 'any'
     ? spools.some(s => s.color.toLowerCase() === preferredColor.toLowerCase() && s.gramsRemainingEst > 100)
     : true;
 
@@ -242,17 +242,17 @@ export const QuoteCheckPage: React.FC = () => {
                 <SelectValue placeholder={language === 'he' ? 'בחרו צבע' : 'Select color'} />
               </SelectTrigger>
               <SelectContent className="bg-background border shadow-lg">
-                <SelectItem value="">
+                <SelectItem value="any">
                   {language === 'he' ? 'לא משנה' : 'Any color'}
                 </SelectItem>
-                {availableColors.map((color) => (
+                {availableColors.filter(c => c && c.trim()).map((color) => (
                   <SelectItem key={color} value={color}>
                     {color}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {preferredColor && !colorInStock && (
+            {preferredColor && preferredColor !== 'any' && !colorInStock && (
               <p className="text-xs text-warning flex items-center gap-1">
                 <AlertTriangle className="w-3 h-3" />
                 {language === 'he' ? 'הצבע הזה לא במלאי - ייתכן שתצטרכו להזמין' : 'This color may not be in stock - you might need to order'}
