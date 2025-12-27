@@ -4,7 +4,7 @@ import { OnboardingData } from './OnboardingWizard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Minus, Plus, Info } from 'lucide-react';
 import {
   Tooltip,
@@ -12,24 +12,27 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { WeeklySchedule, DaySchedule } from '@/services/storage';
 
 interface Step1Props {
   data: OnboardingData;
   updateData: (updates: Partial<OnboardingData>) => void;
 }
 
+const DAYS_ORDER: (keyof WeeklySchedule)[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
 export const Step1FactoryBasics: React.FC<Step1Props> = ({ data, updateData }) => {
   const { t, language } = useLanguage();
   
-  const days = [
-    { id: 'sunday', label: t('day.sunday') },
-    { id: 'monday', label: t('day.monday') },
-    { id: 'tuesday', label: t('day.tuesday') },
-    { id: 'wednesday', label: t('day.wednesday') },
-    { id: 'thursday', label: t('day.thursday') },
-    { id: 'friday', label: t('day.friday') },
-    { id: 'saturday', label: t('day.saturday') },
-  ];
+  const dayLabels: Record<keyof WeeklySchedule, { he: string; en: string }> = {
+    sunday: { he: 'ראשון', en: 'Sunday' },
+    monday: { he: 'שני', en: 'Monday' },
+    tuesday: { he: 'שלישי', en: 'Tuesday' },
+    wednesday: { he: 'רביעי', en: 'Wednesday' },
+    thursday: { he: 'חמישי', en: 'Thursday' },
+    friday: { he: 'שישי', en: 'Friday' },
+    saturday: { he: 'שבת', en: 'Saturday' },
+  };
   
   const handlePrinterCountChange = (delta: number) => {
     const newCount = Math.max(1, Math.min(20, data.printerCount + delta));
@@ -57,11 +60,12 @@ export const Step1FactoryBasics: React.FC<Step1Props> = ({ data, updateData }) =
     updateData({ printerNames: newNames });
   };
   
-  const handleDayToggle = (dayId: string) => {
-    const newDays = data.workdays.includes(dayId)
-      ? data.workdays.filter(d => d !== dayId)
-      : [...data.workdays, dayId];
-    updateData({ workdays: newDays });
+  const handleDayScheduleChange = (day: keyof WeeklySchedule, updates: Partial<DaySchedule>) => {
+    const newSchedule = {
+      ...data.weeklySchedule,
+      [day]: { ...data.weeklySchedule[day], ...updates }
+    };
+    updateData({ weeklySchedule: newSchedule });
   };
   
   return (
@@ -114,7 +118,7 @@ export const Step1FactoryBasics: React.FC<Step1Props> = ({ data, updateData }) =
       {/* Printer names */}
       <div className="space-y-3">
         <Label className="text-base font-medium">{t('onboarding.step1.printerNames')}</Label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-48 overflow-y-auto pr-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-32 overflow-y-auto pr-2">
           {data.printerNames.map((name, index) => (
             <div key={index} className="flex items-center gap-3">
               <span className="text-sm text-muted-foreground whitespace-nowrap min-w-[70px]">
@@ -131,54 +135,60 @@ export const Step1FactoryBasics: React.FC<Step1Props> = ({ data, updateData }) =
         </div>
       </div>
       
-      {/* Workdays */}
+      {/* Weekly Schedule - Per Day */}
       <div className="space-y-3">
-        <Label className="text-base font-medium">{t('onboarding.step1.workdays')}</Label>
-        <div className="flex flex-wrap gap-2">
-          {days.map((day) => (
-            <label
-              key={day.id}
-              className={`
-                flex items-center gap-2 px-4 py-2.5 rounded-lg border cursor-pointer transition-all duration-200
-                ${data.workdays.includes(day.id)
-                  ? 'bg-primary-light border-primary text-primary'
-                  : 'bg-card border-border hover:border-primary/50'
-                }
-              `}
-            >
-              <Checkbox
-                checked={data.workdays.includes(day.id)}
-                onCheckedChange={() => handleDayToggle(day.id)}
-                className="sr-only"
-              />
-              <span className="text-sm font-medium">{day.label}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-      
-      {/* Work hours */}
-      <div className="space-y-3">
-        <Label className="text-base font-medium">{t('onboarding.step1.workHours')}</Label>
-        <div className="flex items-center gap-4 flex-wrap" dir="ltr">
-          <div className="flex items-center gap-2">
-            <Label className="text-sm text-muted-foreground">{t('onboarding.step1.startTime')}</Label>
-            <Input
-              type="time"
-              value={data.startTime}
-              onChange={(e) => updateData({ startTime: e.target.value })}
-              className="w-32"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Label className="text-sm text-muted-foreground">{t('onboarding.step1.endTime')}</Label>
-            <Input
-              type="time"
-              value={data.endTime}
-              onChange={(e) => updateData({ endTime: e.target.value })}
-              className="w-32"
-            />
-          </div>
+        <Label className="text-base font-medium">
+          {language === 'he' ? 'שעות עבודה לפי יום' : 'Work Hours by Day'}
+        </Label>
+        <p className="text-sm text-muted-foreground">
+          {language === 'he' 
+            ? 'הגדירו שעות עבודה לכל יום בנפרד'
+            : 'Set work hours for each day separately'}
+        </p>
+        <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+          {DAYS_ORDER.map((day) => {
+            const schedule = data.weeklySchedule[day];
+            return (
+              <div 
+                key={day}
+                className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${
+                  schedule.enabled 
+                    ? 'bg-card border-border' 
+                    : 'bg-muted/50 border-transparent'
+                }`}
+              >
+                <Switch
+                  checked={schedule.enabled}
+                  onCheckedChange={(enabled) => handleDayScheduleChange(day, { enabled })}
+                />
+                <span className={`min-w-[70px] font-medium ${!schedule.enabled && 'text-muted-foreground'}`}>
+                  {language === 'he' ? dayLabels[day].he : dayLabels[day].en}
+                </span>
+                {schedule.enabled && (
+                  <div className="flex items-center gap-2 flex-1" dir="ltr">
+                    <Input
+                      type="time"
+                      value={schedule.startTime}
+                      onChange={(e) => handleDayScheduleChange(day, { startTime: e.target.value })}
+                      className="w-28"
+                    />
+                    <span className="text-muted-foreground">-</span>
+                    <Input
+                      type="time"
+                      value={schedule.endTime}
+                      onChange={(e) => handleDayScheduleChange(day, { endTime: e.target.value })}
+                      className="w-28"
+                    />
+                  </div>
+                )}
+                {!schedule.enabled && (
+                  <span className="text-sm text-muted-foreground">
+                    {language === 'he' ? 'סגור' : 'Closed'}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

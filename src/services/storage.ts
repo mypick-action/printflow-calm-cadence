@@ -37,19 +37,41 @@ export interface Printer {
   active: boolean;
   currentColor?: string;
   currentMaterial?: string;
+  hasAMS: boolean;
+  amsSlots?: number; // 4 or 8 typically
+  amsMode?: 'backup_same_color' | 'multi_color';
+  maxSpoolWeight?: number; // max spool size printer supports (1000, 2000, 5000g)
 }
 
 export interface Spool {
   id: string;
   color: string;
   material: string;
+  packageSize: 1000 | 2000 | 5000; // 1kg, 2kg, 5kg
   gramsRemainingEst: number;
   state: 'new' | 'open' | 'empty';
-  location: 'stock' | 'printer' | 'shelf';
+  location: 'stock' | 'printer' | 'shelf' | 'ams';
   assignedPrinterId?: string;
+  amsSlotIndex?: number; // which AMS slot (0-based)
   lastAuditDate?: string;
   lastAuditGrams?: number;
   needsAudit: boolean;
+}
+
+export interface DaySchedule {
+  enabled: boolean;
+  startTime: string;
+  endTime: string;
+}
+
+export interface WeeklySchedule {
+  sunday: DaySchedule;
+  monday: DaySchedule;
+  tuesday: DaySchedule;
+  wednesday: DaySchedule;
+  thursday: DaySchedule;
+  friday: DaySchedule;
+  saturday: DaySchedule;
 }
 
 export interface PlannedCycle {
@@ -98,16 +120,151 @@ export interface PriorityRules {
 
 export interface FactorySettings {
   printerCount: number;
-  workdays: string[];
-  startTime: string;
-  endTime: string;
+  weeklySchedule: WeeklySchedule;
+  // Legacy fields for backward compatibility
+  workdays?: string[];
+  startTime?: string;
+  endTime?: string;
   afterHoursBehavior: 'NONE' | 'ONE_CYCLE_END_OF_DAY' | 'FULL_AUTOMATION';
   colors: string[];
   standardSpoolWeight: number;
   deliveryDays: number;
   transitionMinutes: number;
   priorityRules: PriorityRules;
+  hasAMS: boolean; // simple flag from onboarding
 }
+
+export interface TemporaryScheduleOverride {
+  id: string;
+  startDate: string;
+  endDate: string;
+  dayOverrides: Partial<WeeklySchedule>;
+}
+
+// Helper to get default weekly schedule
+export const getDefaultWeeklySchedule = (): WeeklySchedule => ({
+  sunday: { enabled: true, startTime: '08:30', endTime: '17:30' },
+  monday: { enabled: true, startTime: '08:30', endTime: '17:30' },
+  tuesday: { enabled: true, startTime: '08:30', endTime: '17:30' },
+  wednesday: { enabled: true, startTime: '08:30', endTime: '17:30' },
+  thursday: { enabled: true, startTime: '08:30', endTime: '17:30' },
+  friday: { enabled: true, startTime: '09:00', endTime: '14:00' },
+  saturday: { enabled: false, startTime: '09:00', endTime: '14:00' },
+});
+
+// Helper to get day schedule for a specific date, considering overrides
+export const getDayScheduleForDate = (
+  date: Date,
+  settings: FactorySettings | null,
+  overrides: TemporaryScheduleOverride[]
+): DaySchedule | null => {
+  if (!settings) return null;
+  
+  const dayNames: (keyof WeeklySchedule)[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dayName = dayNames[date.getDay()];
+  
+  // Check for temporary overrides first
+  for (const override of overrides) {
+    const start = new Date(override.startDate);
+    const end = new Date(override.endDate);
+    if (date >= start && date <= end && override.dayOverrides[dayName]) {
+      return override.dayOverrides[dayName]!;
+    }
+  }
+  
+  // Fall back to weekly schedule
+  return settings.weeklySchedule?.[dayName] || null;
+};
+
+// Helper to calculate available filament for a printer (considering AMS)
+export const getAvailableFilamentForPrinter = (
+  printerId: string,
+  color: string,
+  printer: Printer
+): { totalGrams: number; spools: Spool[]; recommendation?: string } => {
+  const spools = getSpools();
+  const matchingSpools = spools.filter(s => 
+    s.color.toLowerCase() === color.toLowerCase() &&
+    s.state !== 'empty' &&
+    (s.assignedPrinterId === printerId || s.location === 'stock')
+  );
+  
+  if (printer.hasAMS && printer.amsMode === 'backup_same_color') {
+    // AMS backup mode: sum all matching spools in AMS slots
+    const amsSpools = matchingSpools.filter(s => s.location === 'ams' && s.assignedPrinterId === printerId);
+    const totalGrams = amsSpools.reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+    return { totalGrams, spools: amsSpools };
+  }
+  
+  // Non-AMS: single spool only
+  const assignedSpool = matchingSpools.find(s => s.assignedPrinterId === printerId);
+  if (assignedSpool) {
+    return { totalGrams: assignedSpool.gramsRemainingEst, spools: [assignedSpool] };
+  }
+  
+  return { totalGrams: 0, spools: [] };
+};
+
+// Helper to check if cycle can proceed and get recommendations
+export interface CycleRecommendation {
+  canProceed: boolean;
+  warnings: string[];
+  recommendations: { icon: string; text: string; textEn: string }[];
+}
+
+export const checkCycleFilamentRequirements = (
+  gramsNeeded: number,
+  printerId: string,
+  color: string
+): CycleRecommendation => {
+  const printers = getPrinters();
+  const printer = printers.find(p => p.id === printerId);
+  if (!printer) {
+    return { canProceed: false, warnings: ['Printer not found'], recommendations: [] };
+  }
+  
+  const { totalGrams, spools } = getAvailableFilamentForPrinter(printerId, color, printer);
+  const recommendations: CycleRecommendation['recommendations'] = [];
+  const warnings: string[] = [];
+  
+  if (gramsNeeded > totalGrams) {
+    warnings.push(`Insufficient filament: need ${gramsNeeded}g, have ${totalGrams}g`);
+    
+    recommendations.push({
+      icon: '📦',
+      text: 'השתמש בגליל גדול (2 ק"ג / 5 ק"ג)',
+      textEn: 'Use a large spool (2kg / 5kg)'
+    });
+    
+    if (printer.hasAMS) {
+      recommendations.push({
+        icon: '🔄',
+        text: 'השתמש ב-AMS עם מספר גלילים באותו צבע',
+        textEn: 'Use AMS with multiple spools of the same color'
+      });
+    }
+    
+    recommendations.push({
+      icon: '📉',
+      text: 'הפחת יחידות למחזור',
+      textEn: 'Reduce units per cycle'
+    });
+    
+    return { canProceed: false, warnings, recommendations };
+  }
+  
+  // Check if single spool is sufficient or needs AMS
+  if (!printer.hasAMS && spools.length === 1 && spools[0].gramsRemainingEst < gramsNeeded) {
+    warnings.push('Single spool insufficient without AMS');
+    recommendations.push({
+      icon: '🔄',
+      text: 'שקול להוסיף AMS לגיבוי אוטומטי',
+      textEn: 'Consider adding AMS for automatic backup'
+    });
+  }
+  
+  return { canProceed: true, warnings, recommendations };
+};
 
 // ============= STORAGE KEYS =============
 
@@ -264,6 +421,7 @@ const getInitialPrinters = (): Printer[] => {
     name: `Printer ${i + 1}`,
     active: true,
     currentColor: i === 0 ? 'Black' : i === 1 ? 'White' : undefined,
+    hasAMS: false,
   }));
 };
 
@@ -532,6 +690,7 @@ export const saveFactorySettings = (settings: FactorySettings): void => {
       id: `printer-${i + 1}`,
       name: `Printer ${i + 1}`,
       active: true,
+      hasAMS: settings.hasAMS || false,
     };
   });
   setItem(KEYS.PRINTERS, newPrinters);

@@ -8,19 +8,19 @@ import { Step2AfterHours } from './Step2AfterHours';
 import { Step3Materials } from './Step3Materials';
 import { OnboardingSummary } from './OnboardingSummary';
 import { CheckCircle2 } from 'lucide-react';
+import { WeeklySchedule, getDefaultWeeklySchedule } from '@/services/storage';
 
 export type AfterHoursBehavior = 'NONE' | 'ONE_CYCLE_END_OF_DAY' | 'FULL_AUTOMATION';
 
 export interface OnboardingData {
   printerCount: number;
   printerNames: string[];
-  workdays: string[];
-  startTime: string;
-  endTime: string;
+  weeklySchedule: WeeklySchedule;
   afterHoursBehavior: AfterHoursBehavior;
   colors: string[];
   spoolWeight: number;
   deliveryDays: number;
+  hasAMS: boolean;
 }
 
 interface OnboardingWizardProps {
@@ -33,13 +33,12 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete }
   const [data, setData] = useState<OnboardingData>({
     printerCount: 1,
     printerNames: ['מדפסת 1'],
-    workdays: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday'],
-    startTime: '08:30',
-    endTime: '17:30',
+    weeklySchedule: getDefaultWeeklySchedule(),
     afterHoursBehavior: 'ONE_CYCLE_END_OF_DAY',
     colors: ['שחור', 'לבן', 'אפור', 'אדום', 'כחול', 'ירוק', 'צהוב', 'כתום', 'סגול', 'ורוד', 'חום', 'שקוף'],
     spoolWeight: 1000,
     deliveryDays: 3,
+    hasAMS: false,
   });
   
   const totalSteps = 3;

@@ -32,9 +32,7 @@ const PrintFlowApp: React.FC = () => {
     setOnboardingDone(true);
     saveFactorySettings({
       printerCount: data.printerCount,
-      workdays: data.workdays,
-      startTime: data.startTime,
-      endTime: data.endTime,
+      weeklySchedule: data.weeklySchedule,
       afterHoursBehavior: data.afterHoursBehavior,
       colors: data.colors,
       standardSpoolWeight: data.spoolWeight,
@@ -44,6 +42,7 @@ const PrintFlowApp: React.FC = () => {
         urgentDaysThreshold: 14,
         criticalDaysThreshold: 7,
       },
+      hasAMS: data.hasAMS,
     });
     completeOnboarding();
   };
