@@ -28,12 +28,18 @@ import {
 type CycleResult = 'completed' | 'completed_with_scrap' | 'failed';
 type WasteMethod = 'quick' | 'estimate' | 'manual';
 
+interface CycleWithProject extends PlannedCycle {
+  projectName: string;
+  color: string;
+}
+
 export const EndCycleLog: React.FC = () => {
   const { language } = useLanguage();
   const [printers, setPrinters] = useState<PrinterType[]>([]);
+  const [printerCycles, setPrinterCycles] = useState<Record<string, CycleWithProject | null>>({});
   const [step, setStep] = useState(1);
   const [selectedPrinter, setSelectedPrinter] = useState('');
-  const [activeCycle, setActiveCycle] = useState<PlannedCycle | null>(null);
+  const [activeCycle, setActiveCycle] = useState<CycleWithProject | null>(null);
   const [result, setResult] = useState<CycleResult | ''>('');
   const [scrapUnits, setScrapUnits] = useState(0);
   const [wasteMethod, setWasteMethod] = useState<WasteMethod>('quick');
@@ -41,13 +47,31 @@ export const EndCycleLog: React.FC = () => {
   const [quickPickGrams, setQuickPickGrams] = useState<number | null>(null);
 
   useEffect(() => {
-    setPrinters(getPrinters().filter(p => p.active));
+    const allPrinters = getPrinters().filter(p => p.active);
+    setPrinters(allPrinters);
+    
+    // Build printer cycles map with project info
+    const cyclesMap: Record<string, CycleWithProject | null> = {};
+    allPrinters.forEach(printer => {
+      const cycle = getActiveCycleForPrinter(printer.id);
+      if (cycle) {
+        const project = getProject(cycle.projectId);
+        cyclesMap[printer.id] = {
+          ...cycle,
+          projectName: project?.name || 'Unknown Project',
+          color: project?.color || '',
+        };
+      } else {
+        cyclesMap[printer.id] = null;
+      }
+    });
+    setPrinterCycles(cyclesMap);
   }, []);
 
   const handlePrinterSelect = (printerId: string) => {
     setSelectedPrinter(printerId);
-    const cycle = getActiveCycleForPrinter(printerId);
-    setActiveCycle(cycle || null);
+    const cycle = printerCycles[printerId];
+    setActiveCycle(cycle);
     if (cycle) {
       setStep(2);
     }
@@ -56,7 +80,6 @@ export const EndCycleLog: React.FC = () => {
   const handleResultSelect = (resultValue: CycleResult) => {
     setResult(resultValue);
     if (resultValue === 'completed') {
-      // Submit directly
       handleSubmit();
     } else {
       setStep(3);
@@ -64,21 +87,25 @@ export const EndCycleLog: React.FC = () => {
   };
 
   const handleSubmit = () => {
+    if (activeCycle) {
+      logCycle({
+        printerId: selectedPrinter,
+        projectId: activeCycle.projectId,
+        plannedCycleId: activeCycle.id,
+        result: result as CycleResult || 'completed',
+        unitsCompleted: result === 'failed' ? 0 : activeCycle.unitsPlanned - scrapUnits,
+        unitsScrap: scrapUnits,
+        gramsWasted: wastedGrams,
+      });
+    }
+    
     toast({
       title: language === 'he' ? 'דיווח נשלח בהצלחה' : 'Report submitted successfully',
       description: language === 'he' 
         ? `מחזור של ${activeCycle?.projectName} דווח`
         : `Cycle for ${activeCycle?.projectName} reported`,
     });
-    // Reset form
-    setStep(1);
-    setSelectedPrinter('');
-    setActiveCycle(null);
-    setResult('');
-    setScrapUnits(0);
-    setWasteMethod('quick');
-    setWastedGrams(0);
-    setQuickPickGrams(null);
+    handleReset();
   };
 
   const handleReset = () => {
@@ -161,8 +188,8 @@ export const EndCycleLog: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {mockPrinters.map((printer) => {
-              const cycle = mockPrinterCycles[printer.id];
+            {printers.map((printer) => {
+              const cycle = printerCycles[printer.id];
               return (
                 <button
                   key={printer.id}

@@ -35,7 +35,7 @@ const PrintFlowApp: React.FC = () => {
       endTime: data.endTime,
       afterHoursBehavior: data.afterHoursBehavior,
       colors: data.colors,
-      standardSpoolWeight: data.standardSpoolWeight,
+      standardSpoolWeight: data.spoolWeight,
       deliveryDays: data.deliveryDays,
       transitionMinutes: 10,
     });
