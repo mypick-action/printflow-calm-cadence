@@ -59,6 +59,7 @@ import {
   Spool,
   PlannedCycle,
 } from '@/services/storage';
+import { notifyInventoryChanged } from '@/services/inventoryEvents';
 
 export const PrintersPage: React.FC = () => {
   const { language } = useLanguage();
@@ -374,6 +375,9 @@ export const PrintersPage: React.FC = () => {
       });
     }
 
+    // Explicitly notify to ensure UI components refresh material alerts
+    notifyInventoryChanged();
+    
     refreshData();
     toast({
       title: language === 'he' ? 'גליל הוסר' : 'Spool unloaded',
