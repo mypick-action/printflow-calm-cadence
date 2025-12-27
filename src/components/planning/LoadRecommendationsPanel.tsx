@@ -223,14 +223,8 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    alert('CLICK: ' + recommendation.printerName);
-    console.log('[RecommendationCard] onClick fired', recommendation.printerId);
+    console.log('[RecommendationCard] Navigating to printers for:', recommendation.printerId);
     onClick?.();
-  };
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    alert('POINTER DOWN: ' + recommendation.printerName);
-    console.log('[RecommendationCard] onPointerDown fired', recommendation.printerId);
   };
 
   return (
@@ -244,7 +238,6 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
         "cursor-pointer hover:bg-accent/50 focus:outline-none focus:ring-2 focus:ring-primary"
       )}
       onClick={handleClick}
-      onPointerDown={handlePointerDown}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
