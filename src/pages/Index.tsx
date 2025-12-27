@@ -7,6 +7,7 @@ import { ProjectsPage } from '@/components/projects/ProjectsPage';
 import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
 import { QuoteCheckPage } from '@/components/quote-check/QuoteCheckPage';
 import { SettingsPage } from '@/components/settings/SettingsPage';
+import { PlanningPage } from '@/components/planning/PlanningPage';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -66,6 +67,8 @@ const PrintFlowApp: React.FC = () => {
         return <EndCycleLog />;
       case 'quoteCheck':
         return <QuoteCheckPage />;
+      case 'planning':
+        return <PlanningPage />;
       case 'settings':
         return <SettingsPage />;
       default:
