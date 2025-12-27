@@ -45,7 +45,9 @@ import { CapacityChangeBanner } from './CapacityChangeBanner';
 import { DailyPlanDrawer } from './DailyPlanDrawer';
 import { TemporaryOverrideModal } from './TemporaryOverrideModal';
 import { LoadRecommendationsPanel } from './LoadRecommendationsPanel';
+import { LoadSpoolDialog } from '@/components/printers/LoadSpoolDialog';
 import { toast } from '@/hooks/use-toast';
+import { Printer as PrinterTypeStorage } from '@/services/storage';
 
 interface DayOverride {
   enabled: boolean;
@@ -101,6 +103,23 @@ export const PlanningPage: React.FC = () => {
   const [overrideInfoOpen, setOverrideInfoOpen] = useState(false);
   // Track which day is being viewed in the bottom table
   const [viewedTableDate, setViewedTableDate] = useState<Date>(new Date());
+  
+  // Load Spool Dialog state (lifted from LoadRecommendationsPanel for proper z-index)
+  const [loadSpoolDialogOpen, setLoadSpoolDialogOpen] = useState(false);
+  const [selectedPrinterForLoad, setSelectedPrinterForLoad] = useState<PrinterTypeStorage | null>(null);
+  const [selectedColorForLoad, setSelectedColorForLoad] = useState<string>('');
+  const [suggestedSpoolIdsForLoad, setSuggestedSpoolIdsForLoad] = useState<string[]>([]);
+
+  const handleLoadSpoolRequest = (printer: PrinterTypeStorage, color: string, suggestedSpoolIds: string[]) => {
+    setSelectedPrinterForLoad(printer);
+    setSelectedColorForLoad(color);
+    setSuggestedSpoolIdsForLoad(suggestedSpoolIds);
+    setLoadSpoolDialogOpen(true);
+  };
+
+  const handleLoadSpoolComplete = () => {
+    refreshData();
+  };
 
   const refreshData = () => {
     setSettings(getFactorySettings());
@@ -270,7 +289,20 @@ export const PlanningPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Load Recommendations Panel - Per PRD: Always show execution guidance */}
-      <LoadRecommendationsPanel onRefresh={refreshData} />
+      <LoadRecommendationsPanel 
+        onRefresh={refreshData}
+        onLoadSpoolRequest={handleLoadSpoolRequest}
+      />
+
+      {/* Load Spool Dialog - Rendered at top level for proper z-index */}
+      <LoadSpoolDialog
+        open={loadSpoolDialogOpen}
+        onOpenChange={setLoadSpoolDialogOpen}
+        printer={selectedPrinterForLoad}
+        preSelectedColor={selectedColorForLoad}
+        suggestedSpoolIds={suggestedSpoolIdsForLoad}
+        onComplete={handleLoadSpoolComplete}
+      />
 
       {/* Capacity Change Banner */}
       {planningMeta.capacityChangedSinceLastRecalculation && !bannerDismissed && (
