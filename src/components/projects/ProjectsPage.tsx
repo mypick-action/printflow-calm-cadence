@@ -71,6 +71,7 @@ import {
   calculatePriorityFromDueDate,
   calculateDaysRemaining,
 } from '@/services/storage';
+import { validateProjectForPlanning, getValidationSummary } from '@/services/projectValidation';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { ProductEditorModal } from '@/components/products/ProductEditorModal';
 import {
@@ -266,7 +267,7 @@ export const ProjectsPage: React.FC = () => {
     const calculatedUrgency = calculatePriorityFromDueDate(newProject.dueDate);
     const finalUrgency = newProject.manualUrgency || calculatedUrgency;
     
-    createProject({
+    const createdProject = createProject({
       name: newProject.name,
       productId: newProject.productId,
       productName: product.name,
@@ -293,9 +294,14 @@ export const ProjectsPage: React.FC = () => {
     });
     setProductSearchText('');
     
+    // Validate and show detailed toast
+    const validationResult = validateProjectForPlanning(createdProject);
+    const summary = getValidationSummary(validationResult, language);
+    
     toast({
-      title: language === 'he' ? 'פרויקט נוצר' : 'Project created',
-      description: newProject.name,
+      title: summary.title,
+      description: summary.description,
+      variant: summary.variant,
     });
   };
 

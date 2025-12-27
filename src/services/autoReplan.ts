@@ -4,6 +4,7 @@
 
 import { toast } from 'sonner';
 import { saveSnapshotAfterPlan } from './planningSnapshot';
+import { addPlanningLogEntry } from './planningLogger';
 
 // Debounce configuration
 const DEBOUNCE_MS = 1500; // 1.5 seconds debounce
@@ -68,10 +69,20 @@ const executeAutoReplan = async (): Promise<void> => {
   try {
     console.log(`[AutoReplan] Executing replan, reason: ${pendingReason}`);
 
-    // Dynamic import to avoid circular dependencies
-    const { recalculatePlan } = await import('./storage');
+    // Dynamic import to avoid circular dependencies - import directly from recalculator
+    const { recalculatePlan } = await import('./planningRecalculator');
     
     const result = recalculatePlan('from_now', true);
+    
+    // Log the replan result
+    addPlanningLogEntry({
+      reason: pendingReason as any,
+      success: result.success,
+      cyclesCreated: result.cyclesModified,
+      unitsPlanned: 0, // Will be extracted from summary if needed
+      warnings: [],
+      errors: result.success ? [] : [result.summary],
+    });
     
     // Save snapshot after successful plan
     saveSnapshotAfterPlan();

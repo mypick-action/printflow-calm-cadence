@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { forwardRef } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
@@ -13,17 +13,17 @@ interface RecalculateButtonProps {
   showLastCalculated?: boolean;
 }
 
-export const RecalculateButton: React.FC<RecalculateButtonProps> = ({
+export const RecalculateButton = forwardRef<HTMLDivElement, RecalculateButtonProps>(({
   onClick,
   className,
   variant = 'outline',
   showLastCalculated = true,
-}) => {
+}, ref) => {
   const { language } = useLanguage();
   const meta = getPlanningMeta();
 
   return (
-    <div className={cn("flex items-center gap-3", className)}>
+    <div ref={ref} className={cn("flex items-center gap-3", className)}>
       {showLastCalculated && meta.lastRecalculatedAt && (
         <span className="text-xs text-muted-foreground">
           {language === 'he' ? 'חושב לאחרונה:' : 'Last calculated:'}{' '}
@@ -36,4 +36,6 @@ export const RecalculateButton: React.FC<RecalculateButtonProps> = ({
       </Button>
     </div>
   );
-};
+});
+
+RecalculateButton.displayName = 'RecalculateButton';
