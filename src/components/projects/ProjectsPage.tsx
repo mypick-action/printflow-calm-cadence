@@ -20,6 +20,12 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -33,7 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FolderKanban, Calendar, Package, AlertTriangle, Pencil, ChevronDown, PackagePlus } from 'lucide-react';
+import { Plus, FolderKanban, Calendar, Package, AlertTriangle, Pencil, ChevronDown, PackagePlus, MoreHorizontal } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from '@/hooks/use-toast';
 import { 
@@ -46,6 +52,7 @@ import {
   calculatePriorityFromDueDate,
   calculateDaysRemaining,
 } from '@/services/storage';
+import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 
 const availableColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
 
@@ -57,6 +64,8 @@ export const ProjectsPage: React.FC = () => {
   const [manualOverrideOpen, setManualOverrideOpen] = useState(false);
   const [newProductDialogOpen, setNewProductDialogOpen] = useState(false);
   const [productSearchText, setProductSearchText] = useState('');
+  const [reportIssueOpen, setReportIssueOpen] = useState(false);
+  const [reportIssueProjectId, setReportIssueProjectId] = useState<string | undefined>(undefined);
   const [newProduct, setNewProduct] = useState({
     name: '',
     gramsPerUnit: 50,
@@ -69,6 +78,11 @@ export const ProjectsPage: React.FC = () => {
     color: 'Black',
     manualUrgency: null as 'normal' | 'urgent' | 'critical' | null,
   });
+
+  const handleReportIssue = (projectId: string) => {
+    setReportIssueProjectId(projectId);
+    setReportIssueOpen(true);
+  };
 
   useEffect(() => {
     setProjects(getProjects());
@@ -607,6 +621,7 @@ export const ProjectsPage: React.FC = () => {
                   <TableHead>{language === 'he' ? 'תאריך יעד' : 'Due Date'}</TableHead>
                   <TableHead>{language === 'he' ? 'עדיפות' : 'Priority'}</TableHead>
                   <TableHead>{language === 'he' ? 'סטטוס' : 'Status'}</TableHead>
+                  <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -652,6 +667,21 @@ export const ProjectsPage: React.FC = () => {
                     </TableCell>
                     <TableCell>{getUrgencyBadgeWithDays(project)}</TableCell>
                     <TableCell>{getStatusBadge(project.status)}</TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-background border shadow-lg">
+                          <DropdownMenuItem onClick={() => handleReportIssue(project.id)}>
+                            <AlertTriangle className="w-4 h-4 mr-2 text-warning" />
+                            {language === 'he' ? 'דווח על בעיה' : 'Report Issue'}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -669,6 +699,16 @@ export const ProjectsPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Report Issue Modal - Contextual Entry */}
+      <ReportIssueFlow
+        isOpen={reportIssueOpen}
+        onClose={() => {
+          setReportIssueOpen(false);
+          setReportIssueProjectId(undefined);
+        }}
+        preselectedProjectId={reportIssueProjectId}
+      />
     </div>
   );
 };

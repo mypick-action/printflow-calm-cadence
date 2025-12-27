@@ -55,19 +55,10 @@ const PrintFlowApp: React.FC = () => {
     switch (currentPage) {
       case 'dashboard':
         return (
-          <>
-            <Dashboard printerNames={factoryData?.printerNames || []} />
-            <div className="fixed bottom-6 right-6 z-50">
-              <Button 
-                onClick={() => setReportIssueOpen(true)}
-                className="gap-2 shadow-lg"
-                variant="destructive"
-              >
-                <AlertTriangle className="w-4 h-4" />
-                {language === 'he' ? 'דווח על בעיה' : 'Report Issue'}
-              </Button>
-            </div>
-          </>
+          <Dashboard 
+            printerNames={factoryData?.printerNames || []} 
+            onReportIssue={() => setReportIssueOpen(true)}
+          />
         );
       case 'projects':
         return <ProjectsPage />;
