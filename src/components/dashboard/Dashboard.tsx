@@ -23,7 +23,7 @@ import {
   Calendar,
   ClipboardCheck,
 } from 'lucide-react';
-import { getPlanningMeta } from '@/services/storage';
+import { getPlanningMeta, needsLoadedSpoolsSetup } from '@/services/storage';
 import { 
   calculateTodayPlan, 
   TodayPlanResult,
@@ -34,6 +34,8 @@ import {
 import { RecalculateButton } from '@/components/planning/RecalculateButton';
 import { RecalculateModal } from '@/components/planning/RecalculateModal';
 import { CapacityChangeBanner } from '@/components/planning/CapacityChangeBanner';
+import { LoadedSpoolsModal } from '@/components/planning/LoadedSpoolsModal';
+import { SetupRecommendationPanel } from './SetupRecommendationPanel';
 import { format } from 'date-fns';
 
 interface DashboardProps {
@@ -45,6 +47,7 @@ interface DashboardProps {
 export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle }) => {
   const { language } = useLanguage();
   const [recalculateModalOpen, setRecalculateModalOpen] = useState(false);
+  const [loadedSpoolsModalOpen, setLoadedSpoolsModalOpen] = useState(false);
   const [planningMeta, setPlanningMeta] = useState(getPlanningMeta());
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [todayPlan, setTodayPlan] = useState<TodayPlanResult | null>(null);
@@ -58,6 +61,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     setPlanningMeta(getPlanningMeta());
     setBannerDismissed(false);
     setIsLoading(false);
+    
+    // Check if loaded spools setup is needed
+    if (needsLoadedSpoolsSetup()) {
+      setLoadedSpoolsModalOpen(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -257,6 +265,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
         onRecalculated={refreshData}
       />
 
+      {/* Loaded Spools Modal */}
+      <LoadedSpoolsModal
+        open={loadedSpoolsModalOpen}
+        onOpenChange={setLoadedSpoolsModalOpen}
+        onComplete={refreshData}
+      />
+
       {/* Header with greeting */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -320,6 +335,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Setup Recommendation Panel */}
+      {todayPlan.isWorkday && todayPlan.totalCycles > 0 && (
+        <SetupRecommendationPanel date={new Date()} />
       )}
 
       {/* Attention items */}

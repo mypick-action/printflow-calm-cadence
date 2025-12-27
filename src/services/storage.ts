@@ -50,6 +50,17 @@ export interface AMSModes {
   multiColor: boolean; // Multi-color printing
 }
 
+// Estimate of how much filament is left on a mounted spool
+export type FilamentEstimate = 'unknown' | 'low' | 'medium' | 'high';
+
+// AMS slot state for loaded spools tracking
+export interface AMSSlotState {
+  slotIndex: number;
+  spoolId?: string | null; // null if user just picked color without spool
+  color?: string; // direct color selection if no spoolId
+  estimate: FilamentEstimate;
+}
+
 export interface Printer {
   id: string;
   printerNumber: number;
@@ -67,6 +78,12 @@ export interface Printer {
   // Legacy field for backward compatibility
   amsMode?: 'backup_same_color' | 'multi_color';
   maxSpoolWeight?: number; // max spool size printer supports (1000, 2000, 5000g)
+  // Loaded spools state (for non-AMS printers)
+  mountedSpoolId?: string | null;
+  mountedColor?: string; // color if user didn't pick specific spool
+  mountedEstimate?: FilamentEstimate;
+  // AMS slots state (for AMS printers)
+  amsSlotStates?: AMSSlotState[];
 }
 
 export interface Spool {
@@ -306,6 +323,8 @@ export const KEYS = {
   ONBOARDING_COMPLETE: 'printflow_onboarding_complete',
   BOOTSTRAPPED: 'printflow_bootstrapped',
   DEMO_MODE: 'printflow_demo_mode',
+  LOADED_SPOOLS_INITIALIZED: 'printflow_loaded_spools_initialized',
+  MOUNTED_STATE_UNKNOWN: 'printflow_mounted_state_unknown',
 };
 
 // ============= HELPERS =============
@@ -1115,6 +1134,164 @@ export const completeOnboarding = (): void => {
 
 export const resetOnboarding = (): void => {
   setItem(KEYS.ONBOARDING_COMPLETE, false);
+};
+
+// ============= LOADED SPOOLS INITIALIZATION =============
+
+export const isLoadedSpoolsInitialized = (): boolean => {
+  return getItem<boolean>(KEYS.LOADED_SPOOLS_INITIALIZED, false);
+};
+
+export const setLoadedSpoolsInitialized = (value: boolean): void => {
+  setItem(KEYS.LOADED_SPOOLS_INITIALIZED, value);
+};
+
+export const isMountedStateUnknown = (): boolean => {
+  return getItem<boolean>(KEYS.MOUNTED_STATE_UNKNOWN, false);
+};
+
+export const setMountedStateUnknown = (value: boolean): void => {
+  setItem(KEYS.MOUNTED_STATE_UNKNOWN, value);
+};
+
+/**
+ * Check if any printer needs loaded spools setup
+ * Returns true if there are planned cycles in next 7 days and at least one printer has no mounted state
+ */
+export const needsLoadedSpoolsSetup = (): boolean => {
+  // Already initialized, no need to show modal
+  if (isLoadedSpoolsInitialized()) return false;
+  
+  const printers = getPrinters().filter(p => p.status === 'active');
+  if (printers.length === 0) return false;
+  
+  // Check if there are planned cycles in the next 7 days
+  const cycles = getPlannedCycles();
+  const now = new Date();
+  const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  
+  const hasUpcomingCycles = cycles.some(c => {
+    const cycleDate = new Date(c.startTime);
+    return cycleDate >= now && cycleDate <= weekFromNow && c.status !== 'completed';
+  });
+  
+  if (!hasUpcomingCycles) return false;
+  
+  // Check if any printer has no mounted state defined
+  return printers.some(p => {
+    if (p.hasAMS) {
+      // For AMS printers, check if amsSlotStates is undefined or empty
+      return !p.amsSlotStates || p.amsSlotStates.length === 0;
+    } else {
+      // For non-AMS printers, check if mountedSpoolId/mountedColor is undefined
+      return p.mountedSpoolId === undefined && p.mountedColor === undefined;
+    }
+  });
+};
+
+/**
+ * Mount a spool on a printer (helper function for future integration)
+ */
+export const mountSpool = (
+  printerId: string, 
+  spoolId: string | null, 
+  color: string,
+  estimate: FilamentEstimate
+): Printer | undefined => {
+  const printer = getPrinter(printerId);
+  if (!printer) return undefined;
+  
+  if (printer.hasAMS) {
+    // For AMS, this would update a specific slot - not implemented here
+    console.warn('Use updateAMSSlot for AMS printers');
+    return printer;
+  }
+  
+  // Update spool location if we have a spoolId
+  if (spoolId) {
+    const spools = getSpools();
+    // First, unmount any spool currently on this printer
+    spools.forEach(s => {
+      if (s.assignedPrinterId === printerId && s.location === 'printer') {
+        updateSpool(s.id, { location: 'stock', assignedPrinterId: undefined }, true);
+      }
+    });
+    // Mount the new spool
+    updateSpool(spoolId, { location: 'printer', assignedPrinterId: printerId }, true);
+  }
+  
+  return updatePrinter(printerId, {
+    mountedSpoolId: spoolId,
+    mountedColor: color,
+    mountedEstimate: estimate,
+    currentColor: color,
+  });
+};
+
+/**
+ * Update AMS slot state
+ */
+export const updateAMSSlot = (
+  printerId: string,
+  slotIndex: number,
+  spoolId: string | null,
+  color: string,
+  estimate: FilamentEstimate
+): Printer | undefined => {
+  const printer = getPrinter(printerId);
+  if (!printer || !printer.hasAMS) return undefined;
+  
+  const currentSlots = printer.amsSlotStates || [];
+  const slotExists = currentSlots.findIndex(s => s.slotIndex === slotIndex);
+  
+  let newSlots: AMSSlotState[];
+  if (slotExists >= 0) {
+    newSlots = [...currentSlots];
+    newSlots[slotExists] = { slotIndex, spoolId, color, estimate };
+  } else {
+    newSlots = [...currentSlots, { slotIndex, spoolId, color, estimate }];
+  }
+  
+  // Update spool location if we have a spoolId
+  if (spoolId) {
+    updateSpool(spoolId, { 
+      location: 'ams', 
+      assignedPrinterId: printerId,
+      amsSlotIndex: slotIndex 
+    }, true);
+  }
+  
+  return updatePrinter(printerId, { amsSlotStates: newSlots });
+};
+
+/**
+ * Clear all mounted spool states for a printer
+ */
+export const clearPrinterMountedState = (printerId: string): Printer | undefined => {
+  const printer = getPrinter(printerId);
+  if (!printer) return undefined;
+  
+  if (printer.hasAMS) {
+    return updatePrinter(printerId, { amsSlotStates: [] });
+  } else {
+    return updatePrinter(printerId, { 
+      mountedSpoolId: null, 
+      mountedColor: undefined, 
+      mountedEstimate: undefined 
+    });
+  }
+};
+
+/**
+ * Placeholder for consuming material after cycle (future integration)
+ */
+export const consumeMaterialAfterCycle = (
+  printerId: string,
+  color: string,
+  gramsUsed: number
+): void => {
+  // This will be implemented when we integrate with actual print data
+  console.log(`[Future] Consume ${gramsUsed}g of ${color} from printer ${printerId}`);
 };
 
 // ============= BOOTSTRAP & RESET =============
