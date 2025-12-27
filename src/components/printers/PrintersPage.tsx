@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -37,7 +38,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Printer as PrinterIcon, Settings2, CircleDot, Box, Layers, Plus, AlertTriangle, Power, PowerOff, RefreshCw, Package, ArrowRight } from 'lucide-react';
+import { Printer as PrinterIcon, Settings2, CircleDot, Box, Layers, Plus, AlertTriangle, Power, PowerOff, RefreshCw, Package, ArrowRight, ArrowLeft } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
@@ -63,6 +64,8 @@ import { notifyInventoryChanged } from '@/services/inventoryEvents';
 
 export const PrintersPage: React.FC = () => {
   const { language } = useLanguage();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [spools, setSpools] = useState<Spool[]>([]);
   const [editingPrinter, setEditingPrinter] = useState<Printer | null>(null);
@@ -96,10 +99,41 @@ export const PrintersPage: React.FC = () => {
   const [selectedColor, setSelectedColor] = useState('');
   const [selectedSpoolId, setSelectedSpoolId] = useState('');
   const [loadSlotIndex, setLoadSlotIndex] = useState<number | null>(null); // null = main spool, number = AMS slot
+  
+  // Track if we came from Required Actions (for back navigation)
+  const [cameFromPlanning, setCameFromPlanning] = useState(false);
+  const autoOpenProcessed = useRef(false);
 
   useEffect(() => {
     refreshData();
   }, []);
+
+  // Handle URL params for auto-opening load dialog (from Required Actions)
+  useEffect(() => {
+    if (autoOpenProcessed.current) return;
+    
+    const openPrinterId = searchParams.get('openPrinterId');
+    const colorParam = searchParams.get('color');
+    
+    if (openPrinterId && printers.length > 0) {
+      const printer = printers.find(p => p.id === openPrinterId);
+      if (printer) {
+        autoOpenProcessed.current = true;
+        setCameFromPlanning(true);
+        
+        // Auto-open load spool dialog for this printer
+        setLoadSpoolPrinter(printer);
+        setLoadSlotIndex(null);
+        setLoadSpoolMode('spool');
+        setSelectedColor(colorParam || '');
+        setSelectedSpoolId('');
+        setLoadSpoolDialogOpen(true);
+        
+        // Clear URL params
+        setSearchParams({});
+      }
+    }
+  }, [printers, searchParams, setSearchParams]);
 
   const refreshData = () => {
     setPrinters(getPrinters());
@@ -337,6 +371,9 @@ export const PrintersPage: React.FC = () => {
 
     // Mark loaded spools as initialized
     setLoadedSpoolsInitialized(true);
+    
+    // Notify inventory changed to refresh Required Actions
+    notifyInventoryChanged();
 
     refreshData();
     setLoadSpoolDialogOpen(false);
@@ -345,6 +382,12 @@ export const PrintersPage: React.FC = () => {
       title: language === 'he' ? 'גליל נטען' : 'Spool loaded',
       description: `${color} → ${loadSpoolPrinter.name}`,
     });
+    
+    // If we came from Required Actions, navigate back to planning
+    if (cameFromPlanning) {
+      setCameFromPlanning(false);
+      navigate('/planning');
+    }
   };
 
   // Clear loaded spool from printer
@@ -462,6 +505,16 @@ export const PrintersPage: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
+          {cameFromPlanning && (
+            <Button 
+              variant="ghost" 
+              size="icon"
+              onClick={() => navigate('/planning')}
+              className="mr-1"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+          )}
           <div className="p-2 bg-primary/10 rounded-xl">
             <PrinterIcon className="w-6 h-6 text-primary" />
           </div>
@@ -477,10 +530,22 @@ export const PrintersPage: React.FC = () => {
           </div>
         </div>
         
-        <Button onClick={handleOpenAddDialog} className="gap-2">
-          <Plus className="w-4 h-4" />
-          {language === 'he' ? 'הוסף מדפסת' : 'Add Printer'}
-        </Button>
+        <div className="flex items-center gap-2">
+          {cameFromPlanning && (
+            <Button 
+              variant="outline" 
+              onClick={() => navigate('/planning')}
+              className="gap-2"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              {language === 'he' ? 'חזרה לתכנון' : 'Back to Planning'}
+            </Button>
+          )}
+          <Button onClick={handleOpenAddDialog} className="gap-2">
+            <Plus className="w-4 h-4" />
+            {language === 'he' ? 'הוסף מדפסת' : 'Add Printer'}
+          </Button>
+        </div>
       </div>
 
       {/* Active Printers */}
