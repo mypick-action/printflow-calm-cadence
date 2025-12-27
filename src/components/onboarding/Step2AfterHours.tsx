@@ -57,10 +57,36 @@ export const Step2AfterHours: React.FC<Step2Props> = ({ data, updateData }) => {
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger>
-                <Info className="w-4 h-4 text-muted-foreground" />
+                <Info className="w-4 h-4 text-muted-foreground cursor-help" />
               </TooltipTrigger>
-              <TooltipContent>
-                <p className="max-w-xs">{t('onboarding.step2.tooltip')}</p>
+              <TooltipContent side="bottom" className="max-w-sm p-4">
+                <p className="font-semibold mb-2">
+                  {language === 'he' 
+                    ? 'איך זה משפיע על תכנון העבודה?' 
+                    : 'How does this affect work planning?'}
+                </p>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {language === 'he' 
+                    ? 'הבחירה כאן קובעת איך המערכת מתכננת את סוף יום העבודה:'
+                    : 'This choice determines how the system plans the end of the workday:'}
+                </p>
+                <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground">
+                  <li>
+                    {language === 'he'
+                      ? '• אם לא מדפיסים בלי נוכחות צוות – המערכת תפסיק תכנון מחזורים בסיום היום.'
+                      : '• If no unattended printing – the system will stop planning cycles at end of day.'}
+                  </li>
+                  <li>
+                    {language === 'he'
+                      ? '• אם שולחים מחזור אחד אחרון – המערכת תתכנן מחזור שיסתיים גם אחרי שעות העבודה, וימתין לבוקר.'
+                      : '• If sending one last cycle – the system will plan a cycle that finishes after hours and waits until morning.'}
+                  </li>
+                  <li>
+                    {language === 'he'
+                      ? '• אם יש אוטומציה מלאה – המערכת תוכל לתכנן עבודה רציפה גם בלילה.'
+                      : '• If full automation – the system can plan continuous work through the night.'}
+                  </li>
+                </ul>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -138,7 +164,9 @@ export const Step2AfterHours: React.FC<Step2Props> = ({ data, updateData }) => {
       <div className="space-y-4 pt-4 border-t border-border">
         <div className="flex items-center gap-2">
           <Label className="text-base font-medium">
-            {t('onboarding.step2.amsQuestion') || (language === 'he' ? 'יש לך AMS?' : 'Do you have AMS?')}
+            {language === 'he' 
+              ? 'האם יש במפעל מערכת להחלפת גלילים אוטומטית (AMS)?' 
+              : 'Does your factory have an automatic spool switching system (AMS)?'}
           </Label>
           <TooltipProvider>
             <Tooltip>
