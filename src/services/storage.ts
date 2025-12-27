@@ -1492,11 +1492,16 @@ export const getSpools = (): Spool[] => {
   return getItem<Spool[]>(KEYS.SPOOLS, []);
 };
 
+// Import inventory events for immediate UI updates
+import { notifyInventoryChanged } from './inventoryEvents';
+
 export const createSpool = (spool: Omit<Spool, 'id'>): Spool => {
   const newSpool = { ...spool, id: generateId() };
   const spools = getSpools();
   setItem(KEYS.SPOOLS, [...spools, newSpool]);
   scheduleAutoReplan('spool_added');
+  // Immediately notify UI components to refresh material status
+  notifyInventoryChanged();
   return newSpool;
 };
 
@@ -1516,6 +1521,9 @@ export const updateSpool = (id: string, updates: Partial<Spool>, skipAutoReplan:
       scheduleAutoReplan('spool_updated');
     }
   }
+  
+  // Immediately notify UI components to refresh material status
+  notifyInventoryChanged();
   
   return spools[index];
 };

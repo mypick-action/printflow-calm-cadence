@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +18,7 @@ import {
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { generateLoadRecommendations, LoadRecommendationsResult, getActionSummary } from '@/services/loadRecommendations';
 import { getSpools, getPrinters, LoadRecommendation, MaterialShortage } from '@/services/storage';
+import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
 
 interface LoadRecommendationsPanelProps {
   onRefresh?: () => void;
@@ -28,15 +29,24 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
   const [result, setResult] = useState<LoadRecommendationsResult | null>(null);
   const [expanded, setExpanded] = useState(true);
 
-  useEffect(() => {
-    refreshRecommendations();
-  }, []);
-
-  const refreshRecommendations = () => {
+  const refreshRecommendations = useCallback(() => {
     const recommendations = generateLoadRecommendations();
     setResult(recommendations);
     onRefresh?.();
-  };
+  }, [onRefresh]);
+
+  // Refresh on mount
+  useEffect(() => {
+    refreshRecommendations();
+  }, [refreshRecommendations]);
+
+  // Subscribe to inventory changes - refresh immediately when inventory updates
+  useEffect(() => {
+    const unsubscribe = subscribeToInventoryChanges(() => {
+      refreshRecommendations();
+    });
+    return unsubscribe;
+  }, [refreshRecommendations]);
 
   if (!result) return null;
 

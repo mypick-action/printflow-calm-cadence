@@ -1,5 +1,7 @@
 // Load Recommendations Service
 // Per PRD: Generates explicit guidance on what spools to load on which printers
+// CRITICAL: Material shortages are computed DIRECTLY from current inventory vs project demand
+// NOT from planning snapshot - ensures alerts update immediately when inventory changes
 
 import {
   PlannedCycle,
@@ -12,7 +14,9 @@ import {
   getSpools,
   getPrinters,
   getProjects,
+  getProducts,
 } from './storage';
+import { SAFETY_THRESHOLD_GRAMS } from './materialStatus';
 
 export interface LoadRecommendationsResult {
   recommendations: LoadRecommendation[];
@@ -27,6 +31,102 @@ export interface LoadRecommendationsResult {
 
 const generateId = (): string => {
   return `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+};
+
+/**
+ * Calculate remaining demand for each project (total needed - already produced)
+ * This ensures material alerts reflect REMAINING need, not original need
+ */
+const calculateRemainingDemandByColor = (): Map<string, {
+  totalGrams: number;
+  projectIds: string[];
+  projectNames: string[];
+}> => {
+  const projects = getProjects();
+  const products = getProducts();
+  const demandByColor = new Map<string, {
+    totalGrams: number;
+    projectIds: string[];
+    projectNames: string[];
+  }>();
+
+  for (const project of projects) {
+    // Skip completed projects
+    if (project.status === 'completed') continue;
+
+    const product = products.find(p => p.id === project.productId);
+    if (!product) continue;
+
+    // Project.color is the source of truth for color
+    const color = project.color?.toLowerCase();
+    if (!color) continue;
+
+    // Calculate remaining units needed (quantityGood = successfully produced)
+    const unitsProduced = project.quantityGood || 0;
+    const unitsRemaining = Math.max(0, project.quantityTarget - unitsProduced);
+    
+    if (unitsRemaining === 0) continue;
+
+    // Calculate grams needed for remaining units (Product.gramsPerUnit)
+    const gramsPerUnit = product.gramsPerUnit || 0;
+    const gramsNeeded = unitsRemaining * gramsPerUnit;
+
+    const existing = demandByColor.get(color) || {
+      totalGrams: 0,
+      projectIds: [],
+      projectNames: [],
+    };
+
+    existing.totalGrams += gramsNeeded;
+    existing.projectIds.push(project.id);
+    existing.projectNames.push(project.name);
+    demandByColor.set(color, existing);
+  }
+
+  return demandByColor;
+};
+
+/**
+ * Calculate material shortages based on CURRENT inventory vs REMAINING project demand
+ * This is the source of truth for material alerts - derived, not stored
+ */
+const calculateMaterialShortages = (): MaterialShortage[] => {
+  const spools = getSpools();
+  const demandByColor = calculateRemainingDemandByColor();
+  const shortages: MaterialShortage[] = [];
+
+  for (const [colorKey, demand] of demandByColor) {
+    // Calculate available grams for this color
+    const availableGrams = spools
+      .filter(s => 
+        s.color.toLowerCase() === colorKey && 
+        s.state !== 'empty' && 
+        s.gramsRemainingEst > 0
+      )
+      .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+
+    // Include safety threshold in the calculation
+    const effectiveRequired = demand.totalGrams + SAFETY_THRESHOLD_GRAMS;
+    
+    // Only report shortage if available is less than required (with safety)
+    if (availableGrams < effectiveRequired) {
+      const shortfall = Math.max(0, demand.totalGrams - availableGrams);
+      
+      // Only create shortage alert if there's actual shortfall (not just safety margin)
+      if (shortfall > 0) {
+        shortages.push({
+          color: colorKey,
+          requiredGrams: demand.totalGrams,
+          availableGrams,
+          shortfallGrams: shortfall,
+          affectedProjectIds: demand.projectIds,
+          affectedProjectNames: demand.projectNames,
+        });
+      }
+    }
+  }
+
+  return shortages;
 };
 
 /**
@@ -130,45 +230,9 @@ export const generateLoadRecommendations = (
   const priorityOrder = { high: 0, medium: 1, low: 2 };
   recommendations.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
-  // Calculate material shortages
-  const shortagesByColor = new Map<string, MaterialShortage>();
-
-  for (const cycle of activeCycles) {
-    if (cycle.readinessState !== 'blocked_inventory') continue;
-
-    const color = cycle.requiredColor?.toLowerCase() || '';
-    const project = allProjects.find(p => p.id === cycle.projectId);
-
-    const existing = shortagesByColor.get(color) || {
-      color: cycle.requiredColor || '',
-      requiredGrams: 0,
-      availableGrams: 0,
-      shortfallGrams: 0,
-      affectedProjectIds: [],
-      affectedProjectNames: [],
-    };
-
-    existing.requiredGrams += cycle.requiredGrams || cycle.gramsPlanned;
-    
-    if (project && !existing.affectedProjectIds.includes(project.id)) {
-      existing.affectedProjectIds.push(project.id);
-      existing.affectedProjectNames.push(project.name);
-    }
-
-    shortagesByColor.set(color, existing);
-  }
-
-  // Calculate actual available material and shortfall
-  const materialShortages: MaterialShortage[] = [];
-  for (const [colorKey, shortage] of shortagesByColor) {
-    const availableGrams = allSpools
-      .filter(s => s.color.toLowerCase() === colorKey && s.state !== 'empty')
-      .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
-
-    shortage.availableGrams = availableGrams;
-    shortage.shortfallGrams = Math.max(0, shortage.requiredGrams - availableGrams);
-    materialShortages.push(shortage);
-  }
+  // Calculate material shortages from CURRENT state (not planning snapshot)
+  // This ensures alerts disappear immediately when inventory is updated
+  const materialShortages = calculateMaterialShortages();
 
   return {
     recommendations,
