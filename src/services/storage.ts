@@ -45,6 +45,11 @@ export interface Project {
   createdAt: string;
 }
 
+export interface AMSModes {
+  backupSameColor: boolean; // Backup / auto refill (same color continues when spool ends)
+  multiColor: boolean; // Multi-color printing
+}
+
 export interface Printer {
   id: string;
   printerNumber: number;
@@ -57,7 +62,9 @@ export interface Printer {
   currentColor?: string;
   currentMaterial?: string;
   hasAMS: boolean;
-  amsSlots?: number; // 4 or 8 typically
+  amsSlots?: number; // 4, 8, or custom
+  amsModes?: AMSModes; // AMS usage modes
+  // Legacy field for backward compatibility
   amsMode?: 'backup_same_color' | 'multi_color';
   maxSpoolWeight?: number; // max spool size printer supports (1000, 2000, 5000g)
 }
@@ -1053,20 +1060,41 @@ export const getFactorySettings = (): FactorySettings | null => {
   return getItem<FactorySettings | null>(KEYS.FACTORY_SETTINGS, null);
 };
 
-export const saveFactorySettings = (settings: FactorySettings): void => {
+export const saveFactorySettings = (
+  settings: FactorySettings, 
+  printerNames?: string[],
+  printerAMSConfigs?: Array<{ hasAMS: boolean; amsSlots: number; amsModes: { backupSameColor: boolean; multiColor: boolean } }>
+): void => {
   setItem(KEYS.FACTORY_SETTINGS, settings);
   
   // Also update printers based on count
   const existingPrinters = getItem<Printer[]>(KEYS.PRINTERS, []);
   const newPrinters: Printer[] = Array.from({ length: settings.printerCount }, (_, i) => {
     const existing = existingPrinters[i];
-    return existing || {
+    const amsConfig = printerAMSConfigs?.[i];
+    const printerName = printerNames?.[i] || `Printer ${i + 1}`;
+    
+    if (existing) {
+      // Update existing printer with new AMS config if provided
+      return {
+        ...existing,
+        name: printerName,
+        hasAMS: amsConfig?.hasAMS ?? existing.hasAMS ?? false,
+        amsSlots: amsConfig?.hasAMS ? (amsConfig.amsSlots ?? existing.amsSlots) : undefined,
+        amsModes: amsConfig?.hasAMS ? amsConfig.amsModes : undefined,
+      };
+    }
+    
+    // Create new printer with per-printer AMS config
+    return {
       id: `printer-${i + 1}`,
       printerNumber: i + 1,
-      name: `Printer ${i + 1}`,
+      name: printerName,
       active: true,
       status: 'active' as const,
-      hasAMS: settings.hasAMS || false,
+      hasAMS: amsConfig?.hasAMS ?? false,
+      amsSlots: amsConfig?.hasAMS ? amsConfig.amsSlots : undefined,
+      amsModes: amsConfig?.hasAMS ? amsConfig.amsModes : undefined,
     };
   });
   setItem(KEYS.PRINTERS, newPrinters);

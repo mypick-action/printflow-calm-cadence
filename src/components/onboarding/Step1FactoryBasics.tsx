@@ -51,7 +51,12 @@ export const Step1FactoryBasics: React.FC<Step1Props> = ({ data, updateData }) =
       const defaultName = language === 'he' ? `מדפסת ${i + 1}` : `Printer ${i + 1}`;
       return data.printerNames[i] || defaultName;
     });
-    updateData({ printerCount: newCount, printerNames: newNames });
+    // Also update AMS configs array to match printer count
+    const defaultAMSConfig = { hasAMS: false, amsSlots: 4, amsModes: { backupSameColor: true, multiColor: false } };
+    const newAMSConfigs = Array.from({ length: newCount }, (_, i) => {
+      return data.printerAMSConfigs?.[i] || defaultAMSConfig;
+    });
+    updateData({ printerCount: newCount, printerNames: newNames, printerAMSConfigs: newAMSConfigs });
   };
   
   const handlePrinterNameChange = (index: number, name: string) => {

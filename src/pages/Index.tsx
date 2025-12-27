@@ -58,20 +58,24 @@ const PrintFlowApp: React.FC = () => {
   const handleOnboardingComplete = (data: OnboardingData) => {
     setFactoryData(data);
     setOnboardingDone(true);
-    saveFactorySettings({
-      printerCount: data.printerCount,
-      weeklySchedule: data.weeklySchedule,
-      afterHoursBehavior: data.afterHoursBehavior,
-      colors: data.colors,
-      standardSpoolWeight: data.spoolWeight,
-      deliveryDays: data.deliveryDays,
-      transitionMinutes: 10,
-      priorityRules: {
-        urgentDaysThreshold: 14,
-        criticalDaysThreshold: 7,
+    saveFactorySettings(
+      {
+        printerCount: data.printerCount,
+        weeklySchedule: data.weeklySchedule,
+        afterHoursBehavior: data.afterHoursBehavior,
+        colors: data.colors,
+        standardSpoolWeight: data.spoolWeight,
+        deliveryDays: data.deliveryDays,
+        transitionMinutes: 10,
+        priorityRules: {
+          urgentDaysThreshold: 14,
+          criticalDaysThreshold: 7,
+        },
+        hasAMS: data.hasAMS,
       },
-      hasAMS: data.hasAMS,
-    });
+      data.printerNames,
+      data.printerAMSConfigs
+    );
     completeOnboarding();
   };
 
