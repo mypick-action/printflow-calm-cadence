@@ -7,8 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Bug, ChevronDown, RefreshCw, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Bug, ChevronDown, RefreshCw, Trash2, AlertCircle, CheckCircle2, Copy, Zap } from 'lucide-react';
 import { format } from 'date-fns';
+import { toast } from 'sonner';
 import {
   getProjects,
   getProducts,
@@ -19,6 +20,14 @@ import {
   getPlanningMeta,
 } from '@/services/storage';
 import { getPlanningLog, getLastReplanInfo, clearPlanningLog, PlanningLogEntry } from '@/services/planningLogger';
+
+interface OriginInfo {
+  href: string;
+  origin: string;
+  topHref: string | null;
+  referrer: string;
+  isIframe: boolean;
+}
 
 interface DebugStats {
   projectsTotal: number;
@@ -38,9 +47,10 @@ interface DebugStats {
     errorsCount: number;
   } | null;
   // Origin diagnostics
-  currentOrigin: string;
+  originInfo: OriginInfo;
   localStorageKeys: string[];
   cyclesRawLength: number;
+  testKeyResult: { found: boolean; value: string | null };
 }
 
 export const PlanningDebugPanel: React.FC = () => {
@@ -50,16 +60,40 @@ export const PlanningDebugPanel: React.FC = () => {
   const [logEntries, setLogEntries] = useState<PlanningLogEntry[]>([]);
   const [showFullLog, setShowFullLog] = useState(false);
 
+  const getOriginInfo = (): OriginInfo => {
+    let topHref: string | null = null;
+    let isIframe = false;
+    
+    try {
+      isIframe = window.self !== window.top;
+      if (window.top) {
+        topHref = window.top.location.href;
+      }
+    } catch (e) {
+      // Cross-origin - can't access top
+      topHref = '[CROSS-ORIGIN - cannot access]';
+      isIframe = true;
+    }
+
+    return {
+      href: window.location.href,
+      origin: window.location.origin,
+      topHref,
+      referrer: document.referrer || '[empty]',
+      isIframe,
+    };
+  };
+
   const refreshStats = () => {
     const projects = getProjects();
     const products = getProducts();
     const printers = getPrinters();
     const activePrinters = getActivePrinters();
     const cycles = getPlannedCycles();
-    const settings = getFactorySettings();
     const meta = getPlanningMeta();
     const lastReplan = getLastReplanInfo();
     const log = getPlanningLog();
+    const originInfo = getOriginInfo();
 
     // Origin diagnostics - get all PrintFlow localStorage keys
     const allKeys: string[] = [];
@@ -74,11 +108,28 @@ export const PlanningDebugPanel: React.FC = () => {
     const rawCyclesStr = localStorage.getItem('printflow_planned_cycles');
     const rawCycles = rawCyclesStr ? JSON.parse(rawCyclesStr) : [];
 
-    // Log origin info to console for debugging
-    console.log('[PlanningDebugPanel] Current origin:', window.location.origin);
-    console.log('[PlanningDebugPanel] localStorage keys:', allKeys);
-    console.log('[PlanningDebugPanel] Raw cycles count:', rawCycles.length);
-    console.log('[PlanningDebugPanel] Parsed cycles count:', cycles.length);
+    // Check for test key
+    const testKeyStr = localStorage.getItem('printflow_origin_test');
+    const testKeyResult = {
+      found: !!testKeyStr,
+      value: testKeyStr,
+    };
+
+    // Log comprehensive origin info to console
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('[PlanningDebugPanel] ORIGIN DIAGNOSTICS');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('window.location.href:', originInfo.href);
+    console.log('window.location.origin:', originInfo.origin);
+    console.log('window.top.location.href:', originInfo.topHref);
+    console.log('document.referrer:', originInfo.referrer);
+    console.log('Is iframe:', originInfo.isIframe);
+    console.log('───────────────────────────────────────────────────────');
+    console.log('localStorage keys (printflow_*):', allKeys);
+    console.log('Raw cycles count:', rawCycles.length);
+    console.log('Parsed cycles count:', cycles.length);
+    console.log('Test key:', testKeyResult);
+    console.log('═══════════════════════════════════════════════════════');
 
     // Calculate cycles for this week
     const today = new Date();
@@ -105,9 +156,10 @@ export const PlanningDebugPanel: React.FC = () => {
       lastReplanReason: lastReplan.lastReplanReason,
       lastReplanResult: lastReplan.lastReplanResult,
       // Origin diagnostics
-      currentOrigin: window.location.origin,
+      originInfo,
       localStorageKeys: allKeys,
       cyclesRawLength: rawCycles.length,
+      testKeyResult,
     });
 
     setLogEntries(log);
@@ -122,6 +174,59 @@ export const PlanningDebugPanel: React.FC = () => {
   const handleClearLog = () => {
     clearPlanningLog();
     refreshStats();
+  };
+
+  const handleWriteTestKey = () => {
+    const testData = {
+      origin: window.location.origin,
+      href: window.location.href,
+      ts: Date.now(),
+      tsReadable: new Date().toISOString(),
+    };
+    
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('[TEST KEY WRITE]');
+    console.log('Writing to localStorage from origin:', window.location.origin);
+    console.log('Data:', testData);
+    
+    localStorage.setItem('printflow_origin_test', JSON.stringify(testData));
+    
+    // Immediately read back
+    const readBack = localStorage.getItem('printflow_origin_test');
+    console.log('Read back immediately:', readBack);
+    console.log('═══════════════════════════════════════════════════════');
+    
+    toast.success(`Test key written from: ${window.location.origin}`);
+    refreshStats();
+  };
+
+  const handleCopyDiagnostics = () => {
+    if (!stats) return;
+    
+    const diagnostics = {
+      timestamp: new Date().toISOString(),
+      originInfo: stats.originInfo,
+      localStorage: {
+        keys: stats.localStorageKeys,
+        cyclesRaw: stats.cyclesRawLength,
+        cyclesParsed: stats.plannedCyclesTotal,
+        testKey: stats.testKeyResult,
+      },
+      counts: {
+        projects: { total: stats.projectsTotal, active: stats.projectsActive },
+        printers: { total: stats.printersTotal, active: stats.printersActive },
+        products: stats.productsTotal,
+        cycles: { thisWeek: stats.plannedCyclesThisWeek, total: stats.plannedCyclesTotal },
+      },
+      lastReplan: {
+        at: stats.lastReplanAt,
+        reason: stats.lastReplanReason,
+        result: stats.lastReplanResult,
+      },
+    };
+    
+    navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+    toast.success('Diagnostics copied to clipboard');
   };
 
   const formatTimestamp = (ts: string) => {
@@ -165,10 +270,13 @@ export const PlanningDebugPanel: React.FC = () => {
               {language === 'he' ? 'סטטוס תכנון (דיבוג)' : 'Planning Status (Debug)'}
             </CardTitle>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={refreshStats}>
+              <Button variant="ghost" size="sm" onClick={refreshStats} title="Refresh">
                 <RefreshCw className="w-3 h-3" />
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleClearLog}>
+              <Button variant="ghost" size="sm" onClick={handleCopyDiagnostics} title="Copy diagnostics">
+                <Copy className="w-3 h-3" />
+              </Button>
+              <Button variant="ghost" size="sm" onClick={handleClearLog} title="Clear log">
                 <Trash2 className="w-3 h-3" />
               </Button>
             </div>
@@ -177,6 +285,94 @@ export const PlanningDebugPanel: React.FC = () => {
           <CardContent className="space-y-4 text-sm">
             {stats && (
               <>
+                {/* Origin Diagnostics - FIRST and PROMINENT */}
+                <div className="space-y-2 p-3 bg-blue-500/10 rounded-lg border-2 border-blue-500/50">
+                  <div className="text-xs font-bold mb-2 text-blue-400">🔬 ORIGIN PROOF (Hard Evidence)</div>
+                  
+                  <div className="space-y-1 font-mono text-[10px] bg-background/50 p-2 rounded">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">window.location.href:</span>
+                      <code className="text-blue-300 break-all text-right max-w-[60%]">{stats.originInfo.href}</code>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">window.location.origin:</span>
+                      <code className="text-green-400 font-bold">{stats.originInfo.origin}</code>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">window.top.location.href:</span>
+                      <code className="text-yellow-300 break-all text-right max-w-[60%]">{stats.originInfo.topHref || 'N/A'}</code>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">document.referrer:</span>
+                      <code className="text-purple-300 break-all text-right max-w-[60%]">{stats.originInfo.referrer}</code>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Is iframe:</span>
+                      <Badge variant={stats.originInfo.isIframe ? 'outline' : 'default'} className="text-[10px]">
+                        {stats.originInfo.isIframe ? 'YES' : 'NO'}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  {/* Test Key Button */}
+                  <div className="flex items-center gap-2 mt-3">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleWriteTestKey}
+                      className="text-xs border-blue-500 text-blue-400 hover:bg-blue-500/20"
+                    >
+                      <Zap className="w-3 h-3 mr-1" />
+                      Write Test Key
+                    </Button>
+                    <div className="text-[10px] text-muted-foreground">
+                      {stats.testKeyResult.found ? (
+                        <span className="text-green-400">✓ Test key found: {stats.testKeyResult.value?.substring(0, 50)}...</span>
+                      ) : (
+                        <span className="text-yellow-400">No test key yet</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* localStorage Keys and Cycles */}
+                <div className="space-y-2 p-3 bg-purple-500/10 rounded-lg border border-purple-500/30">
+                  <div className="text-xs font-bold mb-2 text-purple-400">📦 localStorage Contents</div>
+                  
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium">printflow_planned_cycles:</span>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={stats.cyclesRawLength > 0 ? 'default' : 'destructive'} className="text-xs bg-green-600">
+                        {stats.cyclesRawLength} raw
+                      </Badge>
+                      <Badge variant={stats.plannedCyclesTotal > 0 ? 'default' : 'destructive'} className="text-xs">
+                        {stats.plannedCyclesTotal} parsed
+                      </Badge>
+                    </div>
+                  </div>
+                  
+                  {stats.cyclesRawLength !== stats.plannedCyclesTotal && (
+                    <div className="flex items-center gap-2 text-destructive">
+                      <AlertCircle className="w-3 h-3" />
+                      <span className="text-xs">⚠️ MISMATCH: Raw ({stats.cyclesRawLength}) ≠ Parsed ({stats.plannedCyclesTotal})</span>
+                    </div>
+                  )}
+
+                  <div className="text-xs mt-2">
+                    <span className="font-medium">All PrintFlow Keys ({stats.localStorageKeys.length}):</span>
+                    <div className="mt-1 max-h-24 overflow-y-auto bg-muted/50 rounded p-2 font-mono text-[10px]">
+                      {stats.localStorageKeys.length > 0 
+                        ? stats.localStorageKeys.map((k, i) => (
+                            <div key={i} className={k === 'printflow_planned_cycles' ? 'text-green-400 font-bold' : ''}>
+                              {k}
+                            </div>
+                          ))
+                        : <span className="text-destructive">❌ No printflow_ keys found in localStorage!</span>
+                      }
+                    </div>
+                  </div>
+                </div>
+
                 {/* Data Counts */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <StatBadge 
@@ -240,38 +436,6 @@ export const PlanningDebugPanel: React.FC = () => {
                       {stats.capacityChanged ? 'Yes (needs recalc)' : 'No'}
                     </span>
                   </div>
-                </div>
-
-                {/* Origin Diagnostics */}
-                <div className="space-y-2 p-3 bg-blue-500/10 rounded-lg border border-blue-500/30">
-                  <div className="text-xs font-medium mb-2 text-blue-400">🔍 Origin Diagnostics:</div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium">Current Origin:</span>
-                    <code className="text-xs bg-muted px-2 py-0.5 rounded font-mono">
-                      {stats.currentOrigin}
-                    </code>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium">Raw Cycles in LS:</span>
-                    <Badge variant={stats.cyclesRawLength > 0 ? 'default' : 'destructive'} className="text-xs">
-                      {stats.cyclesRawLength}
-                    </Badge>
-                  </div>
-                  <div className="text-xs">
-                    <span className="font-medium">PrintFlow Keys ({stats.localStorageKeys.length}):</span>
-                    <div className="mt-1 max-h-20 overflow-y-auto bg-muted/50 rounded p-1 font-mono text-[10px]">
-                      {stats.localStorageKeys.length > 0 
-                        ? stats.localStorageKeys.map((k, i) => <div key={i}>{k}</div>)
-                        : <span className="text-destructive">No printflow_ keys found!</span>
-                      }
-                    </div>
-                  </div>
-                  {stats.cyclesRawLength !== stats.plannedCyclesTotal && (
-                    <div className="flex items-center gap-2 text-destructive">
-                      <AlertCircle className="w-3 h-3" />
-                      <span className="text-xs">Mismatch: Raw ({stats.cyclesRawLength}) ≠ Parsed ({stats.plannedCyclesTotal})</span>
-                    </div>
-                  )}
                 </div>
 
                 {/* Diagnosis */}
