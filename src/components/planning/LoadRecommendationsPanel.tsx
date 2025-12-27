@@ -19,7 +19,6 @@ import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { generateLoadRecommendations, LoadRecommendationsResult, getActionSummary } from '@/services/loadRecommendations';
 import { getSpools, getPrinters, LoadRecommendation, MaterialShortage } from '@/services/storage';
 import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
-import { LoadSpoolDialog } from '@/components/printers/LoadSpoolDialog';
 
 interface LoadRecommendationsPanelProps {
   onRefresh?: () => void;
@@ -29,11 +28,6 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
   const { language } = useLanguage();
   const [result, setResult] = useState<LoadRecommendationsResult | null>(null);
   const [expanded, setExpanded] = useState(true);
-  
-  // Load spool dialog state
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedPrinterId, setSelectedPrinterId] = useState<string>('');
-  const [selectedColor, setSelectedColor] = useState<string>('');
 
   const refreshRecommendations = useCallback(() => {
     const recommendations = generateLoadRecommendations();
@@ -54,18 +48,7 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
     return unsubscribe;
   }, [refreshRecommendations]);
 
-  // Early return states - but we still need to render the dialog
-  const renderDialog = () => (
-    <LoadSpoolDialog
-      open={dialogOpen}
-      onOpenChange={setDialogOpen}
-      printerId={selectedPrinterId}
-      suggestedColor={selectedColor}
-      onSuccess={refreshRecommendations}
-    />
-  );
-
-  if (!result) return <>{renderDialog()}</>;
+  if (!result) return null;
 
   const { recommendations, materialShortages, summary } = result;
   const actionSummary = getActionSummary(result);
@@ -73,23 +56,20 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
   // If all cycles are ready, show a minimal success state
   if (!actionSummary.hasActions && summary.totalCycles > 0) {
     return (
-      <>
-        <Alert className="border-success/30 bg-success/5">
-          <CheckCircle className="h-4 w-4 text-success" />
-          <AlertTitle className="text-success">
-            {language === 'he' ? 'מוכן לביצוע' : 'Ready to Execute'}
-          </AlertTitle>
-          <AlertDescription>
-            {language === 'he' ? actionSummary.message : actionSummary.messageEn}
-          </AlertDescription>
-        </Alert>
-        {renderDialog()}
-      </>
+      <Alert className="border-success/30 bg-success/5">
+        <CheckCircle className="h-4 w-4 text-success" />
+        <AlertTitle className="text-success">
+          {language === 'he' ? 'מוכן לביצוע' : 'Ready to Execute'}
+        </AlertTitle>
+        <AlertDescription>
+          {language === 'he' ? actionSummary.message : actionSummary.messageEn}
+        </AlertDescription>
+      </Alert>
     );
   }
 
   if (summary.totalCycles === 0) {
-    return <>{renderDialog()}</>;
+    return null; // No cycles, no panel
   }
 
   return (
@@ -159,16 +139,7 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
                 {language === 'he' ? 'הנחיות טעינה' : 'Load Instructions'}
               </h4>
               {recommendations.map((rec) => (
-                <RecommendationCard 
-                  key={rec.id} 
-                  recommendation={rec} 
-                  language={language} 
-                  onClick={() => {
-                    setSelectedPrinterId(rec.printerId);
-                    setSelectedColor(rec.color);
-                    setDialogOpen(true);
-                  }}
-                />
+                <RecommendationCard key={rec.id} recommendation={rec} language={language} />
               ))}
             </div>
           )}
@@ -199,10 +170,11 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
           </div>
         </CardContent>
       )}
-      {renderDialog()}
     </Card>
   );
 };
+
+// Sub-components
 
 const ShortageAlert: React.FC<{ shortage: MaterialShortage; language: string }> = ({ shortage, language }) => {
   return (
@@ -228,24 +200,17 @@ const ShortageAlert: React.FC<{ shortage: MaterialShortage; language: string }> 
   );
 };
 
-const RecommendationCard: React.FC<{ 
-  recommendation: LoadRecommendation; 
-  language: string;
-  onClick?: () => void;
-}> = ({ recommendation, language, onClick }) => {
+const RecommendationCard: React.FC<{ recommendation: LoadRecommendation; language: string }> = ({ recommendation, language }) => {
   const spools = getSpools();
   const suggestedSpools = spools.filter(s => recommendation.suggestedSpoolIds.includes(s.id));
 
   return (
-    <div 
-      className={cn(
-        "p-3 rounded-lg border cursor-pointer transition-colors hover:shadow-md",
-        recommendation.priority === 'high' && "border-warning/50 bg-warning/5 hover:bg-warning/10",
-        recommendation.priority === 'medium' && "border-muted bg-muted/30 hover:bg-muted/50",
-        recommendation.priority === 'low' && "border-border bg-background hover:bg-muted/20",
-      )}
-      onClick={onClick}
-    >
+    <div className={cn(
+      "p-3 rounded-lg border",
+      recommendation.priority === 'high' && "border-warning/50 bg-warning/5",
+      recommendation.priority === 'medium' && "border-muted bg-muted/30",
+      recommendation.priority === 'low' && "border-border bg-background",
+    )}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           <PrinterIcon className="w-4 h-4 text-muted-foreground" />
