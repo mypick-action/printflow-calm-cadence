@@ -46,13 +46,13 @@ import {
   getProjects, 
   getProducts, 
   createProject,
-  createProduct,
   Project, 
   Product,
   calculatePriorityFromDueDate,
   calculateDaysRemaining,
 } from '@/services/storage';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
+import { ProductEditorModal } from '@/components/products/ProductEditorModal';
 
 const availableColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
 
@@ -62,14 +62,11 @@ export const ProjectsPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [manualOverrideOpen, setManualOverrideOpen] = useState(false);
-  const [newProductDialogOpen, setNewProductDialogOpen] = useState(false);
   const [productSearchText, setProductSearchText] = useState('');
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
   const [reportIssueProjectId, setReportIssueProjectId] = useState<string | undefined>(undefined);
-  const [newProduct, setNewProduct] = useState({
-    name: '',
-    gramsPerUnit: 50,
-  });
+  const [productEditorOpen, setProductEditorOpen] = useState(false);
+  const [productEditorInitialName, setProductEditorInitialName] = useState('');
   const [newProject, setNewProject] = useState({
     name: '',
     productId: '',
@@ -142,37 +139,25 @@ export const ProjectsPage: React.FC = () => {
     setProductSearchText('');
   };
 
-  const handleOpenNewProductDialog = () => {
+  const handleOpenProductEditor = () => {
     // Pre-fill with search text if user typed something
-    setNewProduct({
-      name: productSearchText,
-      gramsPerUnit: 50,
-    });
-    setNewProductDialogOpen(true);
+    setProductEditorInitialName(productSearchText);
+    setProductEditorOpen(true);
   };
 
-  const handleCreateProduct = () => {
-    if (!newProduct.name || newProduct.gramsPerUnit <= 0) return;
-    
-    const created = createProduct({
-      name: newProduct.name,
-      gramsPerUnit: newProduct.gramsPerUnit,
-      platePresets: [
-        { id: `preset-${Date.now()}`, name: 'Full', unitsPerPlate: 8, cycleHours: 2, riskLevel: 'low', allowedForNightCycle: true, isRecommended: true },
-      ],
-    });
-    
-    // Refresh products and select the new one
+  const handleProductCreated = (product: Product) => {
+    // Refresh products
     setProducts(getProducts());
-    setNewProject({ ...newProject, productId: created.id });
-    setNewProductDialogOpen(false);
-    setProductSearchText('');
-    setNewProduct({ name: '', gramsPerUnit: 50 });
     
-    toast({
-      title: language === 'he' ? 'מוצר נוצר בהצלחה' : 'Product created successfully',
-      description: `${created.name} (${created.gramsPerUnit}g)`,
+    // Auto-select the newly created product
+    setNewProject({ 
+      ...newProject, 
+      productId: product.id,
+      // Auto-select the recommended preset
+      preferredPresetId: product.platePresets.find(p => p.isRecommended)?.id || product.platePresets[0]?.id || '',
     });
+    
+    setProductSearchText('');
   };
 
   const getStatusBadge = (status: Project['status']) => {
@@ -327,7 +312,7 @@ export const ProjectsPage: React.FC = () => {
                   value={newProject.productId} 
                   onValueChange={(value) => {
                     if (value === '__new__') {
-                      handleOpenNewProductDialog();
+                      handleOpenProductEditor();
                     } else {
                       setNewProject({ ...newProject, productId: value });
                     }
@@ -372,63 +357,13 @@ export const ProjectsPage: React.FC = () => {
                 </Select>
               </div>
               
-              {/* New Product Dialog */}
-              <Dialog open={newProductDialogOpen} onOpenChange={setNewProductDialogOpen}>
-                <DialogContent className="sm:max-w-sm">
-                  <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                      <PackagePlus className="w-5 h-5 text-primary" />
-                      {language === 'he' ? 'הוספת מוצר חדש' : 'Add New Product'}
-                    </DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="productName">
-                        {language === 'he' ? 'שם המוצר' : 'Product Name'} *
-                      </Label>
-                      <Input
-                        id="productName"
-                        value={newProduct.name}
-                        onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
-                        placeholder={language === 'he' ? 'לדוגמה: מעמד לטלפון' : 'e.g. Phone Stand'}
-                        autoFocus
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="gramsPerUnit">
-                        {language === 'he' ? 'גרמים ליחידה' : 'Grams per Unit'} *
-                      </Label>
-                      <Input
-                        id="gramsPerUnit"
-                        type="number"
-                        min={1}
-                        value={newProduct.gramsPerUnit}
-                        onChange={(e) => setNewProduct({ ...newProduct, gramsPerUnit: parseInt(e.target.value) || 0 })}
-                        placeholder="50"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {language === 'he' ? 'כמות הפילמנט הנדרשת להדפסת יחידה אחת' : 'Amount of filament needed to print one unit'}
-                      </p>
-                    </div>
-                    <div className="flex gap-2 pt-2">
-                      <Button 
-                        variant="outline" 
-                        onClick={() => setNewProductDialogOpen(false)}
-                        className="flex-1"
-                      >
-                        {language === 'he' ? 'ביטול' : 'Cancel'}
-                      </Button>
-                      <Button 
-                        onClick={handleCreateProduct}
-                        disabled={!newProduct.name || newProduct.gramsPerUnit <= 0}
-                        className="flex-1"
-                      >
-                        {language === 'he' ? 'צור מוצר' : 'Create Product'}
-                      </Button>
-                    </div>
-                  </div>
-                </DialogContent>
-              </Dialog>
+              {/* Product Editor Modal */}
+              <ProductEditorModal
+                open={productEditorOpen}
+                onOpenChange={setProductEditorOpen}
+                initialName={productEditorInitialName}
+                onProductSaved={handleProductCreated}
+              />
               
               {/* Color Selection */}
               <div className="space-y-2">
