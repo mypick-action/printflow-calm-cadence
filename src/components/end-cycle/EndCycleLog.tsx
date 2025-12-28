@@ -339,6 +339,11 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
         },
         remakeProjectCreated: createdProjectId,
         mergeCycleId,
+        // IGNORE tracking: units deliberately left unrecovered
+        unrecoveredUnits: decision === 'ignore' ? unitsToRecover : undefined,
+        ignoredAtRisk: decision === 'ignore' ? (
+          (projectAfter?.quantityGood || 0) < (projectAfter?.quantityTarget || 0)
+        ) : undefined,
       },
       computedImpact: (() => {
         // Only include impact data relevant to the chosen decision
