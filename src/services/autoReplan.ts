@@ -5,6 +5,8 @@
 import { toast } from 'sonner';
 import { saveSnapshotAfterPlan } from './planningSnapshot';
 import { addPlanningLogEntry } from './planningLogger';
+import { updateLastEventWithPostReplan } from './endCycleEventLog';
+import { getPlannedCycles } from './storage';
 
 // Debounce configuration
 const DEBOUNCE_MS = 1500; // 1.5 seconds debounce
@@ -65,6 +67,7 @@ const executeAutoReplan = async (): Promise<void> => {
 
   isReplanning = true;
   debounceTimer = null;
+  const startTime = performance.now();
 
   try {
     console.log(`[AutoReplan] Executing replan, reason: ${pendingReason}`);
@@ -73,6 +76,7 @@ const executeAutoReplan = async (): Promise<void> => {
     const { recalculatePlan } = await import('./planningRecalculator');
     
     const result = recalculatePlan('from_now', true);
+    const replanDurationMs = Math.round(performance.now() - startTime);
     
     // Log the replan result
     addPlanningLogEntry({
@@ -82,6 +86,15 @@ const executeAutoReplan = async (): Promise<void> => {
       unitsPlanned: 0, // Will be extracted from summary if needed
       warnings: [],
       errors: result.success ? [] : [result.summary],
+    });
+    
+    // Phase B: Update end cycle event log with post-replan data
+    const cyclesAfterReplan = getPlannedCycles().length;
+    updateLastEventWithPostReplan({
+      plannedCyclesAfterReplan: cyclesAfterReplan,
+      replanDurationMs,
+      replanSuccess: result.success,
+      replanSummary: result.summary,
     });
     
     // Save snapshot after successful plan

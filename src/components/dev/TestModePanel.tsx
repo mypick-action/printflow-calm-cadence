@@ -464,9 +464,23 @@ export const TestModePanel: React.FC<TestModePanelProps> = ({ onClose, onScenari
                 <div className="font-medium">{selectedEvent.inputs.plannedCyclesBefore}</div>
               </div>
               <div className="p-2 bg-muted/50 rounded">
-                <div className="text-muted-foreground">Cycles After</div>
-                <div className="font-medium">{selectedEvent.outputs.plannedCyclesAfter}</div>
+                <div className="text-muted-foreground">Cycles After (Immediate)</div>
+                <div className="font-medium">{selectedEvent.outputs.plannedCyclesAfterImmediate}</div>
               </div>
+              {selectedEvent.postReplan && (
+                <div className="p-2 bg-green-500/20 rounded border border-green-500/30">
+                  <div className="text-muted-foreground">Cycles After Replan</div>
+                  <div className="font-medium">
+                    {selectedEvent.postReplan.plannedCyclesAfterReplan}
+                    <span className={`ml-2 text-sm ${selectedEvent.postReplan.cyclesChanged >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      ({selectedEvent.postReplan.cyclesChanged >= 0 ? '+' : ''}{selectedEvent.postReplan.cyclesChanged})
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {selectedEvent.postReplan.replanDurationMs}ms • {selectedEvent.postReplan.replanSuccess ? '✓' : '✗'}
+                  </div>
+                </div>
+              )}
               <div className="col-span-2 p-2 bg-muted/50 rounded">
                 <div className="text-muted-foreground">Progress Before → After</div>
                 <div className="font-medium">
