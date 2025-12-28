@@ -340,24 +340,42 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
         remakeProjectCreated: createdProjectId,
         mergeCycleId,
       },
-      computedImpact: {
-        dominoEffect: completeNowOption?.impact?.dominoEffect?.map(d => ({
-          cycleId: d.cycleId,
-          projectId: d.projectId,
-          projectName: d.projectName,
-          printerId: d.printerId,
-          printerName: d.printerName,
-          originalStart: d.originalStart,
-          newStart: d.newStart,
-          delayHours: d.delayHours,
-          crossesDeadline: d.crossesDeadline,
-        })),
-        deferAnalysis: decisionAnalysis.deferAnalysis ? {
-          latestStart: decisionAnalysis.deferAnalysis.latestStart || '',
-          estimatedStart: decisionAnalysis.deferAnalysis.estimatedStart || '',
-          riskLevel: decisionAnalysis.deferAnalysis.riskLevel,
-        } : undefined,
-      },
+      computedImpact: (() => {
+        // Only include impact data relevant to the chosen decision
+        if (decision === 'complete_now') {
+          return {
+            dominoEffect: completeNowOption?.impact?.dominoEffect?.map(d => ({
+              cycleId: d.cycleId,
+              projectId: d.projectId,
+              projectName: d.projectName,
+              printerId: d.printerId,
+              printerName: d.printerName,
+              originalStart: d.originalStart,
+              newStart: d.newStart,
+              delayHours: d.delayHours,
+              crossesDeadline: d.crossesDeadline,
+            })),
+          };
+        } else if (decision === 'defer_to_later') {
+          return {
+            deferAnalysis: decisionAnalysis.deferAnalysis ? {
+              latestStart: decisionAnalysis.deferAnalysis.latestStart || '',
+              estimatedStart: decisionAnalysis.deferAnalysis.estimatedStart || '',
+              riskLevel: decisionAnalysis.deferAnalysis.riskLevel,
+            } : undefined,
+          };
+        } else if (decision === 'merge_with_future' && mergeCycleId) {
+          const mergeCandidate = decisionAnalysis.mergeCandidates.find(c => c.cycleId === mergeCycleId);
+          return {
+            extensionImpact: mergeCandidate?.extensionImpact ? {
+              additionalTimeNeeded: mergeCandidate.extensionImpact.additionalTimeNeeded,
+              newEndTime: mergeCandidate.extensionImpact.newEndTime,
+              affectedCycles: mergeCandidate.extensionImpact.affectedCycles?.length || 0,
+            } : undefined,
+          };
+        }
+        return undefined;
+      })(),
       replanTriggered: true,
     });
 
