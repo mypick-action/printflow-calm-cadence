@@ -85,10 +85,11 @@ export interface MergeCandidate {
   // NEW: Time-based capacity
   availableTimeHours: number; // How much time can be added to this cycle
   extensionImpact: {
+    additionalTimeNeeded: number; // Hours added by merging
     newEndTime: string;
     wouldCrossDeadline: boolean;
     wouldRequireOvernight: boolean;
-    affectedCycles: number; // Domino effect on subsequent cycles
+    affectedCycles: DominoCycle[]; // Full domino effect details
   };
 }
 
@@ -212,7 +213,8 @@ const calculateImmediateImpact = (
   estimatedHours: number,
   existingCycles: PlannedCycle[],
   projects: Project[],
-  needsSpoolChange: boolean = false
+  needsSpoolChange: boolean = false,
+  targetPrinterId?: string
 ): ScheduleImpact => {
   const settings = getFactorySettings();
   const overrides = getTemporaryOverrides();
@@ -224,31 +226,51 @@ const calculateImmediateImpact = (
   // Add time for spool change if needed (15 minutes)
   const totalHoursNeeded = needsSpoolChange ? hoursNeeded + 0.25 : hoursNeeded;
   
-  // Find cycles that would be pushed - REAL calculation
+  // Find the target printer (either specified or first available)
+  const targetPrinter = targetPrinterId 
+    ? printers.find(p => p.id === targetPrinterId)
+    : printers[0];
+  
+  // Find cycles that would be pushed - ONLY for the SAME printer
   const today = new Date();
   const futureCycles = existingCycles.filter(c => 
-    c.status === 'planned' && new Date(c.startTime) > today
+    c.status === 'planned' && 
+    new Date(c.startTime) > today &&
+    (!targetPrinter || c.printerId === targetPrinter.id) // Filter by same printer
   ).sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
   
-  // Build domino effect - track each cycle that gets pushed
+  // Build domino effect with CHAIN calculation (start = max(prevEnd, originalStart))
   const dominoEffect: DominoCycle[] = [];
-  let cumulativeDelay = totalHoursNeeded;
+  let previousNewEnd: Date | null = null;
   let cyclesPushed = 0;
   const affectedProjectIds = new Set<string>();
   
   for (const cycle of futureCycles) {
-    if (cumulativeDelay <= 0) break;
-    
-    const cycleDuration = getCycleDurationHours(cycle);
     const project = projects.find(p => p.id === cycle.projectId);
     const printer = printers.find(p => p.id === cycle.printerId);
     
     const originalStart = new Date(cycle.startTime);
-    const newStart = new Date(originalStart.getTime() + totalHoursNeeded * 60 * 60 * 1000);
+    const originalEnd = new Date(cycle.endTime);
+    const cycleDuration = getCycleDurationHours(cycle);
+    
+    // Calculate new start: max(previousCycleNewEnd, originalStart + delay)
+    let newStart: Date;
+    if (previousNewEnd) {
+      // Chain calculation: start after the previous pushed cycle ends
+      newStart = new Date(Math.max(previousNewEnd.getTime(), originalStart.getTime() + totalHoursNeeded * 60 * 60 * 1000));
+    } else {
+      // First cycle: just add the delay from the new immediate work
+      newStart = new Date(originalStart.getTime() + totalHoursNeeded * 60 * 60 * 1000);
+    }
+    
+    const newEnd = new Date(newStart.getTime() + cycleDuration * 60 * 60 * 1000);
+    const delayHours = (newStart.getTime() - originalStart.getTime()) / (1000 * 60 * 60);
+    
+    // Only count as affected if there's actual delay
+    if (delayHours < 0.1) break; // Stop if no significant delay
     
     // Check if this cycle's delay causes deadline crossing
     const dueDate = project ? new Date(project.dueDate) : null;
-    const newEnd = new Date(new Date(cycle.endTime).getTime() + totalHoursNeeded * 60 * 60 * 1000);
     const crossesDeadline = dueDate ? newEnd > dueDate : false;
     
     dominoEffect.push({
@@ -259,13 +281,16 @@ const calculateImmediateImpact = (
       printerName: printer?.name || 'Unknown',
       originalStart: originalStart.toISOString(),
       newStart: newStart.toISOString(),
-      delayHours: totalHoursNeeded,
+      delayHours,
       crossesDeadline,
     });
     
     cyclesPushed++;
     affectedProjectIds.add(cycle.projectId);
-    cumulativeDelay -= cycleDuration;
+    previousNewEnd = newEnd;
+    
+    // Limit domino effect to 5 cycles for readability
+    if (dominoEffect.length >= 5) break;
   }
   
   const affectedProjects = projects.filter(p => affectedProjectIds.has(p.id));
@@ -474,13 +499,42 @@ const findMergeCandidates = (
       const newEndMinutes = newEnd.getHours() * 60 + newEnd.getMinutes();
       const wouldRequireOvernight = newEndMinutes > workEndMinutes;
       
-      // Count affected subsequent cycles (domino effect)
+      // Build domino effect for subsequent cycles on same printer
       const subsequentCycles = allPlannedCycles.filter(c => 
         c.printerId === cycle.printerId && 
         new Date(c.startTime) > originalEnd
       );
-      const affectedCycles = subsequentCycles.length > 0 && additionalTimeNeeded > 0.5 
-        ? Math.min(3, subsequentCycles.length) : 0;
+      const affectedCycles: DominoCycle[] = [];
+      let previousNewEnd = newEnd;
+      
+      for (const subCycle of subsequentCycles.slice(0, 3)) {
+        const subProject = projects.find(p => p.id === subCycle.projectId);
+        const subOriginalStart = new Date(subCycle.startTime);
+        const subOriginalEnd = new Date(subCycle.endTime);
+        const subDuration = getCycleDurationHours(subCycle);
+        
+        const subNewStart = new Date(Math.max(previousNewEnd.getTime(), subOriginalStart.getTime() + additionalTimeNeeded * 60 * 60 * 1000));
+        const subNewEnd = new Date(subNewStart.getTime() + subDuration * 60 * 60 * 1000);
+        const subDelay = (subNewStart.getTime() - subOriginalStart.getTime()) / (1000 * 60 * 60);
+        
+        if (subDelay < 0.1) break;
+        
+        const subDueDate = subProject ? new Date(subProject.dueDate) : null;
+        
+        affectedCycles.push({
+          cycleId: subCycle.id,
+          projectId: subCycle.projectId,
+          projectName: subProject?.name || 'Unknown',
+          printerId: subCycle.printerId,
+          printerName: printer?.name || 'Unknown',
+          originalStart: subOriginalStart.toISOString(),
+          newStart: subNewStart.toISOString(),
+          delayHours: subDelay,
+          crossesDeadline: subDueDate ? subNewEnd > subDueDate : false,
+        });
+        
+        previousNewEnd = subNewEnd;
+      }
       
       candidates.push({
         cycleId: cycle.id,
@@ -497,6 +551,7 @@ const findMergeCandidates = (
         cycleDurationHours: cycleDuration,
         availableTimeHours: (maxUnitsPerPlate - cycle.unitsPlanned) * hoursPerUnit,
         extensionImpact: {
+          additionalTimeNeeded,
           newEndTime: newEnd.toISOString(),
           wouldCrossDeadline,
           wouldRequireOvernight,
