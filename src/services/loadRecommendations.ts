@@ -98,31 +98,14 @@ const calculateRemainingDemandByColor = (): Map<string, {
  */
 const calculateMaterialShortages = (): MaterialShortage[] => {
   const colorInventory = getColorInventory();
-  const spools = getSpools();
   const demandByColor = calculateRemainingDemandByColor();
   const shortages: MaterialShortage[] = [];
 
   for (const [colorKey, demand] of demandByColor) {
-    let availableGrams = 0;
-    
-    // Check new ColorInventory first
+    // Use ONLY ColorInventory model (not deprecated Spools model)
     const invItem = colorInventory.find((i: ColorInventoryItem) => normalizeColor(i.color) === colorKey);
-    if (invItem) {
-      availableGrams = getTotalGrams(invItem);
-    } else {
-      // Fall back to old spools model
-      availableGrams = spools
-        .filter(s => 
-          normalizeColor(s.color) === colorKey && 
-          s.state !== 'empty' && 
-          s.gramsRemainingEst > 0
-        )
-        .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
-    }
-
-    // CRITICAL: If color doesn't exist at all in inventory (available = 0 and no inventory item),
-    // it's a complete shortage - the user needs to order this color
-    const colorExistsInInventory = invItem !== undefined || spools.some(s => normalizeColor(s.color) === colorKey);
+    const availableGrams = invItem ? getTotalGrams(invItem) : 0;
+    const colorExistsInInventory = invItem !== undefined;
     
     // Include safety threshold in the calculation
     const effectiveRequired = demand.totalGrams + SAFETY_THRESHOLD_GRAMS;
@@ -133,8 +116,9 @@ const calculateMaterialShortages = (): MaterialShortage[] => {
     if (!colorExistsInInventory || availableGrams < effectiveRequired) {
       const shortfall = Math.max(0, demand.totalGrams - availableGrams);
       
-      // Create shortage alert if there's actual shortfall
+      // Create shortage alert if there's actual shortfall or color doesn't exist
       if (shortfall > 0 || !colorExistsInInventory) {
+        console.log(`[calculateMaterialShortages] ${colorKey}: shortage! exists=${colorExistsInInventory}, available=${availableGrams}g, required=${demand.totalGrams}g, shortfall=${shortfall}g`);
         shortages.push({
           color: colorKey,
           requiredGrams: demand.totalGrams,
@@ -152,23 +136,22 @@ const calculateMaterialShortages = (): MaterialShortage[] => {
 
 /**
  * Check if a color has any material in inventory (open or closed spools)
+ * Uses ONLY the ColorInventory model (not the deprecated Spools model)
  */
 const hasColorInInventory = (colorKey: string): boolean => {
   const colorInventory = getColorInventory();
   const invItem = colorInventory.find((i: ColorInventoryItem) => normalizeColor(i.color) === colorKey);
   
-  if (invItem) {
-    const total = getTotalGrams(invItem);
-    return total > 0 || invItem.closedCount > 0;
+  if (!invItem) {
+    // Color doesn't exist in ColorInventory at all - no material
+    console.log(`[hasColorInInventory] ${colorKey}: NOT FOUND in ColorInventory`);
+    return false;
   }
   
-  // Fallback to old spools model
-  const spools = getSpools();
-  return spools.some(s => 
-    normalizeColor(s.color) === colorKey && 
-    s.state !== 'empty' && 
-    s.gramsRemainingEst > 0
-  );
+  const total = getTotalGrams(invItem);
+  const hasStock = total > 0 || invItem.closedCount > 0;
+  console.log(`[hasColorInInventory] ${colorKey}: found, total=${total}g, closedCount=${invItem.closedCount}, hasStock=${hasStock}`);
+  return hasStock;
 };
 
 /**
