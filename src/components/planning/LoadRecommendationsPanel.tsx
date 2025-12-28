@@ -332,23 +332,28 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
     const printer = printers.find(p => p.id === recommendation.printerId);
     
     if (printer?.hasAMS) {
-      // For AMS printers, update amsSlotStates to add the color to a slot
+      // For AMS printers, update amsSlotStates
       const currentSlots = printer.amsSlotStates || [];
-      // Find first empty slot or create a new one
-      const emptySlotIndex = currentSlots.findIndex(s => !s.color);
-      const newSlots = [...currentSlots];
+      // Check if color already exists
+      const existingIdx = currentSlots.findIndex(s => s.color?.toLowerCase() === recommendation.color.toLowerCase());
       
-      if (emptySlotIndex >= 0) {
-        newSlots[emptySlotIndex] = {
-          slotIndex: emptySlotIndex,
-          color: recommendation.color,
-        };
+      let newSlots = [...currentSlots];
+      
+      if (existingIdx >= 0) {
+        // Color already in AMS - no change needed
+        console.log(`[confirmLoad] ${recommendation.color} already in AMS slot ${existingIdx}`);
       } else {
-        // Add to first slot if no empty slot found
-        newSlots[0] = {
-          slotIndex: 0,
-          color: recommendation.color,
-        };
+        // Find first empty slot
+        const emptyIdx = currentSlots.findIndex(s => !s.color);
+        if (emptyIdx >= 0) {
+          newSlots[emptyIdx] = { slotIndex: emptyIdx, color: recommendation.color };
+        } else if (currentSlots.length < (printer.amsSlots || 4)) {
+          // Add new slot
+          newSlots.push({ slotIndex: currentSlots.length, color: recommendation.color });
+        } else {
+          // Replace first slot
+          newSlots[0] = { slotIndex: 0, color: recommendation.color };
+        }
       }
       
       updatePrinter(recommendation.printerId, {
