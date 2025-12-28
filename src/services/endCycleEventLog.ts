@@ -37,6 +37,12 @@ export interface EndCycleEventLogEntry {
   computedImpact?: {
     dominoEffect?: Array<{
       cycleId: string;
+      projectId: string;
+      projectName: string;
+      printerId: string;
+      printerName: string;
+      originalStart: string;
+      newStart: string;
       delayHours: number;
       crossesDeadline: boolean;
     }>;

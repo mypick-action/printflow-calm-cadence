@@ -222,7 +222,8 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
 
     const unitsToRecover = pendingResult === 'completed_with_scrap' ? scrapUnits : activeCycle.unitsPlanned;
 
-    // Log cycle
+    // Log cycle - ALWAYS record scrap regardless of decision
+    // The decision affects what we DO about it, not whether we record it
     const logResult = logCycleWithMaterialConsumption(
       {
         printerId: selectedPrinter,
@@ -230,7 +231,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
         plannedCycleId: activeCycle.id,
         result: pendingResult,
         unitsCompleted,
-        unitsScrap: decision === 'ignore' ? unitsScrap : 0,
+        unitsScrap, // Always record actual scrap count
         gramsWasted,
       },
       activeCycle.color,
@@ -342,6 +343,12 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       computedImpact: {
         dominoEffect: completeNowOption?.impact?.dominoEffect?.map(d => ({
           cycleId: d.cycleId,
+          projectId: d.projectId,
+          projectName: d.projectName,
+          printerId: d.printerId,
+          printerName: d.printerName,
+          originalStart: d.originalStart,
+          newStart: d.newStart,
           delayHours: d.delayHours,
           crossesDeadline: d.crossesDeadline,
         })),
