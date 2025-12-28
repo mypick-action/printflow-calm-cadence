@@ -20,6 +20,7 @@ import {
   Info,
   ArrowRight,
   FolderOpen,
+  ClipboardCheck,
 } from 'lucide-react';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { PlannedCycle, Printer as PrinterType } from '@/services/storage';
@@ -45,6 +46,7 @@ interface DailyPlanDrawerProps {
   printers: PrinterType[];
   onRecalculateDay?: (date: Date) => void;
   onNavigateToProjects?: () => void;
+  onEndCycle?: (printerId: string) => void;
 }
 
 export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
@@ -54,6 +56,7 @@ export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
   printers,
   onRecalculateDay,
   onNavigateToProjects,
+  onEndCycle,
 }) => {
   const { language, direction } = useLanguage();
 
@@ -209,49 +212,68 @@ export const DailyPlanDrawer: React.FC<DailyPlanDrawerProps> = ({
                     
                     {printerCycles.length > 0 ? (
                       <div className="space-y-2">
-                        {printerCycles.map((cycle) => (
-                          <div 
-                            key={cycle.id}
-                            className={`
-                              flex items-center gap-3 p-3 rounded-xl border transition-all
-                              ${cycle.shift === 'end_of_day' 
-                                ? 'bg-primary/5 border-primary/30' 
-                                : 'bg-muted/50 border-border'
-                              }
-                            `}
-                          >
-                            <SpoolIcon color={getSpoolColor(cycle.projectColor)} size={32} />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <Clock className="w-4 h-4 text-muted-foreground" />
-                                <span className="text-sm text-muted-foreground font-mono">
-                                  {typeof cycle.startTime === 'string' && cycle.startTime.includes('T') 
-                                    ? format(new Date(cycle.startTime), 'HH:mm')
-                                    : cycle.startTime} - {typeof cycle.endTime === 'string' && cycle.endTime.includes('T')
-                                    ? format(new Date(cycle.endTime), 'HH:mm')
-                                    : cycle.endTime}
-                                </span>
-                                {cycle.shift === 'end_of_day' && (
-                                  <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">
-                                    {language === 'he' ? 'סוף יום' : 'End of day'}
-                                  </Badge>
-                                )}
+                        {printerCycles.map((cycle) => {
+                          const isCompleted = cycle.status === 'completed';
+                          return (
+                            <div 
+                              key={cycle.id}
+                              className={`
+                                p-3 rounded-xl border transition-all
+                                ${isCompleted
+                                  ? 'bg-muted/30 border-border opacity-60'
+                                  : cycle.shift === 'end_of_day' 
+                                    ? 'bg-primary/5 border-primary/30' 
+                                    : 'bg-muted/50 border-border'
+                                }
+                              `}
+                            >
+                              <div className="flex items-center gap-3">
+                                <SpoolIcon color={getSpoolColor(cycle.projectColor)} size={32} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <Clock className="w-4 h-4 text-muted-foreground" />
+                                    <span className="text-sm text-muted-foreground font-mono">
+                                      {typeof cycle.startTime === 'string' && cycle.startTime.includes('T') 
+                                        ? format(new Date(cycle.startTime), 'HH:mm')
+                                        : cycle.startTime} - {typeof cycle.endTime === 'string' && cycle.endTime.includes('T')
+                                        ? format(new Date(cycle.endTime), 'HH:mm')
+                                        : cycle.endTime}
+                                    </span>
+                                    {cycle.shift === 'end_of_day' && (
+                                      <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">
+                                        {language === 'he' ? 'סוף יום' : 'End of day'}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="font-medium text-foreground mt-1">
+                                    {cycle.projectName}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {cycle.projectColor}
+                                  </div>
+                                </div>
+                                <div className="text-center flex-shrink-0">
+                                  <div className="text-lg font-bold text-foreground">{cycle.unitsPlanned}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {language === 'he' ? 'יחידות' : 'units'}
+                                  </div>
+                                </div>
                               </div>
-                              <div className="font-medium text-foreground mt-1">
-                                {cycle.projectName}
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                {cycle.projectColor}
-                              </div>
+                              {/* End Cycle Button */}
+                              {!isCompleted && onEndCycle && (
+                                <Button 
+                                  size="sm" 
+                                  variant="outline"
+                                  onClick={() => onEndCycle(printer.id)}
+                                  className="w-full mt-3 gap-2 border-success/30 text-success hover:bg-success/10"
+                                >
+                                  <ClipboardCheck className="w-4 h-4" />
+                                  {language === 'he' ? 'סיום עבודה' : 'Mark Complete'}
+                                </Button>
+                              )}
                             </div>
-                            <div className="text-center flex-shrink-0">
-                              <div className="text-lg font-bold text-foreground">{cycle.unitsPlanned}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {language === 'he' ? 'יחידות' : 'units'}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="p-4 rounded-lg bg-muted/30 text-center text-sm text-muted-foreground">

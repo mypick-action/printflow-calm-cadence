@@ -83,7 +83,11 @@ const DAYS_LABELS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const STORAGE_KEY = 'printflow_week_overrides';
 
-export const PlanningPage: React.FC = () => {
+interface PlanningPageProps {
+  onEndCycle?: (printerId: string) => void;
+}
+
+export const PlanningPage: React.FC<PlanningPageProps> = ({ onEndCycle }) => {
   const { language } = useLanguage();
   const [settings, setSettings] = useState<FactorySettings | null>(null);
   const [printers, setPrinters] = useState<PrinterType[]>([]);
@@ -302,6 +306,7 @@ export const PlanningPage: React.FC = () => {
         day={selectedDay}
         printers={printers}
         onRecalculateDay={handleRecalculateDay}
+        onEndCycle={onEndCycle}
       />
 
       {/* Header */}

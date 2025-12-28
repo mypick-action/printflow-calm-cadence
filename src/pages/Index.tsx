@@ -139,7 +139,7 @@ const PrintFlowApp: React.FC = () => {
       case 'quoteCheck':
         return <QuoteCheckPage />;
       case 'planning':
-        return <PlanningPage />;
+        return <PlanningPage onEndCycle={handleEndCycle} />;
       case 'settings':
         return <SettingsPage />;
       default:

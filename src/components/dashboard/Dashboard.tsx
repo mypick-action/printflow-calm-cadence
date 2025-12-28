@@ -164,8 +164,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
           </div>
         </div>
         
-        {/* End Cycle Button - show for active or planned cycles */}
-        {isActive && !isCompleted && onEndCycle && (
+        {/* End Cycle Button - show for all non-completed cycles */}
+        {!isCompleted && onEndCycle && (
           <Button 
             size="sm" 
             variant="outline"
@@ -173,7 +173,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
             className="w-full mt-3 gap-2 border-success/30 text-success hover:bg-success/10"
           >
             <ClipboardCheck className="w-4 h-4" />
-            {language === 'he' ? 'סיים מחזור' : 'End Cycle'}
+            {language === 'he' ? 'סיום עבודה' : 'Mark Complete'}
           </Button>
         )}
       </div>
