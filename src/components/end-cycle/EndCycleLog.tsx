@@ -114,14 +114,8 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     const allCycles = getPlannedCycles();
     
     allPrinters.forEach(printer => {
-      let cycle = allCycles.find(c => c.printerId === printer.id && c.status === 'in_progress');
-      
-      if (!cycle) {
-        const pendingCycles = allCycles
-          .filter(c => c.printerId === printer.id && c.status === 'planned')
-          .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
-        cycle = pendingCycles[0];
-      }
+      // ONLY look for in_progress cycles - cannot end a planned cycle!
+      const cycle = allCycles.find(c => c.printerId === printer.id && c.status === 'in_progress');
       
       if (cycle) {
         const project = getProject(cycle.projectId);
