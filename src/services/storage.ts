@@ -1135,7 +1135,8 @@ export const logCycleWithMaterialConsumption = (
   log: Omit<CycleLog, 'id' | 'timestamp'>,
   color: string,
   gramsPerUnit: number,
-  printerId?: string
+  printerId?: string,
+  skipAvailabilityCheck: boolean = false // For execution mode - material already consumed
 ): LogCycleResult => {
   // Calculate total material consumed
   // For completed/completed_with_scrap: good units + scrap units
@@ -1151,17 +1152,27 @@ export const logCycleWithMaterialConsumption = (
     gramsToConsume = totalUnits * gramsPerUnit;
   }
 
-  // Check availability first
-  const availability = checkMaterialAvailability(color, gramsToConsume);
-  if (!availability.available) {
-    return {
-      success: false,
-      error: `Insufficient ${color} filament: need ${gramsToConsume}g, have ${availability.totalGrams}g`,
-      errorHe: `אין מספיק פילמנט ${color}: נדרשים ${gramsToConsume}g, זמינים ${availability.totalGrams}g`,
-    };
+  // EXECUTION vs PLANNING separation:
+  // - For completed_successfully: material was already consumed during printing,
+  //   we only need to deduct from inventory records (no availability check)
+  // - For planning/failed: we may need to check availability for future recovery
+  const isExecutionCompletion = log.result === 'completed' || 
+                                  log.result === 'completed_with_scrap';
+  
+  if (!skipAvailabilityCheck && !isExecutionCompletion) {
+    // Only check availability for non-completion scenarios (like planning validation)
+    const availability = checkMaterialAvailability(color, gramsToConsume);
+    if (!availability.available) {
+      return {
+        success: false,
+        error: `Insufficient ${color} filament: need ${gramsToConsume}g, have ${availability.totalGrams}g`,
+        errorHe: `אין מספיק פילמנט ${color}: נדרשים ${gramsToConsume}g, זמינים ${availability.totalGrams}g`,
+      };
+    }
   }
 
-  // Consume material
+  // Consume material (deduct from inventory records)
+  // For execution: this updates the spool records to reflect actual usage
   const materialResult = consumeMaterial(color, gramsToConsume, printerId);
   if (!materialResult.success) {
     return {
