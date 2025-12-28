@@ -14,6 +14,13 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { 
   Package, 
@@ -271,6 +278,7 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
   const [loadDialogOpen, setLoadDialogOpen] = useState(false);
   const [loadChoice, setLoadChoice] = useState<'open' | 'new' | null>(null);
   const [openGramsInput, setOpenGramsInput] = useState(0);
+  const [newSpoolSize, setNewSpoolSize] = useState(1000); // Default 1kg
   
   // Get color inventory for this recommendation
   const inventoryItem = getColorInventoryItem(recommendation.color, recommendation.material || 'PLA');
@@ -284,6 +292,7 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
   
   const handleOpenNew = () => {
     setLoadChoice('new');
+    setNewSpoolSize(inventoryItem?.closedSpoolSizeGrams || 1000);
     setLoadDialogOpen(true);
   };
   
@@ -298,12 +307,12 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
         description: `${recommendation.color} - ${openGramsInput}g`,
       });
     } else if (loadChoice === 'new') {
-      // Open a new closed spool
-      const result = openNewSpool(recommendation.color, material);
+      // Open a new closed spool with specified size
+      const result = openNewSpool(recommendation.color, material, newSpoolSize);
       if (result) {
         toast({
           title: language === 'he' ? 'גליל חדש נפתח' : 'New spool opened',
-          description: `${recommendation.color} - +${inventoryItem?.closedSpoolSizeGrams || 1000}g`,
+          description: `${recommendation.color} - +${newSpoolSize}g`,
         });
       } else {
         toast({
@@ -467,12 +476,32 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
             )}
             
             {loadChoice === 'new' && inventoryItem && (
-              <div className="p-3 bg-muted/50 rounded-lg">
-                <p className="text-sm">
-                  {language === 'he' 
-                    ? `יופחת גליל סגור אחד ויתווספו ${inventoryItem.closedSpoolSizeGrams}g לפתוחים`
-                    : `Will decrement 1 closed spool and add ${inventoryItem.closedSpoolSizeGrams}g to open`}
-                </p>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    {language === 'he' ? 'גודל גליל' : 'Spool size'}
+                  </label>
+                  <Select 
+                    value={String(newSpoolSize)} 
+                    onValueChange={(v) => setNewSpoolSize(parseInt(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg">
+                      <SelectItem value="1000">1kg</SelectItem>
+                      <SelectItem value="2000">2kg</SelectItem>
+                      <SelectItem value="5000">5kg</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <p className="text-sm">
+                    {language === 'he' 
+                      ? `יופחת גליל סגור אחד ויתווספו ${newSpoolSize}g לפתוחים`
+                      : `Will decrement 1 closed spool and add ${newSpoolSize}g to open`}
+                  </p>
+                </div>
               </div>
             )}
           </div>

@@ -1834,8 +1834,9 @@ export const adjustOpenTotalGrams = (color: string, material: string, delta: num
 
 /**
  * Open a new closed spool - decrements closed count, adds to open grams
+ * @param sizeGrams - optional size override (defaults to item's closedSpoolSizeGrams)
  */
-export const openNewSpool = (color: string, material: string): ColorInventoryItem | undefined => {
+export const openNewSpool = (color: string, material: string, sizeGrams?: number): ColorInventoryItem | undefined => {
   const item = getColorInventoryItem(color, material);
   if (!item || item.closedCount <= 0) return undefined;
   
@@ -1847,10 +1848,11 @@ export const openNewSpool = (color: string, material: string): ColorInventoryIte
   );
   
   if (index >= 0) {
+    const gramsToAdd = sizeGrams ?? items[index].closedSpoolSizeGrams;
     items[index] = {
       ...items[index],
       closedCount: items[index].closedCount - 1,
-      openTotalGrams: items[index].openTotalGrams + items[index].closedSpoolSizeGrams,
+      openTotalGrams: items[index].openTotalGrams + gramsToAdd,
       updatedAt: new Date().toISOString(),
     };
     setItem(KEYS.COLOR_INVENTORY, items);

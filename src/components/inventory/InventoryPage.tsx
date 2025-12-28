@@ -27,7 +27,6 @@ import {
   upsertColorInventoryItem,
   adjustClosedCount,
   setOpenTotalGrams,
-  openNewSpool,
   getFactorySettings,
   ColorInventoryItem,
   getTotalGrams,
@@ -117,21 +116,8 @@ export const InventoryPage: React.FC = () => {
     });
   };
 
-  const handleOpenNewSpool = (item: ColorInventoryItem) => {
-    if (item.closedCount <= 0) {
-      toast({
-        title: language === 'he' ? 'אין גלילים סגורים' : 'No closed spools',
-        variant: 'destructive',
-      });
-      return;
-    }
-    openNewSpool(item.color, item.material);
-    refreshData();
-    toast({
-      title: language === 'he' ? 'גליל נפתח' : 'Spool opened',
-      description: `+${item.closedSpoolSizeGrams}g ${language === 'he' ? 'לפתוחים' : 'to open'}`,
-    });
-  };
+  // Note: Opening new spools happens only via Load flow, not from inventory page
+
 
   // Sort inventory by total grams descending
   const sortedInventory = [...inventory].sort((a, b) => getTotalGrams(b) - getTotalGrams(a));
@@ -320,20 +306,7 @@ export const InventoryPage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Open New Spool Button */}
-                {item.closedCount > 0 && (
-                  <Button 
-                    variant="secondary" 
-                    size="sm" 
-                    className="w-full"
-                    onClick={() => handleOpenNewSpool(item)}
-                  >
-                    <Package className="w-4 h-4 mr-1" />
-                    {language === 'he' 
-                      ? `פתח גליל חדש (+${item.closedSpoolSizeGrams}g)`
-                      : `Open new spool (+${item.closedSpoolSizeGrams}g)`}
-                  </Button>
-                )}
+                {/* Note: Opening new spools happens only via Load flow */}
               </CardContent>
             </Card>
           );
