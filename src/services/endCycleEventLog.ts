@@ -38,6 +38,9 @@ export interface EndCycleEventLogEntry {
     };
     remakeProjectCreated?: string;
     mergeCycleId?: string;
+    // IGNORE-specific: track unrecovered units
+    unrecoveredUnits?: number;
+    ignoredAtRisk?: boolean; // true if project will be short
   };
   // Phase B: Post-replan data (filled after autoReplan completes)
   postReplan?: {
