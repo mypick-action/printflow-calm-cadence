@@ -8,6 +8,9 @@ import {
   Project,
   Product,
   Spool,
+  getColorInventory,
+  getTotalGrams,
+  ColorInventoryItem,
 } from './storage';
 import { normalizeColor } from './colorNormalization';
 
@@ -124,18 +127,16 @@ export const getMaterialStatusForColor = (
   requiredGrams: number,
   material?: string
 ): MaterialStatus => {
-  const spools = getSpools();
   const colorKey = normalizeColor(color);
+  const colorInventory = getColorInventory();
   
-  // Get available grams for this color/material
-  const matchingSpools = spools.filter(s => 
-    normalizeColor(s.color) === colorKey &&
-    s.state !== 'empty' &&
-    s.gramsRemainingEst > 0 &&
-    (!material || s.material.toLowerCase() === material.toLowerCase())
+  // Find matching inventory item using normalized color comparison
+  const matchingItem = colorInventory.find((item: ColorInventoryItem) => 
+    normalizeColor(item.color) === colorKey &&
+    (!material || item.material.toLowerCase() === material.toLowerCase())
   );
   
-  const availableGrams = matchingSpools.reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+  const availableGrams = matchingItem ? getTotalGrams(matchingItem) : 0;
   const missingGrams = Math.max(0, requiredGrams - availableGrams);
   
   let status: MaterialStatusType;
