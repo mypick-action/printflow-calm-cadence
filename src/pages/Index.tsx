@@ -13,6 +13,8 @@ import { QuoteCheckPage } from '@/components/quote-check/QuoteCheckPage';
 import { SettingsPage } from '@/components/settings/SettingsPage';
 import { PlanningPage } from '@/components/planning/PlanningPage';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
+import { WeeklyPlanningPage } from '@/components/weekly/WeeklyPlanningPage';
+import { OperationalDashboard } from '@/components/weekly/OperationalDashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Construction } from 'lucide-react';
 import { 
@@ -140,6 +142,15 @@ const PrintFlowApp: React.FC = () => {
         return <QuoteCheckPage />;
       case 'planning':
         return <PlanningPage onEndCycle={handleEndCycle} />;
+      case 'weekly':
+        return <WeeklyPlanningPage onNavigateToProject={() => setCurrentPage('projects')} />;
+      case 'operationalDashboard':
+        return (
+          <OperationalDashboard 
+            onNavigateToProject={() => setCurrentPage('projects')}
+            onNavigateToWeekly={() => setCurrentPage('weekly')}
+          />
+        );
       case 'settings':
         return <SettingsPage />;
       default:
