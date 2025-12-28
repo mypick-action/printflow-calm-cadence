@@ -1725,6 +1725,7 @@ export const upsertColorInventoryItem = (item: Omit<ColorInventoryItem, 'id' | '
       updatedAt: now,
     };
     setItem(KEYS.COLOR_INVENTORY, items);
+    scheduleAutoReplan('inventory_updated');
     notifyInventoryChanged();
     return items[existingIndex];
   } else {
@@ -1735,6 +1736,7 @@ export const upsertColorInventoryItem = (item: Omit<ColorInventoryItem, 'id' | '
       updatedAt: now,
     };
     setItem(KEYS.COLOR_INVENTORY, [...items, newItem]);
+    scheduleAutoReplan('inventory_updated');
     notifyInventoryChanged();
     return newItem;
   }
