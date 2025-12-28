@@ -26,9 +26,13 @@ import {
   getProject,
   getProduct,
   logCycleWithMaterialConsumption,
+  createProject,
+  updatePlannedCycle,
   Printer as PrinterType,
   PlannedCycle
 } from '@/services/storage';
+import { analyzeDecisionOptions, DecisionOption, DecisionAnalysis } from '@/services/impactAnalysis';
+import { DecisionModal } from './DecisionModal';
 
 type CycleResult = 'completed' | 'completed_with_scrap' | 'failed';
 type WasteMethod = 'quick' | 'estimate' | 'manual';
@@ -58,19 +62,22 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
   const [wastedGrams, setWastedGrams] = useState(0);
   const [quickPickGrams, setQuickPickGrams] = useState<number | null>(null);
   const [isConfirmed, setIsConfirmed] = useState(false);
+  
+  // NEW: Decision modal state
+  const [showDecisionModal, setShowDecisionModal] = useState(false);
+  const [decisionAnalysis, setDecisionAnalysis] = useState<DecisionAnalysis | null>(null);
+  const [pendingResult, setPendingResult] = useState<CycleResult | null>(null);
 
   useEffect(() => {
     loadData();
   }, []);
 
   useEffect(() => {
-    // Auto-select printer if pre-selected
     if (preSelectedPrinterId && printers.length > 0) {
       const cycle = printerCycles[preSelectedPrinterId];
       if (cycle) {
         setSelectedPrinter(preSelectedPrinterId);
         setActiveCycle(cycle);
-        // Don't auto-advance to step 2, let user confirm first
       }
     }
   }, [preSelectedPrinterId, printers, printerCycles]);
@@ -79,18 +86,12 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     const allPrinters = getPrinters().filter(p => p.active);
     setPrinters(allPrinters);
     
-    // Build printer cycles map with project info
-    // FIXED: Show cycles that are in_progress OR the next scheduled/ready cycle per printer
-    // This allows completing cycles outside working hours (overnight printing)
     const cyclesMap: Record<string, CycleWithProject | null> = {};
     const allCycles = getPlannedCycles();
     
     allPrinters.forEach(printer => {
-      // First check for in_progress cycles (highest priority)
       let cycle = allCycles.find(c => c.printerId === printer.id && c.status === 'in_progress');
       
-      // If no in_progress cycle, find the next planned cycle for this printer
-      // This allows users to start/complete cycles even outside normal working hours
       if (!cycle) {
         const pendingCycles = allCycles
           .filter(c => c.printerId === printer.id && c.status === 'planned')
@@ -130,40 +131,66 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
   const handleResultSelect = (resultValue: CycleResult) => {
     setResult(resultValue);
     if (resultValue === 'completed') {
-      // For completed, go directly to submit
       handleSubmitWithResult('completed');
     } else {
       setStep(3);
     }
   };
 
-  const handleSubmitWithResult = (resultType: CycleResult) => {
-    if (!activeCycle) return;
+  // NEW: Handle submit - now opens decision modal for scrap/failed
+  const handleSubmitWithDecision = () => {
+    if (!activeCycle || !result) return;
+    
+    const unitsToRecover = result === 'completed_with_scrap' ? scrapUnits : activeCycle.unitsPlanned;
+    const gramsLost = result === 'completed_with_scrap' 
+      ? scrapUnits * activeCycle.gramsPerUnit 
+      : wastedGrams;
+    
+    // Analyze options and show decision modal
+    try {
+      const analysis = analyzeDecisionOptions(
+        activeCycle.projectId,
+        unitsToRecover,
+        gramsLost,
+        2.5 // default cycle hours
+      );
+      setDecisionAnalysis(analysis);
+      setPendingResult(result);
+      setShowDecisionModal(true);
+    } catch (error) {
+      console.error('Error analyzing decision options:', error);
+      // Fallback to old behavior if analysis fails
+      handleSubmitWithResult(result);
+    }
+  };
+
+  // NEW: Handle decision from modal
+  const handleDecision = (decision: DecisionOption, mergeCycleId?: string) => {
+    if (!activeCycle || !pendingResult) return;
 
     let unitsCompleted = activeCycle.unitsPlanned;
     let unitsScrap = 0;
     let gramsWasted = 0;
 
-    if (resultType === 'completed_with_scrap') {
+    if (pendingResult === 'completed_with_scrap') {
       unitsCompleted = activeCycle.unitsPlanned - scrapUnits;
       unitsScrap = scrapUnits;
-      // Auto-calculate grams wasted from scrap units
       gramsWasted = scrapUnits * activeCycle.gramsPerUnit;
-    } else if (resultType === 'failed') {
+    } else if (pendingResult === 'failed') {
       unitsCompleted = 0;
       unitsScrap = 0;
       gramsWasted = wastedGrams;
     }
 
-    // Use the new function that handles material consumption
-    const result = logCycleWithMaterialConsumption(
+    // Log cycle WITHOUT automatic remake (we handle it based on decision)
+    const logResult = logCycleWithMaterialConsumption(
       {
         printerId: selectedPrinter,
         projectId: activeCycle.projectId,
         plannedCycleId: activeCycle.id,
-        result: resultType,
+        result: pendingResult,
         unitsCompleted,
-        unitsScrap,
+        unitsScrap: decision === 'ignore' ? unitsScrap : 0, // Only record scrap if ignoring
         gramsWasted,
       },
       activeCycle.color,
@@ -171,38 +198,65 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       selectedPrinter
     );
 
-    if (!result.success) {
-      // Show error - not enough material
+    if (!logResult.success) {
       toast({
         title: language === 'he' ? 'שגיאה' : 'Error',
-        description: language === 'he' ? result.errorHe : result.error,
+        description: language === 'he' ? logResult.errorHe : logResult.error,
         variant: 'destructive',
       });
       return;
     }
 
-    // Show success with material info and remake project info
-    const materialInfo = result.materialResult 
-      ? (language === 'he' 
-          ? `נוכו ${result.materialResult.gramsConsumed}g מהמלאי.`
-          : `${result.materialResult.gramsConsumed}g deducted from inventory.`)
-      : '';
-
-    // Check if a remake project was created
-    if (result.remakeProject) {
-      toast({
-        title: language === 'he' ? 'נוצר פרויקט השלמה' : 'Remake Project Created',
-        description: language === 'he' 
-          ? `נפתח פרויקט "${result.remakeProject.name}" להשלמת ${result.remakeProject.quantityTarget} יחידות. התכנון יתעדכן אוטומטית.`
-          : `Created project "${result.remakeProject.name}" to produce ${result.remakeProject.quantityTarget} units. Plan will update automatically.`,
-      });
-    } else {
-      // Auto-replan is now triggered automatically by the material consumption
+    // Handle decision
+    const project = getProject(activeCycle.projectId);
+    const unitsToRecover = pendingResult === 'completed_with_scrap' ? scrapUnits : activeCycle.unitsPlanned;
+    
+    if (decision === 'complete_now' || decision === 'defer_to_later') {
+      // Create remake project
+      if (project) {
+        createProject({
+          name: `${project.name} - השלמה`,
+          productId: project.productId,
+          productName: project.productName,
+          preferredPresetId: undefined,
+          quantityTarget: unitsToRecover,
+          dueDate: project.dueDate,
+          urgency: decision === 'complete_now' ? 'critical' : 'urgent',
+          urgencyManualOverride: true,
+          status: 'pending',
+          color: project.color,
+        });
+        
+        toast({
+          title: language === 'he' ? 'נוצר פרויקט השלמה' : 'Remake Project Created',
+          description: language === 'he' 
+            ? `נפתח פרויקט להשלמת ${unitsToRecover} יחידות.`
+            : `Created project to complete ${unitsToRecover} units.`,
+        });
+      }
+    } else if (decision === 'merge_with_future' && mergeCycleId) {
+      // Add units to existing cycle
+      const cycles = getPlannedCycles();
+      const targetCycle = cycles.find(c => c.id === mergeCycleId);
+      if (targetCycle) {
+        updatePlannedCycle(mergeCycleId, {
+          unitsPlanned: targetCycle.unitsPlanned + unitsToRecover,
+          gramsPlanned: (targetCycle.gramsPlanned || 0) + (unitsToRecover * activeCycle.gramsPerUnit),
+        });
+        
+        toast({
+          title: language === 'he' ? 'היחידות מוזגו' : 'Units Merged',
+          description: language === 'he' 
+            ? `${unitsToRecover} יחידות נוספו למחזור קיים.`
+            : `${unitsToRecover} units added to existing cycle.`,
+        });
+      }
+    } else if (decision === 'ignore') {
       toast({
         title: language === 'he' ? 'המחזור עודכן' : 'Cycle Updated',
         description: language === 'he' 
-          ? `${materialInfo} התכנון יתעדכן אוטומטית.`
-          : `${materialInfo} Plan will update automatically.`,
+          ? `${unitsScrap} יחידות נרשמו כנפלים.`
+          : `${unitsScrap} units recorded as scrap.`,
       });
     }
 
@@ -213,9 +267,45 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     }
   };
 
-  const handleSubmit = () => {
-    if (result) {
-      handleSubmitWithResult(result);
+  // Legacy direct submit for 'completed' result only
+  const handleSubmitWithResult = (resultType: CycleResult) => {
+    if (!activeCycle) return;
+
+    const logResult = logCycleWithMaterialConsumption(
+      {
+        printerId: selectedPrinter,
+        projectId: activeCycle.projectId,
+        plannedCycleId: activeCycle.id,
+        result: resultType,
+        unitsCompleted: activeCycle.unitsPlanned,
+        unitsScrap: 0,
+        gramsWasted: 0,
+      },
+      activeCycle.color,
+      activeCycle.gramsPerUnit,
+      selectedPrinter
+    );
+
+    if (!logResult.success) {
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: language === 'he' ? logResult.errorHe : logResult.error,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({
+      title: language === 'he' ? 'המחזור הושלם' : 'Cycle Completed',
+      description: language === 'he' 
+        ? `${activeCycle.unitsPlanned} יחידות הושלמו בהצלחה.`
+        : `${activeCycle.unitsPlanned} units completed successfully.`,
+    });
+
+    if (onComplete) {
+      onComplete();
+    } else {
+      handleReset();
     }
   };
 
@@ -229,6 +319,9 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     setWastedGrams(0);
     setQuickPickGrams(null);
     setIsConfirmed(false);
+    setShowDecisionModal(false);
+    setDecisionAnalysis(null);
+    setPendingResult(null);
     loadData();
   };
 
