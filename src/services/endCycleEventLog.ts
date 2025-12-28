@@ -1,6 +1,10 @@
 /**
  * End Cycle Event Log Service
  * Logs every End Cycle decision for debugging and auditing
+ * 
+ * TWO-PHASE LOGGING:
+ * Phase A (Immediate) - Right after decision, before replan
+ * Phase B (PostReplan) - After autoReplan completes
  */
 
 export interface EndCycleEventLogEntry {
@@ -23,9 +27,10 @@ export interface EndCycleEventLogEntry {
       quantityTarget: number;
     };
   };
+  // Phase A: Immediate outputs (before replan)
   outputs: {
     cycleStatusAfter: string;
-    plannedCyclesAfter: number;
+    plannedCyclesAfterImmediate: number; // Count right after decision, before replan
     projectProgressAfter: {
       quantityGood: number;
       quantityScrap: number;
@@ -33,6 +38,15 @@ export interface EndCycleEventLogEntry {
     };
     remakeProjectCreated?: string;
     mergeCycleId?: string;
+  };
+  // Phase B: Post-replan data (filled after autoReplan completes)
+  postReplan?: {
+    ts: string;
+    plannedCyclesAfterReplan: number;
+    replanDurationMs: number;
+    cyclesChanged: number; // +N or -N from before decision
+    replanSuccess: boolean;
+    replanSummary?: string;
   };
   computedImpact?: {
     dominoEffect?: Array<{
@@ -79,7 +93,7 @@ export function logEndCycleEvent(entry: EndCycleEventLogEntry): void {
     log.splice(0, log.length - 100);
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(log));
-  console.log('[EndCycleEventLog]', entry);
+  console.log('[EndCycleEventLog] Phase A (Immediate):', entry);
 }
 
 export function clearEventLog(): void {
@@ -89,4 +103,40 @@ export function clearEventLog(): void {
 export function getLastEvent(): EndCycleEventLogEntry | null {
   const log = getEventLog();
   return log.length > 0 ? log[log.length - 1] : null;
+}
+
+/**
+ * Update the last event with post-replan data (Phase B)
+ * Called by autoReplan after replan completes
+ */
+export function updateLastEventWithPostReplan(postReplanData: {
+  plannedCyclesAfterReplan: number;
+  replanDurationMs: number;
+  replanSuccess: boolean;
+  replanSummary?: string;
+}): void {
+  const log = getEventLog();
+  if (log.length === 0) return;
+  
+  const lastEvent = log[log.length - 1];
+  
+  // Only update if replanTriggered was true and no postReplan exists yet
+  if (!lastEvent.replanTriggered || lastEvent.postReplan) {
+    return;
+  }
+  
+  const cyclesBefore = lastEvent.inputs.plannedCyclesBefore;
+  const cyclesAfter = postReplanData.plannedCyclesAfterReplan;
+  
+  lastEvent.postReplan = {
+    ts: new Date().toISOString(),
+    plannedCyclesAfterReplan: cyclesAfter,
+    replanDurationMs: postReplanData.replanDurationMs,
+    cyclesChanged: cyclesAfter - cyclesBefore,
+    replanSuccess: postReplanData.replanSuccess,
+    replanSummary: postReplanData.replanSummary,
+  };
+  
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(log));
+  console.log('[EndCycleEventLog] Phase B (PostReplan):', lastEvent.postReplan);
 }

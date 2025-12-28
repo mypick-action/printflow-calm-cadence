@@ -331,7 +331,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       },
       outputs: {
         cycleStatusAfter: 'completed',
-        plannedCyclesAfter: cyclesAfter.length,
+        plannedCyclesAfterImmediate: cyclesAfter.length,
         projectProgressAfter: {
           quantityGood: projectAfter?.quantityGood || 0,
           quantityScrap: projectAfter?.quantityScrap || 0,
@@ -488,7 +488,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       },
       outputs: {
         cycleStatusAfter: 'completed',
-        plannedCyclesAfter: cyclesAfter.length,
+        plannedCyclesAfterImmediate: cyclesAfter.length,
         projectProgressAfter: {
           quantityGood: projectAfter?.quantityGood || 0,
           quantityScrap: projectAfter?.quantityScrap || 0,
