@@ -71,7 +71,15 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onN
           {/* Logo */}
           <div className="p-6 border-b border-sidebar-border">
             <div className="flex items-center justify-between">
-              <h1 className="text-2xl font-bold text-sidebar-primary">{t('app.name')}</h1>
+              <button 
+                onClick={() => {
+                  onNavigate('dashboard');
+                  setSidebarOpen(false);
+                }}
+                className="text-2xl font-bold text-sidebar-primary hover:opacity-80 transition-opacity cursor-pointer"
+              >
+                {t('app.name')}
+              </button>
               <Button 
                 variant="ghost" 
                 size="icon" 
