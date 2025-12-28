@@ -44,7 +44,9 @@ export interface DominoCycle {
   printerId: string;
   printerName: string;
   originalStart: string;
+  originalEnd: string;
   newStart: string;
+  newEnd: string;
   delayHours: number;
   crossesDeadline: boolean;
 }
@@ -280,7 +282,9 @@ const calculateImmediateImpact = (
       printerId: cycle.printerId,
       printerName: printer?.name || 'Unknown',
       originalStart: originalStart.toISOString(),
+      originalEnd: originalEnd.toISOString(),
       newStart: newStart.toISOString(),
+      newEnd: newEnd.toISOString(),
       delayHours,
       crossesDeadline,
     });
@@ -528,7 +532,9 @@ const findMergeCandidates = (
           printerId: subCycle.printerId,
           printerName: printer?.name || 'Unknown',
           originalStart: subOriginalStart.toISOString(),
+          originalEnd: subOriginalEnd.toISOString(),
           newStart: subNewStart.toISOString(),
+          newEnd: subNewEnd.toISOString(),
           delayHours: subDelay,
           crossesDeadline: subDueDate ? subNewEnd > subDueDate : false,
         });

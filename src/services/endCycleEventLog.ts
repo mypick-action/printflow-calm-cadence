@@ -59,7 +59,9 @@ export interface EndCycleEventLogEntry {
       printerId: string;
       printerName: string;
       originalStart: string;
+      originalEnd: string;
       newStart: string;
+      newEnd: string;
       delayHours: number;
       crossesDeadline: boolean;
     }>;
