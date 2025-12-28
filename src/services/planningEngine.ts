@@ -448,14 +448,20 @@ const scheduleCyclesForDay = (
           
           // ============= CRITICAL: SPOOL-LIMITED SCHEDULING (PRD RULE) =============
           // 1 physical spool = 1 printer at a time (for CONCURRENT cycles only)
-          // FIXED: This is for concurrent scheduling, not sequential on same printer
+          // FIXED: Check ColorInventory first, fallback to spools for parallel spool limit
           const allSpools = getSpools();
           const availableSpoolsForColor = allSpools.filter(s => 
             normalizeColor(s.color) === colorKey && 
             s.state !== 'empty' &&
             s.gramsRemainingEst > 0
           );
-          const totalSpoolCount = availableSpoolsForColor.length;
+          
+          // If no physical spools but we have material in ColorInventory, assume 1 virtual spool
+          // This allows scheduling when material exists only in ColorInventory
+          let totalSpoolCount = availableSpoolsForColor.length;
+          if (totalSpoolCount === 0 && availableMaterial > 0) {
+            totalSpoolCount = 1; // Virtual spool from ColorInventory
+          }
           
           // Get how many DIFFERENT printers are assigned to this color currently
           // Note: Same printer can do multiple sequential cycles with same color
