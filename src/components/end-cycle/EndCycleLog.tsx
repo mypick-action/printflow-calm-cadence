@@ -361,13 +361,6 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     });
   }, [language]);
 
-    if (onComplete) {
-      onComplete();
-    } else {
-      handleReset();
-    }
-  };
-
   // Legacy direct submit for 'completed' result only
   const handleSubmitWithResult = (resultType: CycleResult) => {
     if (!activeCycle) return;
