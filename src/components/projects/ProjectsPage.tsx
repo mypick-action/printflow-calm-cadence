@@ -73,6 +73,8 @@ import {
   Product,
   calculatePriorityFromDueDate,
   calculateDaysRemaining,
+  getColorInventory,
+  getFactorySettings,
 } from '@/services/storage';
 import { validateProjectForPlanning, getValidationSummary } from '@/services/projectValidation';
 import { 
@@ -98,7 +100,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-const availableColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
+const defaultColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
 
 // Status type definitions
 type ProjectStatus = 'pending' | 'in_progress' | 'on_hold' | 'completed';
@@ -178,6 +180,7 @@ export const ProjectsPage: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [availableColors, setAvailableColors] = useState<string[]>(defaultColors);
   const [manualOverrideOpen, setManualOverrideOpen] = useState(false);
   const [productSearchText, setProductSearchText] = useState('');
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
@@ -238,6 +241,16 @@ export const ProjectsPage: React.FC = () => {
   const refreshData = () => {
     setProjects(getProjects());
     setProducts(getProducts());
+    
+    // Get colors from inventory and factory settings
+    const inventory = getColorInventory();
+    const inventoryColors = inventory.map(item => item.color);
+    const settings = getFactorySettings();
+    const settingsColors = settings?.colors || [];
+    
+    // Combine all unique colors: inventory colors + settings colors + defaults
+    const allColors = new Set([...inventoryColors, ...settingsColors, ...defaultColors]);
+    setAvailableColors(Array.from(allColors));
   };
 
   useEffect(() => {
