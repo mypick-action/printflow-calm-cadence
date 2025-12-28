@@ -270,6 +270,39 @@ export const getDayScheduleForDate = (
   return settings.weeklySchedule?.[dayName] || null;
 };
 
+// Get temporary schedule overrides from localStorage
+const OVERRIDES_STORAGE_KEY = 'printflow_week_overrides';
+
+export const getTemporaryOverrides = (): TemporaryScheduleOverride[] => {
+  try {
+    const data = localStorage.getItem(OVERRIDES_STORAGE_KEY);
+    if (!data) return [];
+    
+    // Parse and convert to TemporaryScheduleOverride format
+    const overrides = JSON.parse(data);
+    
+    // Handle both old format (WeekOverride[]) and new format (TemporaryScheduleOverride[])
+    if (Array.isArray(overrides) && overrides.length > 0) {
+      // Check if it's the new format
+      if (overrides[0].dayOverrides) {
+        return overrides as TemporaryScheduleOverride[];
+      }
+      
+      // Convert old WeekOverride format
+      return overrides.map((o: any) => ({
+        id: o.id || `override_${Date.now()}`,
+        startDate: o.startDate || new Date().toISOString().split('T')[0],
+        endDate: o.endDate || new Date().toISOString().split('T')[0],
+        dayOverrides: o.days || {},
+      }));
+    }
+    
+    return [];
+  } catch {
+    return [];
+  }
+};
+
 // Helper to calculate available filament for a printer (considering AMS)
 export const getAvailableFilamentForPrinter = (
   printerId: string,

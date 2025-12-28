@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,7 +17,8 @@ import {
   ArrowRight,
   Package,
   Minus,
-  Plus
+  Plus,
+  Undo2
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { 
@@ -28,10 +29,19 @@ import {
   logCycleWithMaterialConsumption,
   createProject,
   updatePlannedCycle,
+  deleteProject,
   Printer as PrinterType,
   PlannedCycle
 } from '@/services/storage';
 import { analyzeDecisionOptions, DecisionOption, DecisionAnalysis } from '@/services/impactAnalysis';
+import { 
+  logDecision, 
+  createComputedImpact, 
+  canUndoDecision, 
+  getUndoTimeRemaining,
+  markDecisionUndone,
+  DecisionLogEntry
+} from '@/services/decisionLog';
 import { DecisionModal } from './DecisionModal';
 import { RecoveryInputStep, RecoveryInputData } from './RecoveryInputStep';
 
@@ -69,8 +79,12 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
   const [decisionAnalysis, setDecisionAnalysis] = useState<DecisionAnalysis | null>(null);
   const [pendingResult, setPendingResult] = useState<CycleResult | null>(null);
   
-  // NEW: Recovery input data state
+  // Recovery input data state
   const [recoveryInputData, setRecoveryInputData] = useState<RecoveryInputData | null>(null);
+  
+  // Undo state
+  const [lastDecisionId, setLastDecisionId] = useState<string | null>(null);
+  const [undoCountdown, setUndoCountdown] = useState(0);
 
   useEffect(() => {
     loadData();
@@ -177,10 +191,11 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     }
   };
 
-  // NEW: Handle decision from modal
+  // Handle decision from modal with logging and undo support
   const handleDecision = (decision: DecisionOption, mergeCycleId?: string) => {
-    if (!activeCycle || !pendingResult) return;
+    if (!activeCycle || !pendingResult || !decisionAnalysis) return;
 
+    const printer = printers.find(p => p.id === selectedPrinter);
     let unitsCompleted = activeCycle.unitsPlanned;
     let unitsScrap = 0;
     let gramsWasted = 0;
@@ -195,7 +210,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       gramsWasted = wastedGrams;
     }
 
-    // Log cycle WITHOUT automatic remake (we handle it based on decision)
+    // Log cycle
     const logResult = logCycleWithMaterialConsumption(
       {
         printerId: selectedPrinter,
@@ -203,7 +218,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
         plannedCycleId: activeCycle.id,
         result: pendingResult,
         unitsCompleted,
-        unitsScrap: decision === 'ignore' ? unitsScrap : 0, // Only record scrap if ignoring
+        unitsScrap: decision === 'ignore' ? unitsScrap : 0,
         gramsWasted,
       },
       activeCycle.color,
@@ -220,14 +235,15 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       return;
     }
 
-    // Handle decision
     const project = getProject(activeCycle.projectId);
     const unitsToRecover = pendingResult === 'completed_with_scrap' ? scrapUnits : activeCycle.unitsPlanned;
-    
+    let createdProjectId: string | undefined;
+    let previousMergedUnits: number | undefined;
+
+    // Execute decision
     if (decision === 'complete_now' || decision === 'defer_to_later') {
-      // Create remake project linked to the original
       if (project) {
-        createProject({
+        const newProject = createProject({
           name: `${project.name} - השלמה`,
           productId: project.productId,
           productName: project.productName,
@@ -238,41 +254,112 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
           urgencyManualOverride: true,
           status: 'pending',
           color: project.color,
-          parentProjectId: project.id, // Link to original project
+          parentProjectId: project.id,
         });
-        
-        toast({
-          title: language === 'he' ? 'נוצר פרויקט השלמה' : 'Remake Project Created',
-          description: language === 'he' 
-            ? `נפתח פרויקט להשלמת ${unitsToRecover} יחידות.`
-            : `Created project to complete ${unitsToRecover} units.`,
-        });
+        createdProjectId = newProject?.id;
       }
     } else if (decision === 'merge_with_future' && mergeCycleId) {
-      // Add units to existing cycle
       const cycles = getPlannedCycles();
       const targetCycle = cycles.find(c => c.id === mergeCycleId);
       if (targetCycle) {
+        previousMergedUnits = targetCycle.unitsPlanned;
         updatePlannedCycle(mergeCycleId, {
           unitsPlanned: targetCycle.unitsPlanned + unitsToRecover,
           gramsPlanned: (targetCycle.gramsPlanned || 0) + (unitsToRecover * activeCycle.gramsPerUnit),
         });
-        
-        toast({
-          title: language === 'he' ? 'היחידות מוזגו' : 'Units Merged',
-          description: language === 'he' 
-            ? `${unitsToRecover} יחידות נוספו למחזור קיים.`
-            : `${unitsToRecover} units added to existing cycle.`,
-        });
       }
-    } else if (decision === 'ignore') {
+    }
+
+    // Log decision with computed impact
+    const completeNowOption = decisionAnalysis.options.find(o => o.option === 'complete_now');
+    const decisionEntry = logDecision({
+      printerId: selectedPrinter,
+      printerName: printer?.name || 'Unknown',
+      projectId: activeCycle.projectId,
+      projectName: activeCycle.projectName,
+      cycleId: activeCycle.id,
+      cycleResult: pendingResult === 'failed' ? 'failed' : 'completed_with_scrap',
+      unitsToRecover,
+      gramsWasted,
+      estimatedPrintHours: recoveryInputData?.estimatedPrintHours || 2.5,
+      needsSpoolChange: recoveryInputData?.needsSpoolChange || false,
+      decision,
+      mergeCycleId,
+      computedImpact: createComputedImpact(completeNowOption?.impact || null),
+      undoData: {
+        createdProjectId,
+        mergedCycleId: mergeCycleId,
+        previousMergedUnits,
+      },
+    });
+
+    setLastDecisionId(decisionEntry.id);
+    setUndoCountdown(30);
+
+    // Start undo countdown
+    const interval = setInterval(() => {
+      setUndoCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setLastDecisionId(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    toast({
+      title: language === 'he' ? 'ההחלטה נרשמה' : 'Decision Recorded',
+      description: language === 'he' 
+        ? `${unitsToRecover} יחידות • לחץ לביטול (${30}s)`
+        : `${unitsToRecover} units • Click to undo (${30}s)`,
+      action: (
+        <Button variant="outline" size="sm" onClick={() => handleUndo(decisionEntry.id)}>
+          <Undo2 className="w-4 h-4 mr-1" />
+          {language === 'he' ? 'בטל' : 'Undo'}
+        </Button>
+      ),
+    });
+
+    if (onComplete) {
+      onComplete();
+    } else {
+      handleReset();
+    }
+  };
+
+  // Undo a decision
+  const handleUndo = useCallback((decisionId: string) => {
+    if (!canUndoDecision(decisionId)) {
       toast({
-        title: language === 'he' ? 'המחזור עודכן' : 'Cycle Updated',
-        description: language === 'he' 
-          ? `${unitsScrap} יחידות נרשמו כנפלים.`
-          : `${unitsScrap} units recorded as scrap.`,
+        title: language === 'he' ? 'לא ניתן לבטל' : 'Cannot Undo',
+        description: language === 'he' ? 'עברו 30 שניות' : '30 seconds have passed',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const entry = markDecisionUndone(decisionId);
+    if (!entry) return;
+
+    // Reverse the action
+    if (entry.undoData.createdProjectId) {
+      deleteProject(entry.undoData.createdProjectId);
+    }
+    if (entry.undoData.mergedCycleId && entry.undoData.previousMergedUnits !== undefined) {
+      updatePlannedCycle(entry.undoData.mergedCycleId, {
+        unitsPlanned: entry.undoData.previousMergedUnits,
       });
     }
+
+    setLastDecisionId(null);
+    setUndoCountdown(0);
+
+    toast({
+      title: language === 'he' ? 'הפעולה בוטלה' : 'Action Undone',
+      description: language === 'he' ? 'ההחלטה בוטלה בהצלחה' : 'Decision successfully reversed',
+    });
+  }, [language]);
 
     if (onComplete) {
       onComplete();
