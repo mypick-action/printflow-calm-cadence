@@ -198,6 +198,9 @@ export const ProjectsPage: React.FC = () => {
   // Priority filter (secondary)
   const [priorityFilter, setPriorityFilter] = useState<'all' | ProjectPriority>('all');
   
+  // Material shortage filter
+  const [materialShortageFilter, setMaterialShortageFilter] = useState(false);
+  
   const [newProject, setNewProject] = useState({
     name: '',
     productId: '',
@@ -292,7 +295,18 @@ export const ProjectsPage: React.FC = () => {
     },
   };
 
-  // Filtered projects based on status and priority
+  // Material status for each project (PRD: 3-state status) - must be before filteredProjects
+  const projectMaterialStatuses = useMemo(() => {
+    const statuses = new Map<string, ProjectMaterialStatus>();
+    for (const project of projects) {
+      if (project.status !== 'completed') {
+        statuses.set(project.id, getProjectMaterialStatus(project));
+      }
+    }
+    return statuses;
+  }, [projects]);
+
+  // Filtered projects based on status, priority, and material shortage
   const filteredProjects = useMemo(() => {
     return projects.filter(project => {
       // Status filter (primary)
@@ -304,9 +318,17 @@ export const ProjectsPage: React.FC = () => {
         return false;
       }
       
+      // Material shortage filter
+      if (materialShortageFilter) {
+        const materialStatus = projectMaterialStatuses.get(project.id);
+        if (!materialStatus || materialStatus.status === 'full') {
+          return false;
+        }
+      }
+      
       return true;
     });
-  }, [projects, statusFilters, priorityFilter]);
+  }, [projects, statusFilters, priorityFilter, materialShortageFilter, projectMaterialStatuses]);
 
   // Summary counts
   const statusCounts = useMemo(() => ({
@@ -324,16 +346,16 @@ export const ProjectsPage: React.FC = () => {
     };
   }, [projects]);
 
-  // Material status for each project (PRD: 3-state status)
-  const projectMaterialStatuses = useMemo(() => {
-    const statuses = new Map<string, ProjectMaterialStatus>();
-    for (const project of projects) {
-      if (project.status !== 'completed') {
-        statuses.set(project.id, getProjectMaterialStatus(project));
+  // Count projects with material shortage
+  const materialShortageCount = useMemo(() => {
+    let count = 0;
+    projectMaterialStatuses.forEach((status) => {
+      if (status.status !== 'full') {
+        count++;
       }
-    }
-    return statuses;
-  }, [projects]);
+    });
+    return count;
+  }, [projectMaterialStatuses]);
 
   // Helper to get material status badge
   const getMaterialStatusBadge = (projectId: string) => {
@@ -828,52 +850,69 @@ export const ProjectsPage: React.FC = () => {
       </div>
 
       {/* Row 2: Attention Indicators */}
-      {(attentionCounts.urgent > 0 || attentionCounts.critical > 0) && (
-        <div className="flex gap-3 flex-wrap">
-          {attentionCounts.critical > 0 && (
-            <div 
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all ${
-                priorityFilter === 'critical' 
-                  ? 'bg-error/20 border-error text-error' 
-                  : 'bg-error/5 border-error/30 text-error hover:bg-error/10'
-              }`}
-              onClick={() => setPriorityFilter(priorityFilter === 'critical' ? 'all' : 'critical')}
-            >
-              <Flame className="w-4 h-4" />
-              <span className="font-medium">{attentionCounts.critical}</span>
-              <span className="text-sm">
-                {language === 'he' ? 'קריטיים' : 'Critical'}
-              </span>
-            </div>
-          )}
-          {attentionCounts.urgent > 0 && (
-            <div 
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all ${
-                priorityFilter === 'urgent' 
-                  ? 'bg-warning/20 border-warning text-warning' 
-                  : 'bg-warning/5 border-warning/30 text-warning hover:bg-warning/10'
-              }`}
-              onClick={() => setPriorityFilter(priorityFilter === 'urgent' ? 'all' : 'urgent')}
-            >
-              <AlertTriangle className="w-4 h-4" />
-              <span className="font-medium">{attentionCounts.urgent}</span>
-              <span className="text-sm">
-                {language === 'he' ? 'דחופים' : 'Urgent'}
-              </span>
-            </div>
-          )}
-          {priorityFilter !== 'all' && (
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => setPriorityFilter('all')}
-              className="text-muted-foreground"
-            >
-              {language === 'he' ? 'הצג הכל' : 'Show all'}
-            </Button>
-          )}
-        </div>
-      )}
+      <div className="flex gap-3 flex-wrap">
+        {attentionCounts.critical > 0 && (
+          <div 
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all ${
+              priorityFilter === 'critical' 
+                ? 'bg-error/20 border-error text-error' 
+                : 'bg-error/5 border-error/30 text-error hover:bg-error/10'
+            }`}
+            onClick={() => setPriorityFilter(priorityFilter === 'critical' ? 'all' : 'critical')}
+          >
+            <Flame className="w-4 h-4" />
+            <span className="font-medium">{attentionCounts.critical}</span>
+            <span className="text-sm">
+              {language === 'he' ? 'קריטיים' : 'Critical'}
+            </span>
+          </div>
+        )}
+        {attentionCounts.urgent > 0 && (
+          <div 
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all ${
+              priorityFilter === 'urgent' 
+                ? 'bg-warning/20 border-warning text-warning' 
+                : 'bg-warning/5 border-warning/30 text-warning hover:bg-warning/10'
+            }`}
+            onClick={() => setPriorityFilter(priorityFilter === 'urgent' ? 'all' : 'urgent')}
+          >
+            <AlertTriangle className="w-4 h-4" />
+            <span className="font-medium">{attentionCounts.urgent}</span>
+            <span className="text-sm">
+              {language === 'he' ? 'דחופים' : 'Urgent'}
+            </span>
+          </div>
+        )}
+        {materialShortageCount > 0 && (
+          <div 
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all ${
+              materialShortageFilter 
+                ? 'bg-error/20 border-error text-error' 
+                : 'bg-error/5 border-error/30 text-error hover:bg-error/10'
+            }`}
+            onClick={() => setMaterialShortageFilter(!materialShortageFilter)}
+          >
+            <Package className="w-4 h-4" />
+            <span className="font-medium">{materialShortageCount}</span>
+            <span className="text-sm">
+              {language === 'he' ? 'חסר חומר' : 'Missing Material'}
+            </span>
+          </div>
+        )}
+        {(priorityFilter !== 'all' || materialShortageFilter) && (
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => {
+              setPriorityFilter('all');
+              setMaterialShortageFilter(false);
+            }}
+            className="text-muted-foreground"
+          >
+            {language === 'he' ? 'נקה סינונים' : 'Clear filters'}
+          </Button>
+        )}
+      </div>
 
       {/* Projects Table */}
       <Card variant="elevated">
