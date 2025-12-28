@@ -251,18 +251,28 @@ const calculateImmediateImpact = (
   // Add time for spool change if needed (15 minutes)
   const totalHoursNeeded = needsSpoolChange ? hoursNeeded + 0.25 : hoursNeeded;
   
-  // Find the target printer (either specified or first available)
+  // Find the target printer - NO FALLBACK! Must be explicit
   const targetPrinter = targetPrinterId 
     ? printers.find(p => p.id === targetPrinterId)
-    : printers[0];
+    : null;
+  
+  // DEBUG: Log printer resolution
+  console.log('[calculateImmediateImpact] targetPrinterId:', targetPrinterId);
+  console.log('[calculateImmediateImpact] resolvedTargetPrinter:', targetPrinter?.id || 'NOT_FOUND');
   
   // Find cycles that would be pushed - ONLY for the SAME printer
   const today = new Date();
-  const futureCycles = existingCycles.filter(c => 
-    c.status === 'planned' && 
-    new Date(c.startTime) > today &&
-    (!targetPrinter || c.printerId === targetPrinter.id) // Filter by same printer
-  ).sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+  const futureCycles = existingCycles.filter(c => {
+    // Must be planned and in future
+    if (c.status !== 'planned' || new Date(c.startTime) <= today) return false;
+    // If we have a target printer, filter by it
+    if (targetPrinter && c.printerId !== targetPrinter.id) return false;
+    // If no target printer specified, skip all (don't calculate domino on random printer)
+    if (!targetPrinter) return false;
+    return true;
+  }).sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+  
+  console.log('[calculateImmediateImpact] futureCyclesFilteredCount:', futureCycles.length);
   
   // Build domino effect with CHAIN calculation (start = max(prevEnd, originalStart))
   const dominoEffect: DominoCycle[] = [];
@@ -711,13 +721,15 @@ const findMergeCandidates = (
 /**
  * Main analysis function - calculates all options and their impacts
  * v2: All calculations are real, not hardcoded
+ * v3: Added targetPrinterId to ensure dominoEffect is calculated for correct printer
  */
 export const analyzeDecisionOptions = (
   projectId: string,
   unitsScrap: number,
   gramsWasted: number,
   cycleHours: number = 2.5,
-  needsSpoolChange: boolean = false
+  needsSpoolChange: boolean = false,
+  targetPrinterId?: string // REQUIRED: The printer where the current cycle is running
 ): DecisionAnalysis => {
   const projects = getProjects();
   const cycles = getPlannedCycles();
@@ -729,14 +741,18 @@ export const analyzeDecisionOptions = (
   
   const remainingUnits = project.quantityTarget - project.quantityGood;
   
+  console.log('[analyzeDecisionOptions] targetPrinterId:', targetPrinterId);
+  
   // Calculate impact for immediate completion using user-provided hours
+  // Pass targetPrinterId to ensure dominoEffect is for correct printer
   const immediateImpact = calculateImmediateImpact(
     unitsScrap,
     project.color,
     cycleHours,
     cycles,
     projects,
-    needsSpoolChange
+    needsSpoolChange,
+    targetPrinterId // Pass the printer ID!
   );
   
   // Calculate REAL defer impact
