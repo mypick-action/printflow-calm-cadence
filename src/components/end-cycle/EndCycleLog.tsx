@@ -373,7 +373,21 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
             extensionImpact: mergeCandidate?.extensionImpact ? {
               additionalTimeNeeded: mergeCandidate.extensionImpact.additionalTimeNeeded,
               newEndTime: mergeCandidate.extensionImpact.newEndTime,
-              affectedCycles: mergeCandidate.extensionImpact.affectedCycles?.length || 0,
+              wouldCrossDeadline: mergeCandidate.extensionImpact.wouldCrossDeadline ?? false,
+              wouldRequireOvernight: mergeCandidate.extensionImpact.wouldRequireOvernight ?? false,
+              affectedCycles: mergeCandidate.extensionImpact.affectedCycles?.map(c => ({
+                cycleId: c.cycleId,
+                projectId: c.projectId,
+                projectName: c.projectName,
+                printerId: c.printerId,
+                printerName: c.printerName,
+                originalStart: c.originalStart,
+                originalEnd: c.originalEnd,
+                newStart: c.newStart,
+                newEnd: c.newEnd,
+                delayHours: c.delayHours,
+                crossesDeadline: c.crossesDeadline,
+              })) || [],
             } : undefined,
           };
         }
