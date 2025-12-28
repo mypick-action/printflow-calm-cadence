@@ -103,7 +103,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-const defaultColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
+// Hebrew predefined colors (same as inventory page)
+const predefinedColors = ['שחור', 'לבן', 'אפור', 'אדום', 'כחול', 'ירוק', 'צהוב', 'כתום', 'סגול', 'ורוד', 'חום'];
 
 // Status type definitions
 type ProjectStatus = 'pending' | 'in_progress' | 'on_hold' | 'completed';
@@ -183,7 +184,7 @@ export const ProjectsPage: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [availableColors, setAvailableColors] = useState<string[]>(defaultColors);
+  const [availableColors, setAvailableColors] = useState<string[]>(predefinedColors);
   const [manualOverrideOpen, setManualOverrideOpen] = useState(false);
   const [productSearchText, setProductSearchText] = useState('');
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
@@ -193,6 +194,10 @@ export const ProjectsPage: React.FC = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  
+  // Custom color state
+  const [useCustomColor, setUseCustomColor] = useState(false);
+  const [customColorName, setCustomColorName] = useState('');
   
   // Filter state - Status filter (primary, default to in_progress only)
   const [statusFilters, setStatusFilters] = useState<Record<ProjectStatus, boolean>>({
@@ -214,7 +219,7 @@ export const ProjectsPage: React.FC = () => {
     preferredPresetId: '',
     quantityTarget: 100,
     dueDate: '',
-    color: '', // Will be set to first available color from inventory
+    color: predefinedColors[0], // Default to first predefined color
     manualUrgency: null as ProjectPriority | null,
   });
 
@@ -256,17 +261,15 @@ export const ProjectsPage: React.FC = () => {
     setProjects(getProjects());
     setProducts(getProducts());
     
-    // Get colors from inventory only (Hebrew colors)
+    // Get colors from inventory and settings
     const inventory = getColorInventory();
     const inventoryColors = inventory.map(item => item.color);
+    const settings = getFactorySettings();
+    const settingsColors = settings?.colors || [];
     
-    // Only use inventory colors - no English defaults
-    setAvailableColors(inventoryColors);
-    
-    // Set default color to first inventory color if available
-    if (inventoryColors.length > 0 && !newProject.color) {
-      setNewProject(prev => ({ ...prev, color: inventoryColors[0] }));
-    }
+    // Combine predefined colors + inventory colors + settings colors (all unique)
+    const allColors = new Set([...predefinedColors, ...inventoryColors, ...settingsColors]);
+    setAvailableColors(Array.from(allColors));
   };
 
   useEffect(() => {
@@ -467,9 +470,11 @@ export const ProjectsPage: React.FC = () => {
       preferredPresetId: '',
       quantityTarget: 100,
       dueDate: '',
-      color: availableColors[0] || '', // Use first available color from inventory
+      color: predefinedColors[0], // Reset to first predefined color
       manualUrgency: null,
     });
+    setUseCustomColor(false);
+    setCustomColorName('');
     setProductSearchText('');
     
     // Validate and show detailed toast
@@ -684,20 +689,48 @@ export const ProjectsPage: React.FC = () => {
               <div className="space-y-2">
                 <Label>{language === 'he' ? 'צבע' : 'Color'}</Label>
                 <Select 
-                  value={newProject.color} 
-                  onValueChange={(value) => setNewProject({ ...newProject, color: value })}
+                  value={useCustomColor ? '__custom__' : newProject.color} 
+                  onValueChange={(value) => {
+                    if (value === '__custom__') {
+                      setUseCustomColor(true);
+                    } else {
+                      setUseCustomColor(false);
+                      setNewProject({ ...newProject, color: value });
+                    }
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="bg-background border shadow-lg">
                     {availableColors.filter(c => c && c.trim()).map((color) => (
                       <SelectItem key={color} value={color}>
                         {color}
                       </SelectItem>
                     ))}
+                    <div className="border-t mt-1 pt-1">
+                      <SelectItem value="__custom__" className="text-primary font-medium">
+                        <div className="flex items-center gap-2">
+                          <Plus className="w-4 h-4" />
+                          {language === 'he' ? '+ צבע חדש' : '+ New color'}
+                        </div>
+                      </SelectItem>
+                    </div>
                   </SelectContent>
                 </Select>
+                
+                {/* Custom Color Input */}
+                {useCustomColor && (
+                  <Input 
+                    value={customColorName}
+                    onChange={(e) => {
+                      setCustomColorName(e.target.value);
+                      setNewProject({ ...newProject, color: e.target.value });
+                    }}
+                    placeholder={language === 'he' ? 'הזינו שם צבע...' : 'Enter color name...'}
+                    className="mt-2"
+                  />
+                )}
               </div>
               
               {/* Quantity */}
