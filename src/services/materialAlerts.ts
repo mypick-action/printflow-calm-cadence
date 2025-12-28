@@ -12,6 +12,7 @@ import {
   Printer,
   PlannedCycle,
 } from './storage';
+import { getAvailableGramsByColor, getMaterialNeedsByColor } from './materialAdapter';
 
 export interface MaterialAlert {
   id: string;
@@ -83,52 +84,22 @@ const checkLowMaterialAlerts = (): MaterialAlert[] => {
 
 /**
  * Check for insufficient material for scheduled jobs
+ * Uses centralized materialAdapter for availability checks
  */
 const checkInsufficientForJobsAlerts = (): MaterialAlert[] => {
-  const cycles = getPlannedCycles();
-  const spools = getSpools();
-  const projects = getProjects();
+  const allProjects = getProjects();
   const alerts: MaterialAlert[] = [];
   
-  // Group cycles by color to check total material needs
-  const materialNeeds = new Map<string, { 
-    totalGrams: number; 
-    cycleIds: string[]; 
-    projectIds: Set<string>;
-  }>();
+  // Use centralized adapter for material needs calculation
+  const activeProjects = allProjects.filter(p => p.status !== 'completed');
+  const materialNeeds = getMaterialNeedsByColor(activeProjects);
   
-  for (const cycle of cycles) {
-    if (cycle.status === 'completed' || cycle.status === 'failed') continue;
-    if (!cycle.requiredColor || !cycle.requiredGrams) continue;
-    
-    const colorKey = cycle.requiredColor.toLowerCase();
-    const existing = materialNeeds.get(colorKey) || { 
-      totalGrams: 0, 
-      cycleIds: [], 
-      projectIds: new Set() 
-    };
-    
-    existing.totalGrams += cycle.requiredGrams;
-    existing.cycleIds.push(cycle.id);
-    existing.projectIds.add(cycle.projectId);
-    
-    materialNeeds.set(colorKey, existing);
-  }
-  
-  // Check available material for each color
+  // Check each color's availability vs needs
   for (const [colorKey, needs] of materialNeeds) {
-    const availableGrams = spools
-      .filter(s => 
-        s.color.toLowerCase() === colorKey && 
-        s.state !== 'empty' && 
-        s.gramsRemainingEst > 0
-      )
-      .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
-    
-    if (availableGrams < needs.totalGrams) {
-      const shortfall = needs.totalGrams - availableGrams;
-      const projectNames = Array.from(needs.projectIds)
-        .map(id => projects.find(p => p.id === id)?.name || id)
+    if (needs.available < needs.needed) {
+      const shortfall = needs.needed - needs.available;
+      const projectNames = needs.projectIds
+        .map(id => allProjects.find(p => p.id === id)?.name || id)
         .join(', ');
       
       alerts.push({
@@ -137,13 +108,12 @@ const checkInsufficientForJobsAlerts = (): MaterialAlert[] => {
         severity: 'critical',
         title: `Insufficient ${colorKey} material`,
         titleHe: `חסר חומר ${colorKey}`,
-        message: `Need ${Math.round(needs.totalGrams)}g but only ${Math.round(availableGrams)}g available. Shortfall: ${Math.round(shortfall)}g. Affects: ${projectNames}`,
-        messageHe: `נדרשים ${Math.round(needs.totalGrams)}g אבל זמינים רק ${Math.round(availableGrams)}g. חסר: ${Math.round(shortfall)}g. משפיע על: ${projectNames}`,
+        message: `Need ${Math.round(needs.needed)}g but only ${Math.round(needs.available)}g available. Shortfall: ${Math.round(shortfall)}g. Affects: ${projectNames}`,
+        messageHe: `נדרשים ${Math.round(needs.needed)}g אבל זמינים רק ${Math.round(needs.available)}g. חסר: ${Math.round(shortfall)}g. משפיע על: ${projectNames}`,
         color: colorKey,
-        requiredGrams: needs.totalGrams,
-        availableGrams,
-        affectedCycleIds: needs.cycleIds,
-        affectedProjectIds: Array.from(needs.projectIds),
+        requiredGrams: needs.needed,
+        availableGrams: needs.available,
+        affectedProjectIds: needs.projectIds,
       });
     }
   }
@@ -152,11 +122,11 @@ const checkInsufficientForJobsAlerts = (): MaterialAlert[] => {
 };
 
 /**
- * Check for printers restricted to colors with no matching spools available
+ * Check for printers restricted to colors with no matching material available
+ * Uses centralized adapter for availability checks
  */
 const checkNoMatchingSpoolsAlerts = (): MaterialAlert[] => {
   const printers = getPrinters().filter(p => p.status === 'active');
-  const spools = getSpools();
   const cycles = getPlannedCycles();
   const alerts: MaterialAlert[] = [];
   
@@ -173,22 +143,18 @@ const checkNoMatchingSpoolsAlerts = (): MaterialAlert[] => {
     for (const cycle of printerCycles) {
       if (!cycle.requiredColor) continue;
       
-      const colorKey = cycle.requiredColor.toLowerCase();
-      const matchingSpools = spools.filter(s =>
-        s.color.toLowerCase() === colorKey &&
-        s.state !== 'empty' &&
-        s.gramsRemainingEst > 0
-      );
+      // Use centralized adapter to check material availability
+      const availableGrams = getAvailableGramsByColor(cycle.requiredColor);
       
-      if (matchingSpools.length === 0) {
+      if (availableGrams <= 0) {
         alerts.push({
-          id: `no_spools_${printer.id}_${colorKey}`,
+          id: `no_spools_${printer.id}_${cycle.requiredColor.toLowerCase()}`,
           type: 'no_matching_spools',
           severity: 'critical',
-          title: `No ${cycle.requiredColor} spools available`,
-          titleHe: `אין גלילי ${cycle.requiredColor} זמינים`,
-          message: `Printer ${printer.name} needs ${cycle.requiredColor} but no spools are available in inventory`,
-          messageHe: `מדפסת ${printer.name} צריכה ${cycle.requiredColor} אבל אין גלילים זמינים במלאי`,
+          title: `No ${cycle.requiredColor} material available`,
+          titleHe: `אין חומר ${cycle.requiredColor} זמין`,
+          message: `Printer ${printer.name} needs ${cycle.requiredColor} but no material is available in inventory`,
+          messageHe: `מדפסת ${printer.name} צריכה ${cycle.requiredColor} אבל אין חומר זמין במלאי`,
           color: cycle.requiredColor,
           printerId: printer.id,
           printerName: printer.name,
