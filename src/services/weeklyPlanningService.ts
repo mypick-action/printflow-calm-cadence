@@ -49,7 +49,9 @@ export interface ProjectCoverage {
   quantityGood: number;
   quantityScrap: number;
   remainingUnits: number; // target - good
-  plannedUnits: number; // sum of units in future planned cycles
+  plannedUnits: number; // sum of units in future planned + in_progress cycles
+  plannedUnitsOnly: number; // only planned status cycles
+  inProgressUnits: number; // only in_progress status cycles
   uncoveredUnits: number; // remaining - planned (gap)
   status: 'on_track' | 'at_risk' | 'unscheduled';
   isRecovery: boolean;
@@ -128,6 +130,7 @@ export function getPlannedCyclesForWeek(
 
 /**
  * Check if a cycle requires overnight (outside work hours)
+ * Checks both start and end times, and both days
  */
 export function isOvernightCycle(cycle: PlannedCycle): boolean {
   const settings = getFactorySettings();
@@ -137,17 +140,35 @@ export function isOvernightCycle(cycle: PlannedCycle): boolean {
   const cycleEnd = new Date(cycle.endTime);
   const overrides = getTemporaryOverrides();
   
-  // Check if end time is outside work hours
-  const daySchedule = getDayScheduleForDate(cycleEnd, settings, overrides);
-  if (!daySchedule || !daySchedule.enabled) {
-    return true; // Running on a non-work day
+  // Check if start day is a non-work day
+  const startDaySchedule = getDayScheduleForDate(cycleStart, settings, overrides);
+  if (!startDaySchedule || !startDaySchedule.enabled) {
+    return true; // Starting on a non-work day
   }
   
-  const [endHour, endMin] = daySchedule.endTime.split(':').map(Number);
-  const workEndMinutes = endHour * 60 + endMin;
-  const cycleEndMinutes = cycleEnd.getHours() * 60 + cycleEnd.getMinutes();
+  // Check if end day is a non-work day
+  const endDaySchedule = getDayScheduleForDate(cycleEnd, settings, overrides);
+  if (!endDaySchedule || !endDaySchedule.enabled) {
+    return true; // Ending on a non-work day
+  }
   
-  return cycleEndMinutes > workEndMinutes;
+  // Check if start time is before work start
+  const [startWorkHour, startWorkMin] = startDaySchedule.startTime.split(':').map(Number);
+  const workStartMinutes = startWorkHour * 60 + startWorkMin;
+  const cycleStartMinutes = cycleStart.getHours() * 60 + cycleStart.getMinutes();
+  if (cycleStartMinutes < workStartMinutes) {
+    return true; // Starting before work hours
+  }
+  
+  // Check if end time is after work end
+  const [endWorkHour, endWorkMin] = endDaySchedule.endTime.split(':').map(Number);
+  const workEndMinutes = endWorkHour * 60 + endWorkMin;
+  const cycleEndMinutes = cycleEnd.getHours() * 60 + cycleEnd.getMinutes();
+  if (cycleEndMinutes > workEndMinutes) {
+    return true; // Ending after work hours
+  }
+  
+  return false;
 }
 
 /**
@@ -195,23 +216,31 @@ export function getCycleWithDetails(cycle: PlannedCycle): CycleWithDetails {
 export function computeProjectCoverage(): ProjectCoverage[] {
   const projects = getProjects().filter(p => p.status !== 'completed');
   const cycles = getPlannedCycles();
-  const now = new Date();
   
   // Get future planned cycles (not completed/failed)
   const futureCycles = cycles.filter(c => 
     c.status === 'planned' || c.status === 'in_progress'
   );
   
-  // Group planned units by project
-  const plannedByProject = new Map<string, number>();
+  // Group planned units by project - separate by status
+  const plannedOnlyByProject = new Map<string, number>();
+  const inProgressByProject = new Map<string, number>();
+  
   for (const cycle of futureCycles) {
-    const current = plannedByProject.get(cycle.projectId) || 0;
-    plannedByProject.set(cycle.projectId, current + cycle.unitsPlanned);
+    if (cycle.status === 'planned') {
+      const current = plannedOnlyByProject.get(cycle.projectId) || 0;
+      plannedOnlyByProject.set(cycle.projectId, current + cycle.unitsPlanned);
+    } else if (cycle.status === 'in_progress') {
+      const current = inProgressByProject.get(cycle.projectId) || 0;
+      inProgressByProject.set(cycle.projectId, current + cycle.unitsPlanned);
+    }
   }
   
   return projects.map(project => {
     const remainingUnits = project.quantityTarget - project.quantityGood;
-    const plannedUnits = plannedByProject.get(project.id) || 0;
+    const plannedUnitsOnly = plannedOnlyByProject.get(project.id) || 0;
+    const inProgressUnits = inProgressByProject.get(project.id) || 0;
+    const plannedUnits = plannedUnitsOnly + inProgressUnits; // Total coverage
     const uncoveredUnits = Math.max(0, remainingUnits - plannedUnits);
     
     // Determine status
@@ -240,6 +269,8 @@ export function computeProjectCoverage(): ProjectCoverage[] {
       quantityScrap: project.quantityScrap,
       remainingUnits,
       plannedUnits,
+      plannedUnitsOnly,
+      inProgressUnits,
       uncoveredUnits,
       status,
       isRecovery: !!project.parentProjectId,
