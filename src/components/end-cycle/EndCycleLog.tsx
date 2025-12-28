@@ -179,13 +179,15 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       : wastedGrams;
     
     // Analyze options using user-provided estimated hours
+    // Pass selectedPrinter to ensure dominoEffect is calculated for correct printer
     try {
       const analysis = analyzeDecisionOptions(
         activeCycle.projectId,
         unitsToRecover,
         gramsLost,
         data.estimatedPrintHours, // Use user-provided estimate instead of default
-        data.needsSpoolChange // Pass material availability info
+        data.needsSpoolChange, // Pass material availability info
+        selectedPrinter // CRITICAL: Pass printer ID for correct dominoEffect calculation
       );
       setDecisionAnalysis(analysis);
       setPendingResult(result);
