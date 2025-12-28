@@ -73,7 +73,21 @@ export interface EndCycleEventLogEntry {
     extensionImpact?: {
       additionalTimeNeeded: number;
       newEndTime: string;
-      affectedCycles: number;
+      wouldCrossDeadline: boolean;
+      wouldRequireOvernight: boolean;
+      affectedCycles: Array<{
+        cycleId: string;
+        projectId: string;
+        projectName: string;
+        printerId: string;
+        printerName: string;
+        originalStart: string;
+        originalEnd: string;
+        newStart: string;
+        newEnd: string;
+        delayHours: number;
+        crossesDeadline: boolean;
+      }>;
     };
   };
   replanTriggered: boolean;
