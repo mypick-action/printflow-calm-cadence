@@ -86,6 +86,7 @@ import {
 } from '@/services/materialStatus';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { ProductEditorModal } from '@/components/products/ProductEditorModal';
+import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -234,9 +235,16 @@ export const ProjectsPage: React.FC = () => {
     setProjectToDelete(null);
   };
 
-  useEffect(() => {
+  const refreshData = () => {
     setProjects(getProjects());
     setProducts(getProducts());
+  };
+
+  useEffect(() => {
+    refreshData();
+    // Subscribe to inventory changes to update material status
+    const unsubscribe = subscribeToInventoryChanges(refreshData);
+    return unsubscribe;
   }, []);
 
   // Status configuration with Hebrew-first labels
