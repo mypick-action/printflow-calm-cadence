@@ -214,7 +214,7 @@ export const ProjectsPage: React.FC = () => {
     preferredPresetId: '',
     quantityTarget: 100,
     dueDate: '',
-    color: 'Black',
+    color: '', // Will be set to first available color from inventory
     manualUrgency: null as ProjectPriority | null,
   });
 
@@ -264,7 +264,13 @@ export const ProjectsPage: React.FC = () => {
     
     // Combine all unique colors: inventory colors + settings colors + defaults
     const allColors = new Set([...inventoryColors, ...settingsColors, ...defaultColors]);
-    setAvailableColors(Array.from(allColors));
+    const colorsArray = Array.from(allColors);
+    setAvailableColors(colorsArray);
+    
+    // Set default color to first inventory color if available
+    if (inventoryColors.length > 0 && !newProject.color) {
+      setNewProject(prev => ({ ...prev, color: inventoryColors[0] }));
+    }
   };
 
   useEffect(() => {
@@ -465,7 +471,7 @@ export const ProjectsPage: React.FC = () => {
       preferredPresetId: '',
       quantityTarget: 100,
       dueDate: '',
-      color: 'Black',
+      color: availableColors[0] || '', // Use first available color from inventory
       manualUrgency: null,
     });
     setProductSearchText('');
