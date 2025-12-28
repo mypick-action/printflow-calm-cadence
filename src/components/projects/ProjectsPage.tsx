@@ -76,6 +76,7 @@ import {
   calculateDaysRemaining,
   getColorInventory,
   getFactorySettings,
+  saveFactorySettings,
   getCyclesForProject,
   PlannedCycle,
 } from '@/services/storage';
@@ -448,6 +449,18 @@ export const ProjectsPage: React.FC = () => {
     const calculatedUrgency = calculatePriorityFromDueDate(newProject.dueDate);
     const finalUrgency = newProject.manualUrgency || calculatedUrgency;
     
+    // If using a custom color, save it to factory settings for future use
+    if (useCustomColor && customColorName.trim()) {
+      const settings = getFactorySettings();
+      if (settings) {
+        const existingColors = settings.colors || [];
+        if (!existingColors.includes(customColorName.trim())) {
+          const updatedColors = [...existingColors, customColorName.trim()];
+          saveFactorySettings({ ...settings, colors: updatedColors });
+        }
+      }
+    }
+    
     const createdProject = createProject({
       name: newProject.name,
       productId: newProject.productId,
@@ -476,6 +489,9 @@ export const ProjectsPage: React.FC = () => {
     setUseCustomColor(false);
     setCustomColorName('');
     setProductSearchText('');
+    
+    // Refresh to include the new color
+    refreshData();
     
     // Validate and show detailed toast
     const validationResult = validateProjectForPlanning(createdProject);
