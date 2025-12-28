@@ -1027,11 +1027,17 @@ export interface LogCycleResult {
   success: boolean;
   log?: CycleLog;
   materialResult?: MaterialConsumptionResult;
+  remakeProject?: Project; // Auto-created project for scrap units
   error?: string;
   errorHe?: string;
 }
 
-export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): CycleLog => {
+export interface LogCycleWithRemakeResult {
+  log: CycleLog;
+  remakeProject?: Project;
+}
+
+export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): LogCycleWithRemakeResult => {
   const newLog: CycleLog = {
     ...log,
     id: generateId(),
@@ -1042,12 +1048,39 @@ export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): CycleLog => {
   
   // Update project quantities
   const project = getProject(log.projectId);
+  let remakeProject: Project | undefined;
+  
   if (project) {
+    const newGood = project.quantityGood + log.unitsCompleted;
+    const newScrap = project.quantityScrap + log.unitsScrap;
+    const isCompleted = newGood >= project.quantityTarget;
+    
     updateProject(log.projectId, {
-      quantityGood: project.quantityGood + log.unitsCompleted,
-      quantityScrap: project.quantityScrap + log.unitsScrap,
-      status: project.quantityGood + log.unitsCompleted >= project.quantityTarget ? 'completed' : 'in_progress',
+      quantityGood: newGood,
+      quantityScrap: newScrap,
+      status: isCompleted ? 'completed' : 'in_progress',
     });
+    
+    // If there are scrap units, ALWAYS create a remake project
+    // This ensures the missing units get scheduled immediately
+    // The user will adjust the plate settings as needed
+    if (log.unitsScrap > 0) {
+      const product = getProduct(project.productId);
+      if (product) {
+        remakeProject = createProject({
+          name: `${project.name} - השלמה`,
+          productId: project.productId,
+          productName: project.productName,
+          preferredPresetId: undefined, // User needs to select new plate setup
+          quantityTarget: log.unitsScrap,
+          dueDate: project.dueDate, // Same due date as original
+          urgency: 'urgent', // Mark as urgent by default
+          urgencyManualOverride: false,
+          status: 'pending',
+          color: project.color,
+        });
+      }
+    }
   }
   
   // Update planned cycle status if linked
@@ -1057,7 +1090,7 @@ export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): CycleLog => {
     });
   }
   
-  return newLog;
+  return { log: newLog, remakeProject };
 };
 
 /**
@@ -1106,12 +1139,13 @@ export const logCycleWithMaterialConsumption = (
   }
 
   // Log the cycle
-  const cycleLog = logCycle(log);
+  const cycleResult = logCycle(log);
 
   return {
     success: true,
-    log: cycleLog,
+    log: cycleResult.log,
     materialResult,
+    remakeProject: cycleResult.remakeProject,
   };
 };
 

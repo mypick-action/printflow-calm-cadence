@@ -36,21 +36,23 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
   const refreshRecommendations = useCallback(() => {
     const recommendations = generateLoadRecommendations();
     setResult(recommendations);
-    onRefresh?.();
-  }, [onRefresh]);
+  }, []);
 
   // Refresh on mount
   useEffect(() => {
     refreshRecommendations();
-  }, [refreshRecommendations]);
+    onRefresh?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Subscribe to inventory changes - refresh immediately when inventory updates
   useEffect(() => {
     const unsubscribe = subscribeToInventoryChanges(() => {
-      refreshRecommendations();
+      const recommendations = generateLoadRecommendations();
+      setResult(recommendations);
     });
     return unsubscribe;
-  }, [refreshRecommendations]);
+  }, []);
 
   if (!result) return null;
 

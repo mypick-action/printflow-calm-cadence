@@ -181,22 +181,30 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       return;
     }
 
-    // Show success with material info
+    // Show success with material info and remake project info
     const materialInfo = result.materialResult 
       ? (language === 'he' 
           ? `נוכו ${result.materialResult.gramsConsumed}g מהמלאי.`
           : `${result.materialResult.gramsConsumed}g deducted from inventory.`)
       : '';
 
-    // Auto-replan is now triggered automatically by the material consumption
-    // No need to call recalculatePlan manually
-    
-    toast({
-      title: language === 'he' ? 'המחזור עודכן' : 'Cycle Updated',
-      description: language === 'he' 
-        ? `${materialInfo} התכנון יתעדכן אוטומטית.`
-        : `${materialInfo} Plan will update automatically.`,
-    });
+    // Check if a remake project was created
+    if (result.remakeProject) {
+      toast({
+        title: language === 'he' ? 'נוצר פרויקט השלמה' : 'Remake Project Created',
+        description: language === 'he' 
+          ? `נפתח פרויקט "${result.remakeProject.name}" להשלמת ${result.remakeProject.quantityTarget} יחידות. התכנון יתעדכן אוטומטית.`
+          : `Created project "${result.remakeProject.name}" to produce ${result.remakeProject.quantityTarget} units. Plan will update automatically.`,
+      });
+    } else {
+      // Auto-replan is now triggered automatically by the material consumption
+      toast({
+        title: language === 'he' ? 'המחזור עודכן' : 'Cycle Updated',
+        description: language === 'he' 
+          ? `${materialInfo} התכנון יתעדכן אוטומטית.`
+          : `${materialInfo} Plan will update automatically.`,
+      });
+    }
 
     if (onComplete) {
       onComplete();
