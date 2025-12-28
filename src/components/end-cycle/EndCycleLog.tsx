@@ -18,7 +18,8 @@ import {
   Package,
   Minus,
   Plus,
-  Undo2
+  Undo2,
+  FlaskConical,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { 
@@ -44,6 +45,7 @@ import {
 } from '@/services/decisionLog';
 import { DecisionModal } from './DecisionModal';
 import { RecoveryInputStep, RecoveryInputData } from './RecoveryInputStep';
+import { TestModePanel } from '@/components/dev/TestModePanel';
 
 type CycleResult = 'completed' | 'completed_with_scrap' | 'failed';
 type WasteMethod = 'quick' | 'estimate' | 'manual';
@@ -85,6 +87,9 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
   // Undo state
   const [lastDecisionId, setLastDecisionId] = useState<string | null>(null);
   const [undoCountdown, setUndoCountdown] = useState(0);
+  
+  // Test mode state (developer only)
+  const [showTestMode, setShowTestMode] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -457,6 +462,27 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
 
   return (
     <div className="max-w-lg mx-auto space-y-6">
+      {/* Developer Test Mode Toggle */}
+      <div className="flex justify-end">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowTestMode(!showTestMode)}
+          className="text-xs text-muted-foreground hover:text-warning"
+        >
+          <FlaskConical className="w-3 h-3 mr-1" />
+          Test Mode
+        </Button>
+      </div>
+
+      {/* Test Mode Panel */}
+      {showTestMode && (
+        <TestModePanel 
+          onClose={() => setShowTestMode(false)}
+          onScenarioSeeded={() => loadData()}
+        />
+      )}
+
       {/* Header */}
       <div className="text-center space-y-2">
         <div className="inline-flex p-3 bg-primary/10 rounded-2xl">
