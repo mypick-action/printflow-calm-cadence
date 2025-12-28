@@ -33,6 +33,30 @@ export interface ScheduleImpact {
   deadlineRisks: DeadlineRisk[];
   estimatedCompletionDate: string;
   hoursAdded: number;
+  // NEW: Domino effect details
+  dominoEffect: DominoCycle[];
+}
+
+export interface DominoCycle {
+  cycleId: string;
+  projectId: string;
+  projectName: string;
+  printerId: string;
+  printerName: string;
+  originalStart: string;
+  newStart: string;
+  delayHours: number;
+  crossesDeadline: boolean;
+}
+
+export interface DeferImpact {
+  willMissDeadline: boolean;
+  daysAtRisk: number;
+  latestStart: string;
+  estimatedStart: string;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  reason: string;
+  reasonHe: string;
 }
 
 export interface DeadlineRisk {
@@ -57,7 +81,15 @@ export interface MergeCandidate {
   maxUnits: number;
   canAddUnits: number;
   color: string;
-  cycleDurationHours: number; // Actual cycle duration for capacity check
+  cycleDurationHours: number;
+  // NEW: Time-based capacity
+  availableTimeHours: number; // How much time can be added to this cycle
+  extensionImpact: {
+    newEndTime: string;
+    wouldCrossDeadline: boolean;
+    wouldRequireOvernight: boolean;
+    affectedCycles: number; // Domino effect on subsequent cycles
+  };
 }
 
 export interface DecisionAnalysis {
@@ -72,11 +104,13 @@ export interface DecisionAnalysis {
     remainingUnits: number;
     color: string;
   };
-  // NEW: Include user input for display
+  // User input for display
   userEstimates: {
     estimatedPrintHours: number;
     needsSpoolChange: boolean;
   };
+  // Defer analysis details
+  deferAnalysis: DeferImpact;
 }
 
 export interface DecisionOptionAnalysis {
@@ -196,18 +230,42 @@ const calculateImmediateImpact = (
     c.status === 'planned' && new Date(c.startTime) > today
   ).sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
   
-  // Calculate how many cycles will actually be pushed based on their real durations
-  let hoursAccountedFor = 0;
+  // Build domino effect - track each cycle that gets pushed
+  const dominoEffect: DominoCycle[] = [];
+  let cumulativeDelay = totalHoursNeeded;
   let cyclesPushed = 0;
   const affectedProjectIds = new Set<string>();
   
   for (const cycle of futureCycles) {
-    if (hoursAccountedFor >= totalHoursNeeded) break;
+    if (cumulativeDelay <= 0) break;
     
     const cycleDuration = getCycleDurationHours(cycle);
-    hoursAccountedFor += cycleDuration;
+    const project = projects.find(p => p.id === cycle.projectId);
+    const printer = printers.find(p => p.id === cycle.printerId);
+    
+    const originalStart = new Date(cycle.startTime);
+    const newStart = new Date(originalStart.getTime() + totalHoursNeeded * 60 * 60 * 1000);
+    
+    // Check if this cycle's delay causes deadline crossing
+    const dueDate = project ? new Date(project.dueDate) : null;
+    const newEnd = new Date(new Date(cycle.endTime).getTime() + totalHoursNeeded * 60 * 60 * 1000);
+    const crossesDeadline = dueDate ? newEnd > dueDate : false;
+    
+    dominoEffect.push({
+      cycleId: cycle.id,
+      projectId: cycle.projectId,
+      projectName: project?.name || 'Unknown',
+      printerId: cycle.printerId,
+      printerName: printer?.name || 'Unknown',
+      originalStart: originalStart.toISOString(),
+      newStart: newStart.toISOString(),
+      delayHours: totalHoursNeeded,
+      crossesDeadline,
+    });
+    
     cyclesPushed++;
     affectedProjectIds.add(cycle.projectId);
+    cumulativeDelay -= cycleDuration;
   }
   
   const affectedProjects = projects.filter(p => affectedProjectIds.has(p.id));
@@ -220,35 +278,22 @@ const calculateImmediateImpact = (
   const dayOfWeek = today.getDay();
   const requiresWeekendWork = (dayOfWeek === 5 && requiresOvernightPrinting) || dayOfWeek === 6;
   
-  // Check deadline risks - REAL calculation
-  const deadlineRisks: DeadlineRisk[] = [];
-  
-  for (const project of affectedProjects) {
-    const dueDate = new Date(project.dueDate);
-    
-    // Find the last cycle for this project to get its completion time
-    const projectCycles = futureCycles.filter(c => c.projectId === project.id);
-    const lastCycle = projectCycles[projectCycles.length - 1];
-    
-    if (lastCycle) {
-      const originalCompletion = new Date(lastCycle.endTime);
-      const newCompletion = new Date(originalCompletion.getTime() + totalHoursNeeded * 60 * 60 * 1000);
-      
-      // Check if new completion is after due date
-      if (newCompletion > dueDate) {
-        const daysDelay = Math.ceil((newCompletion.getTime() - originalCompletion.getTime()) / (1000 * 60 * 60 * 24));
-        deadlineRisks.push({
-          projectId: project.id,
-          projectName: project.name,
-          dueDate: project.dueDate,
-          originalCompletionDate: formatDateString(originalCompletion),
-          newCompletionDate: formatDateString(newCompletion),
-          daysDelay,
-          willMissDeadline: true,
-        });
-      }
-    }
-  }
+  // Check deadline risks - from domino effect
+  const deadlineRisks: DeadlineRisk[] = dominoEffect
+    .filter(d => d.crossesDeadline)
+    .map(d => {
+      const project = projects.find(p => p.id === d.projectId);
+      const cycle = futureCycles.find(c => c.id === d.cycleId);
+      return {
+        projectId: d.projectId,
+        projectName: d.projectName,
+        dueDate: project?.dueDate || '',
+        originalCompletionDate: cycle?.endTime.split('T')[0] || '',
+        newCompletionDate: new Date(new Date(cycle?.endTime || '').getTime() + d.delayHours * 60 * 60 * 1000).toISOString().split('T')[0],
+        daysDelay: Math.ceil(d.delayHours / 24),
+        willMissDeadline: true,
+      };
+    });
   
   const completionDate = new Date(today.getTime() + totalHoursNeeded * 60 * 60 * 1000);
   
@@ -261,33 +306,40 @@ const calculateImmediateImpact = (
     deadlineRisks,
     estimatedCompletionDate: formatDateString(completionDate),
     hoursAdded: totalHoursNeeded,
+    dominoEffect,
   };
 };
 
 /**
- * Calculate impact for defer option - REAL deadline risk check
+ * Calculate impact for defer option - REAL deadline risk check with latestStart and riskLevel
  */
+
 const calculateDeferImpact = (
   projectId: string,
   unitsToRecover: number,
   estimatedHours: number,
   cycles: PlannedCycle[],
   projects: Project[]
-): { willMissDeadline: boolean; daysAtRisk: number; reason: string; reasonHe: string } => {
+): DeferImpact => {
   const project = projects.find(p => p.id === projectId);
   if (!project) {
-    return { willMissDeadline: false, daysAtRisk: 0, reason: '', reasonHe: '' };
+    return { 
+      willMissDeadline: false, 
+      daysAtRisk: 0, 
+      latestStart: '', 
+      estimatedStart: '',
+      riskLevel: 'low',
+      reason: '', 
+      reasonHe: '' 
+    };
   }
   
   const dueDate = new Date(project.dueDate);
   const now = new Date();
   
-  // Find the last planned cycle for this project
-  const projectCycles = cycles
-    .filter(c => c.projectId === projectId && c.status === 'planned')
-    .sort((a, b) => new Date(b.endTime).getTime() - new Date(a.endTime).getTime());
-  
-  const lastCycle = projectCycles[0];
+  // Calculate latestStart: due date minus estimated hours (in work days)
+  const latestStartDate = new Date(dueDate.getTime() - estimatedHours * 60 * 60 * 1000);
+  const latestStart = formatDateString(latestStartDate);
   
   // Calculate when a deferred cycle would be scheduled (after all current work)
   const allPlannedCycles = cycles
@@ -299,7 +351,24 @@ const calculateDeferImpact = (
     ? new Date(lastPlannedCycle.endTime)
     : now;
   
+  const estimatedStart = formatDateString(estimatedDeferredStart);
   const estimatedDeferredEnd = new Date(estimatedDeferredStart.getTime() + estimatedHours * 60 * 60 * 1000);
+  
+  // Calculate slack time
+  const slackHours = getWorkHoursUntilDate(dueDate);
+  const slackRatio = slackHours / estimatedHours;
+  
+  // Determine risk level based on slack ratio
+  let riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  if (estimatedDeferredEnd > dueDate) {
+    riskLevel = 'critical';
+  } else if (slackRatio < 1.5) {
+    riskLevel = 'high';
+  } else if (slackRatio < 3) {
+    riskLevel = 'medium';
+  } else {
+    riskLevel = 'low';
+  }
   
   // Check if deferred completion is after due date
   if (estimatedDeferredEnd > dueDate) {
@@ -307,23 +376,35 @@ const calculateDeferImpact = (
     return {
       willMissDeadline: true,
       daysAtRisk: daysLate,
+      latestStart,
+      estimatedStart,
+      riskLevel,
       reason: `Project due ${project.dueDate}. Deferred completion would be ${daysLate} days late.`,
       reasonHe: `הפרויקט אמור להסתיים ב-${project.dueDate}. השלמה דחויה תאחר ב-${daysLate} ימים.`,
     };
   }
   
-  // Check if there's limited slack time
-  const slackHours = getWorkHoursUntilDate(dueDate);
-  if (slackHours < estimatedHours * 2) {
-    return {
-      willMissDeadline: false,
-      daysAtRisk: 0,
-      reason: `Low slack time until deadline (${slackHours.toFixed(1)}h available).`,
-      reasonHe: `זמן גמיש נמוך עד הדדליין (${slackHours.toFixed(1)} שעות זמינות).`,
-    };
+  // Build reason based on risk level
+  let reason = '';
+  let reasonHe = '';
+  
+  if (riskLevel === 'high') {
+    reason = `Low slack time until deadline (${slackHours.toFixed(1)}h available for ${estimatedHours}h job).`;
+    reasonHe = `זמן גמיש נמוך (${slackHours.toFixed(1)} שעות זמינות ל-${estimatedHours} שעות עבודה).`;
+  } else if (riskLevel === 'medium') {
+    reason = `Moderate slack time (${slackHours.toFixed(1)}h available).`;
+    reasonHe = `זמן גמיש בינוני (${slackHours.toFixed(1)} שעות זמינות).`;
   }
   
-  return { willMissDeadline: false, daysAtRisk: 0, reason: '', reasonHe: '' };
+  return { 
+    willMissDeadline: false, 
+    daysAtRisk: 0, 
+    latestStart,
+    estimatedStart,
+    riskLevel,
+    reason, 
+    reasonHe 
+  };
 };
 
 /**
@@ -344,22 +425,28 @@ const findMergeCandidates = (
   const project = projects.find(p => p.id === projectId);
   if (!project) return candidates;
   
-  // Get product to find actual max units per plate
+  // Get product to find actual max units per plate and cycle time
   const product = getProduct(project.productId);
   let maxUnitsPerPlate = 10; // Default fallback
+  let hoursPerUnit = 0.3; // Default hours per unit
   
   if (product && product.platePresets && product.platePresets.length > 0) {
     // Find the preset with maximum units
-    maxUnitsPerPlate = Math.max(...product.platePresets.map(p => p.unitsPerPlate));
+    const maxPreset = product.platePresets.reduce((max, p) => 
+      p.unitsPerPlate > max.unitsPerPlate ? p : max, product.platePresets[0]);
+    maxUnitsPerPlate = maxPreset.unitsPerPlate;
+    hoursPerUnit = maxPreset.cycleHours / maxPreset.unitsPerPlate;
   }
   
   // Find same-project cycles that aren't at full capacity
-  const sameProjectCycles = cycles.filter(c => 
+  const allPlannedCycles = cycles.filter(c => c.status === 'planned')
+    .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+  
+  const sameProjectCycles = allPlannedCycles.filter(c => 
     c.projectId === projectId &&
-    c.status === 'planned' &&
     new Date(c.startTime) > today &&
     c.plateType !== 'closeout'
-  ).sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+  );
   
   for (const cycle of sameProjectCycles.slice(0, 3)) {
     const printer = printers.find(p => p.id === cycle.printerId);
@@ -368,6 +455,32 @@ const findMergeCandidates = (
     if (canAdd > 0) {
       const startTime = new Date(cycle.startTime);
       const cycleDuration = getCycleDurationHours(cycle);
+      const additionalTimeNeeded = canAdd * hoursPerUnit;
+      
+      // Calculate extension impact
+      const originalEnd = new Date(cycle.endTime);
+      const newEnd = new Date(originalEnd.getTime() + additionalTimeNeeded * 60 * 60 * 1000);
+      
+      // Check if extension would cause issues
+      const dueDate = new Date(project.dueDate);
+      const wouldCrossDeadline = newEnd > dueDate;
+      
+      // Check for overnight
+      const settings = getFactorySettings();
+      const overrides = getTemporaryOverrides();
+      const daySchedule = getDayScheduleForDate(originalEnd, settings, overrides);
+      const workEndTime = daySchedule ? parseTime(daySchedule.endTime) : { hours: 18, minutes: 0 };
+      const workEndMinutes = workEndTime.hours * 60 + workEndTime.minutes;
+      const newEndMinutes = newEnd.getHours() * 60 + newEnd.getMinutes();
+      const wouldRequireOvernight = newEndMinutes > workEndMinutes;
+      
+      // Count affected subsequent cycles (domino effect)
+      const subsequentCycles = allPlannedCycles.filter(c => 
+        c.printerId === cycle.printerId && 
+        new Date(c.startTime) > originalEnd
+      );
+      const affectedCycles = subsequentCycles.length > 0 && additionalTimeNeeded > 0.5 
+        ? Math.min(3, subsequentCycles.length) : 0;
       
       candidates.push({
         cycleId: cycle.id,
@@ -382,6 +495,13 @@ const findMergeCandidates = (
         canAddUnits: canAdd,
         color,
         cycleDurationHours: cycleDuration,
+        availableTimeHours: (maxUnitsPerPlate - cycle.unitsPlanned) * hoursPerUnit,
+        extensionImpact: {
+          newEndTime: newEnd.toISOString(),
+          wouldCrossDeadline,
+          wouldRequireOvernight,
+          affectedCycles,
+        },
       });
     }
   }
@@ -555,6 +675,7 @@ export const analyzeDecisionOptions = (
       estimatedPrintHours: cycleHours,
       needsSpoolChange,
     },
+    deferAnalysis: deferImpact,
   };
 };
 
