@@ -120,20 +120,26 @@ const calculateMaterialShortages = (): MaterialShortage[] => {
         .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
     }
 
+    // CRITICAL: If color doesn't exist at all in inventory (available = 0 and no inventory item),
+    // it's a complete shortage - the user needs to order this color
+    const colorExistsInInventory = invItem !== undefined || spools.some(s => normalizeColor(s.color) === colorKey);
+    
     // Include safety threshold in the calculation
     const effectiveRequired = demand.totalGrams + SAFETY_THRESHOLD_GRAMS;
     
-    // Only report shortage if available is less than required (with safety)
-    if (availableGrams < effectiveRequired) {
+    // Report shortage if:
+    // 1. Color doesn't exist at all in inventory (complete shortage)
+    // 2. Available is less than required (partial shortage)
+    if (!colorExistsInInventory || availableGrams < effectiveRequired) {
       const shortfall = Math.max(0, demand.totalGrams - availableGrams);
       
-      // Only create shortage alert if there's actual shortfall (not just safety margin)
-      if (shortfall > 0) {
+      // Create shortage alert if there's actual shortfall
+      if (shortfall > 0 || !colorExistsInInventory) {
         shortages.push({
           color: colorKey,
           requiredGrams: demand.totalGrams,
           availableGrams,
-          shortfallGrams: shortfall,
+          shortfallGrams: !colorExistsInInventory ? demand.totalGrams : shortfall,
           affectedProjectIds: demand.projectIds,
           affectedProjectNames: demand.projectNames,
         });

@@ -45,7 +45,7 @@ import {
   MaterialShortage,
   getTotalGrams,
 } from '@/services/storage';
-import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
+import { subscribeToInventoryChanges, notifyInventoryChanged } from '@/services/inventoryEvents';
 import { toast } from '@/hooks/use-toast';
 
 interface LoadRecommendationsPanelProps {
@@ -331,6 +331,9 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
       mountedColor: recommendation.color,
       currentColor: recommendation.color,
     });
+    
+    // Notify inventory system to trigger UI refresh
+    notifyInventoryChanged();
     
     setLoadDialogOpen(false);
     setLoadChoice(null);
