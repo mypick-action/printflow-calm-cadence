@@ -943,7 +943,8 @@ export interface MaterialConsumptionResult {
 export const consumeMaterial = (
   color: string,
   gramsNeeded: number,
-  printerId?: string
+  printerId?: string,
+  forceConsume: boolean = false // For execution mode - consume even if insufficient (already used)
 ): MaterialConsumptionResult => {
   if (gramsNeeded <= 0) {
     return { success: true, gramsConsumed: 0, spoolsAffected: [] };
@@ -979,7 +980,11 @@ export const consumeMaterial = (
   // Calculate total available
   const totalAvailable = matchingSpools.reduce((sum, s) => sum + s.gramsRemainingEst, 0);
   
-  if (totalAvailable < gramsNeeded) {
+  // EXECUTION vs PLANNING separation:
+  // - forceConsume=true: Execution mode - material was already physically consumed,
+  //   we just deduct what we can from inventory (may go to 0 or leave remaining)
+  // - forceConsume=false: Planning mode - check availability before consuming
+  if (!forceConsume && totalAvailable < gramsNeeded) {
     return {
       success: false,
       gramsConsumed: 0,
@@ -1172,8 +1177,8 @@ export const logCycleWithMaterialConsumption = (
   }
 
   // Consume material (deduct from inventory records)
-  // For execution: this updates the spool records to reflect actual usage
-  const materialResult = consumeMaterial(color, gramsToConsume, printerId);
+  // For execution: force consume even if insufficient (material was already physically used)
+  const materialResult = consumeMaterial(color, gramsToConsume, printerId, isExecutionCompletion);
   if (!materialResult.success) {
     return {
       success: false,
