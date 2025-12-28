@@ -346,7 +346,7 @@ export function seedMergeScenario(): ScenarioResult {
     platePresets: [{
       id: testId('preset-merge'),
       name: 'Standard',
-      unitsPerPlate: 6,
+      unitsPerPlate: 10, // Max 10, so cycles with 6 have room for 4 more
       cycleHours: 3,
       riskLevel: 'low',
       allowedForNightCycle: true,
