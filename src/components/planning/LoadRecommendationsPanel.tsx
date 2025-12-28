@@ -42,10 +42,12 @@ import {
   openNewSpool,
   updatePrinter,
   getPrinters,
+  getPlannedCycles,
   LoadRecommendation, 
   MaterialShortage,
   getTotalGrams,
 } from '@/services/storage';
+import { normalizeColor } from '@/services/colorNormalization';
 import { subscribeToInventoryChanges, notifyInventoryChanged } from '@/services/inventoryEvents';
 import { toast } from '@/hooks/use-toast';
 
@@ -332,56 +334,70 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
     const printer = printers.find(p => p.id === recommendation.printerId);
     
     if (printer?.hasAMS) {
-      // For AMS printers - ADD to empty slots, never replace existing colors
+      // For AMS printers
       const currentSlots = printer.amsSlotStates || [];
       const maxSlots = printer.amsSlots || 4;
       
       // Check if color already exists in AMS
-      const existingIdx = currentSlots.findIndex(s => s.color?.toLowerCase() === recommendation.color.toLowerCase());
+      const existingIdx = currentSlots.findIndex(s => 
+        s.color && normalizeColor(s.color) === normalizeColor(recommendation.color)
+      );
       
       if (existingIdx >= 0) {
-        // Color already in AMS - perfect, nothing to do
         console.log(`[confirmLoad] ${recommendation.color} already in AMS slot ${existingIdx}`);
       } else {
-        // Need to add color to AMS
-        // Find first empty slot (either undefined entry or no color)
-        let emptyIdx = currentSlots.findIndex(s => !s.color);
+        // Find first empty slot
+        let targetIdx = currentSlots.findIndex(s => !s.color);
         
         // If no empty in existing array, check if we can add more slots
-        if (emptyIdx < 0 && currentSlots.length < maxSlots) {
-          emptyIdx = currentSlots.length; // Add to next index
+        if (targetIdx < 0 && currentSlots.length < maxSlots) {
+          targetIdx = currentSlots.length;
         }
         
-        if (emptyIdx >= 0 && emptyIdx < maxSlots) {
-          // Add to empty slot
-          const newSlots = [...currentSlots];
-          // Ensure array is long enough
-          while (newSlots.length <= emptyIdx) {
-            newSlots.push({ slotIndex: newSlots.length });
-          }
-          newSlots[emptyIdx] = { slotIndex: emptyIdx, color: recommendation.color };
+        // If still no empty slot, find the best color to replace
+        if (targetIdx < 0) {
+          const cycles = getPlannedCycles();
+          const upcomingCycles = cycles.filter(c => 
+            c.printerId === recommendation.printerId && c.status === 'planned'
+          );
           
-          updatePrinter(recommendation.printerId, {
-            amsSlotStates: newSlots,
-            currentColor: recommendation.color,
-          });
-          console.log(`[confirmLoad] Added ${recommendation.color} to AMS slot ${emptyIdx}`);
-        } else {
-          // All slots full - inform user
-          toast({
-            title: language === 'he' ? 'ה-AMS מלא' : 'AMS is full',
-            description: language === 'he' 
-              ? `כל ${maxSlots} החריצים מלאים. הוצא צבע ידנית כדי להוסיף ${recommendation.color}`
-              : `All ${maxSlots} slots are full. Remove a color manually to add ${recommendation.color}`,
-            variant: 'destructive',
-          });
-          setLoadDialogOpen(false);
-          setLoadChoice(null);
-          return;
+          // Find which colors are needed for upcoming work
+          const neededColors = new Set(
+            upcomingCycles.map(c => normalizeColor(c.requiredColor))
+          );
+          
+          // Find a slot with a color NOT needed for upcoming work
+          for (let i = 0; i < currentSlots.length; i++) {
+            const slotColor = currentSlots[i].color;
+            if (slotColor && !neededColors.has(normalizeColor(slotColor))) {
+              targetIdx = i;
+              console.log(`[confirmLoad] Replacing ${slotColor} in slot ${i} (not needed)`);
+              break;
+            }
+          }
+          
+          // If all colors needed, replace the last one
+          if (targetIdx < 0) {
+            targetIdx = maxSlots - 1;
+            console.log(`[confirmLoad] All colors needed, replacing slot ${targetIdx}`);
+          }
         }
+        
+        // Update the slot
+        const newSlots = [...currentSlots];
+        while (newSlots.length <= targetIdx) {
+          newSlots.push({ slotIndex: newSlots.length });
+        }
+        newSlots[targetIdx] = { slotIndex: targetIdx, color: recommendation.color };
+        
+        updatePrinter(recommendation.printerId, {
+          amsSlotStates: newSlots,
+          currentColor: recommendation.color,
+        });
+        console.log(`[confirmLoad] Added ${recommendation.color} to AMS slot ${targetIdx}`);
       }
     } else {
-      // For non-AMS printers, update mountedColor
+      // For non-AMS printers
       updatePrinter(recommendation.printerId, {
         mountedColor: recommendation.color,
         currentColor: recommendation.color,
