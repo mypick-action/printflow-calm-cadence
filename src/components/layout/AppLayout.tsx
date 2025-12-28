@@ -23,11 +23,13 @@ interface AppLayoutProps {
 }
 
 export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onNavigate }) => {
-  const { t, direction } = useLanguage();
+  const { t, direction, language } = useLanguage();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   
   const navItems = [
     { id: 'dashboard', label: t('nav.dashboard'), icon: LayoutDashboard },
+    { id: 'operationalDashboard', label: language === 'he' ? 'לוח בקרה' : 'Operations', icon: LayoutDashboard },
+    { id: 'weekly', label: language === 'he' ? 'תכנון שבועי' : 'Weekly', icon: CalendarDays },
     { id: 'projects', label: t('nav.projects'), icon: FolderKanban },
     { id: 'products', label: t('nav.products') || 'Products', icon: Package },
     { id: 'inventory', label: t('nav.inventory') || 'Inventory', icon: Boxes },
