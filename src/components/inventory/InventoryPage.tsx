@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,8 +32,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Package, Plus, MoreHorizontal, AlertCircle, Scale, MapPin, Printer as PrinterIcon, Calendar } from 'lucide-react';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { Package, Plus, MoreHorizontal, AlertCircle, Scale, MapPin, Printer as PrinterIcon, Calendar, ChevronDown, ChevronLeft } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { 
   getSpools, 
   createSpool,
@@ -199,6 +205,44 @@ export const InventoryPage: React.FC = () => {
 
   const activeSpools = spools.filter(s => s.state !== 'empty');
   const emptySpools = spools.filter(s => s.state === 'empty');
+
+  // Group active spools by color
+  const spoolsByColor = useMemo(() => {
+    const groups: Record<string, Spool[]> = {};
+    activeSpools.forEach(spool => {
+      const color = spool.color || 'Unknown';
+      if (!groups[color]) {
+        groups[color] = [];
+      }
+      groups[color].push(spool);
+    });
+    // Sort spools within each group by material and grams remaining
+    Object.keys(groups).forEach(color => {
+      groups[color].sort((a, b) => {
+        if (a.material !== b.material) return a.material.localeCompare(b.material);
+        return b.gramsRemainingEst - a.gramsRemainingEst;
+      });
+    });
+    return groups;
+  }, [activeSpools]);
+
+  const colorNames = useMemo(() => Object.keys(spoolsByColor).sort(), [spoolsByColor]);
+  const [expandedColors, setExpandedColors] = useState<Set<string>>(new Set());
+
+  const toggleColor = (color: string) => {
+    setExpandedColors(prev => {
+      const next = new Set(prev);
+      if (next.has(color)) {
+        next.delete(color);
+      } else {
+        next.add(color);
+      }
+      return next;
+    });
+  };
+
+  const expandAll = () => setExpandedColors(new Set(colorNames));
+  const collapseAll = () => setExpandedColors(new Set());
 
   return (
     <div className="space-y-6">
@@ -395,87 +439,128 @@ export const InventoryPage: React.FC = () => {
         </Card>
       )}
 
-      {/* Inventory Table */}
+      {/* Inventory by Color */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            {language === 'he' ? 'רשימת מלאי' : 'Inventory List'}
-          </CardTitle>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">
+              {language === 'he' ? 'מלאי לפי צבע' : 'Inventory by Color'}
+            </CardTitle>
+            {colorNames.length > 0 && (
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={expandAll} className="text-xs h-7">
+                  {language === 'he' ? 'פתח הכל' : 'Expand All'}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={collapseAll} className="text-xs h-7">
+                  {language === 'he' ? 'סגור הכל' : 'Collapse All'}
+                </Button>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
-          {activeSpools.length === 0 ? (
+          {colorNames.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
               <p>{language === 'he' ? 'אין גלילים במלאי' : 'No spools in inventory'}</p>
               <p className="text-sm">{language === 'he' ? 'הוסיפו גלילים למעלה' : 'Add spools above'}</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{language === 'he' ? 'צבע' : 'Color'}</TableHead>
-                    <TableHead>{language === 'he' ? 'חומר' : 'Material'}</TableHead>
-                    <TableHead>{language === 'he' ? 'מצב' : 'State'}</TableHead>
-                    <TableHead className="text-center">{language === 'he' ? 'גודל' : 'Size'}</TableHead>
-                    <TableHead className="text-center">{language === 'he' ? 'נותר' : 'Remaining'}</TableHead>
-                    <TableHead>{language === 'he' ? 'מיקום' : 'Location'}</TableHead>
-                    <TableHead>{language === 'he' ? 'מדפסת' : 'Printer'}</TableHead>
-                    <TableHead>{language === 'he' ? 'ביקורת אחרונה' : 'Last Audit'}</TableHead>
-                    <TableHead className="w-[50px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {activeSpools.map(spool => (
-                    <TableRow key={spool.id}>
-                      <TableCell className="font-medium">{spool.color}</TableCell>
-                      <TableCell>{spool.material}</TableCell>
-                      <TableCell>{getStateBadge(spool.state)}</TableCell>
-                      <TableCell className="text-center">{spool.packageSize / 1000}kg</TableCell>
-                      <TableCell className="text-center font-medium">{spool.gramsRemainingEst}g</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <MapPin className="w-3 h-3 text-muted-foreground" />
-                          {getLocationLabel(spool.location)}
+            <div className="space-y-2">
+              {colorNames.map(color => {
+                const colorSpools = spoolsByColor[color];
+                const totalGrams = colorSpools.reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+                const spoolCount = colorSpools.length;
+                const isExpanded = expandedColors.has(color);
+                const spoolColor = getSpoolColor(color);
+
+                return (
+                  <Collapsible key={color} open={isExpanded} onOpenChange={() => toggleColor(color)}>
+                    <CollapsibleTrigger asChild>
+                      <div className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 cursor-pointer transition-colors">
+                        <div className="flex items-center gap-3">
+                          {language === 'he' ? (
+                            <ChevronLeft className={`w-4 h-4 text-muted-foreground transition-transform ${isExpanded ? '-rotate-90' : ''}`} />
+                          ) : (
+                            <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
+                          )}
+                          <div 
+                            className="w-6 h-6 rounded-full border-2 border-muted shadow-sm"
+                            style={{ backgroundColor: spoolColor }}
+                          />
+                          <span className="font-medium text-foreground">{color}</span>
+                          <Badge variant="secondary" className="text-xs">
+                            {spoolCount} {language === 'he' ? 'גלילים' : 'spools'}
+                          </Badge>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        {spool.assignedPrinterId ? (
-                          <div className="flex items-center gap-1">
-                            <PrinterIcon className="w-3 h-3 text-muted-foreground" />
-                            {getPrinterName(spool.assignedPrinterId)}
-                          </div>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {spool.lastAuditDate ? (
-                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                            <Calendar className="w-3 h-3" />
-                            {format(new Date(spool.lastAuditDate), 'dd/MM')}
-                          </div>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                              <MoreHorizontal className="w-4 h-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="bg-background border shadow-lg">
-                            <DropdownMenuItem onClick={() => handleEditSpool(spool)}>
-                              {language === 'he' ? 'ערוך' : 'Edit'}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleMarkEmpty(spool)}>
-                              {language === 'he' ? 'סמן כריק' : 'Mark Empty'}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            {totalGrams >= 1000 ? `${(totalGrams / 1000).toFixed(1)}kg` : `${totalGrams}g`}
+                          </span>
+                        </div>
+                      </div>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="mt-1 ms-7 border rounded-lg overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/30">
+                              <TableHead className="text-xs">{language === 'he' ? 'חומר' : 'Material'}</TableHead>
+                              <TableHead className="text-xs">{language === 'he' ? 'מצב' : 'State'}</TableHead>
+                              <TableHead className="text-xs text-center">{language === 'he' ? 'גודל' : 'Size'}</TableHead>
+                              <TableHead className="text-xs text-center">{language === 'he' ? 'נותר' : 'Remaining'}</TableHead>
+                              <TableHead className="text-xs">{language === 'he' ? 'מיקום' : 'Location'}</TableHead>
+                              <TableHead className="text-xs">{language === 'he' ? 'מדפסת' : 'Printer'}</TableHead>
+                              <TableHead className="w-[40px]"></TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {colorSpools.map(spool => (
+                              <TableRow key={spool.id} className="text-sm">
+                                <TableCell>{spool.material}</TableCell>
+                                <TableCell>{getStateBadge(spool.state)}</TableCell>
+                                <TableCell className="text-center">{spool.packageSize / 1000}kg</TableCell>
+                                <TableCell className="text-center font-medium">{spool.gramsRemainingEst}g</TableCell>
+                                <TableCell>
+                                  <div className="flex items-center gap-1">
+                                    <MapPin className="w-3 h-3 text-muted-foreground" />
+                                    {getLocationLabel(spool.location)}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  {spool.assignedPrinterId ? (
+                                    <div className="flex items-center gap-1">
+                                      <PrinterIcon className="w-3 h-3 text-muted-foreground" />
+                                      {getPrinterName(spool.assignedPrinterId)}
+                                    </div>
+                                  ) : '-'}
+                                </TableCell>
+                                <TableCell>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                                        <MoreHorizontal className="w-4 h-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="bg-background border shadow-lg">
+                                      <DropdownMenuItem onClick={() => handleEditSpool(spool)}>
+                                        {language === 'he' ? 'ערוך' : 'Edit'}
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => handleMarkEmpty(spool)}>
+                                        {language === 'he' ? 'סמן כריק' : 'Mark Empty'}
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                );
+              })}
             </div>
           )}
         </CardContent>
