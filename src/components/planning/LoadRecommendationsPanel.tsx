@@ -5,6 +5,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { 
   Package, 
@@ -19,8 +28,17 @@ import {
 } from 'lucide-react';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { generateLoadRecommendations, LoadRecommendationsResult, getActionSummary } from '@/services/loadRecommendations';
-import { getSpools, getPrinters, LoadRecommendation, MaterialShortage } from '@/services/storage';
+import { 
+  getColorInventory, 
+  getColorInventoryItem,
+  setOpenTotalGrams,
+  openNewSpool,
+  LoadRecommendation, 
+  MaterialShortage,
+  getTotalGrams,
+} from '@/services/storage';
 import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
+import { toast } from '@/hooks/use-toast';
 
 interface LoadRecommendationsPanelProps {
   onRefresh?: () => void;
@@ -177,7 +195,12 @@ export const LoadRecommendationsPanel: React.FC<LoadRecommendationsPanelProps> =
                 {language === 'he' ? 'הנחיות טעינה' : 'Load Instructions'}
               </h4>
               {recommendations.map((rec) => (
-                <RecommendationCard key={rec.id} recommendation={rec} language={language} />
+                <RecommendationCard 
+                  key={rec.id} 
+                  recommendation={rec} 
+                  language={language}
+                  onActionComplete={refreshRecommendations}
+                />
               ))}
             </div>
           )}
@@ -238,137 +261,233 @@ const ShortageAlert: React.FC<{ shortage: MaterialShortage; language: string }> 
   );
 };
 
-const RecommendationCard: React.FC<{ recommendation: LoadRecommendation; language: string }> = ({ recommendation, language }) => {
-  const spools = getSpools();
-  const suggestedSpools = spools.filter(s => recommendation.suggestedSpoolIds.includes(s.id));
+interface RecommendationCardProps {
+  recommendation: LoadRecommendation;
+  language: string;
+  onActionComplete?: () => void;
+}
+
+const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation, language, onActionComplete }) => {
+  const [loadDialogOpen, setLoadDialogOpen] = useState(false);
+  const [loadChoice, setLoadChoice] = useState<'open' | 'new' | null>(null);
+  const [openGramsInput, setOpenGramsInput] = useState(0);
   
-  // Determine spool recommendation text
-  const getSpoolAdvice = () => {
-    if (!recommendation.partialSpoolRecommendation) return null;
-    
-    if (recommendation.partialSpoolRecommendation === 'use_partial') {
-      return {
-        text: language === 'he' 
-          ? '💡 מומלץ גליל חלקי - מספיק לעבודה זו'
-          : '💡 Partial spool recommended - enough for this job',
-        className: 'text-success'
-      };
-    } else if (recommendation.partialSpoolRecommendation === 'use_full') {
-      return {
-        text: language === 'he' 
-          ? '📦 מומלץ גליל מלא - אין חלקי מתאים'
-          : '📦 Full spool recommended - no suitable partial',
-        className: 'text-primary'
-      };
-    } else if (recommendation.sequentialCyclesCount && recommendation.sequentialCyclesCount > 1) {
-      return {
-        text: language === 'he' 
-          ? `⚖️ יש ${recommendation.sequentialCyclesCount} עבודות ברצף - בחר לפי זמינותך להחלפה`
-          : `⚖️ ${recommendation.sequentialCyclesCount} jobs in sequence - choose based on your availability to swap`,
-        className: 'text-muted-foreground'
-      };
-    }
-    return null;
+  // Get color inventory for this recommendation
+  const inventoryItem = getColorInventoryItem(recommendation.color, recommendation.material || 'PLA');
+  const totalAvailable = inventoryItem ? getTotalGrams(inventoryItem) : 0;
+  
+  const handleUseOpen = () => {
+    setLoadChoice('open');
+    setOpenGramsInput(inventoryItem?.openTotalGrams || 0);
+    setLoadDialogOpen(true);
   };
   
-  const spoolAdvice = getSpoolAdvice();
+  const handleOpenNew = () => {
+    setLoadChoice('new');
+    setLoadDialogOpen(true);
+  };
+  
+  const confirmLoad = () => {
+    const material = recommendation.material || 'PLA';
+    
+    if (loadChoice === 'open') {
+      // Update open grams to what user reported
+      setOpenTotalGrams(recommendation.color, material, openGramsInput);
+      toast({
+        title: language === 'he' ? 'גליל פתוח נטען' : 'Open spool loaded',
+        description: `${recommendation.color} - ${openGramsInput}g`,
+      });
+    } else if (loadChoice === 'new') {
+      // Open a new closed spool
+      const result = openNewSpool(recommendation.color, material);
+      if (result) {
+        toast({
+          title: language === 'he' ? 'גליל חדש נפתח' : 'New spool opened',
+          description: `${recommendation.color} - +${inventoryItem?.closedSpoolSizeGrams || 1000}g`,
+        });
+      } else {
+        toast({
+          title: language === 'he' ? 'אין גלילים סגורים' : 'No closed spools available',
+          variant: 'destructive',
+        });
+      }
+    }
+    
+    setLoadDialogOpen(false);
+    setLoadChoice(null);
+    onActionComplete?.();
+  };
 
   return (
-    <div className={cn(
-      "p-3 rounded-lg border",
-      recommendation.priority === 'high' && "border-warning/50 bg-warning/5",
-      recommendation.priority === 'medium' && "border-muted bg-muted/30",
-      recommendation.priority === 'low' && "border-border bg-background",
-    )}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <PrinterIcon className="w-4 h-4 text-muted-foreground" />
-          <span className="font-medium text-sm">{recommendation.printerName}</span>
+    <>
+      <div className={cn(
+        "p-3 rounded-lg border",
+        recommendation.priority === 'high' && "border-warning/50 bg-warning/5",
+        recommendation.priority === 'medium' && "border-muted bg-muted/30",
+        recommendation.priority === 'low' && "border-border bg-background",
+      )}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <PrinterIcon className="w-4 h-4 text-muted-foreground" />
+            <span className="font-medium text-sm">{recommendation.printerName}</span>
+          </div>
+          <Badge 
+            variant="outline" 
+            className={cn(
+              "text-xs",
+              recommendation.priority === 'high' && "bg-warning/10 text-warning border-warning/30",
+              recommendation.priority === 'medium' && "bg-muted text-muted-foreground",
+              recommendation.priority === 'low' && "bg-background text-muted-foreground",
+            )}
+          >
+            {recommendation.priority === 'high' && (language === 'he' ? 'דחוף' : 'Urgent')}
+            {recommendation.priority === 'medium' && (language === 'he' ? 'רגיל' : 'Normal')}
+            {recommendation.priority === 'low' && (language === 'he' ? 'נמוך' : 'Low')}
+          </Badge>
         </div>
-        <Badge 
-          variant="outline" 
-          className={cn(
-            "text-xs",
-            recommendation.priority === 'high' && "bg-warning/10 text-warning border-warning/30",
-            recommendation.priority === 'medium' && "bg-muted text-muted-foreground",
-            recommendation.priority === 'low' && "bg-background text-muted-foreground",
-          )}
-        >
-          {recommendation.priority === 'high' && (language === 'he' ? 'דחוף' : 'Urgent')}
-          {recommendation.priority === 'medium' && (language === 'he' ? 'רגיל' : 'Normal')}
-          {recommendation.priority === 'low' && (language === 'he' ? 'נמוך' : 'Low')}
-        </Badge>
-      </div>
 
-      <div className="mt-2 flex items-center gap-2">
-        <SpoolIcon color={getSpoolColor(recommendation.color)} size={16} />
-        <span className="text-sm">
-          {language === 'he' 
-            ? recommendation.message 
-            : recommendation.messageEn}
-        </span>
-      </div>
-
-      {/* Grams info - NEW */}
-      <div className="mt-2 p-2 bg-muted/50 rounded text-xs space-y-1">
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">
-            {language === 'he' ? 'עבודה נוכחית:' : 'Current job:'}
-          </span>
-          <span className="font-medium">{Math.ceil(recommendation.gramsNeeded)}g</span>
+        <div className="mt-2 flex items-center gap-2">
+          <SpoolIcon color={getSpoolColor(recommendation.color)} size={16} />
+          <span className="text-sm font-medium">{recommendation.color}</span>
         </div>
-        {recommendation.sequentialCyclesCount && recommendation.sequentialCyclesCount > 1 && (
+
+        {/* Grams info */}
+        <div className="mt-2 p-2 bg-muted/50 rounded text-xs space-y-1">
           <div className="flex justify-between">
             <span className="text-muted-foreground">
-              {language === 'he' 
-                ? `סה"כ ${recommendation.sequentialCyclesCount} עבודות באותו צבע:`
-                : `Total ${recommendation.sequentialCyclesCount} same-color jobs:`}
+              {language === 'he' ? 'עבודה נוכחית:' : 'Current job:'}
             </span>
-            <span className="font-medium">{Math.ceil(recommendation.totalGramsForSequence || 0)}g</span>
+            <span className="font-medium">{Math.ceil(recommendation.gramsNeeded)}g</span>
+          </div>
+          {recommendation.sequentialCyclesCount && recommendation.sequentialCyclesCount > 1 && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">
+                {language === 'he' 
+                  ? `סה"כ ${recommendation.sequentialCyclesCount} עבודות:`
+                  : `Total ${recommendation.sequentialCyclesCount} jobs:`}
+              </span>
+              <span className="font-medium">{Math.ceil(recommendation.totalGramsForSequence || 0)}g</span>
+            </div>
+          )}
+        </div>
+
+        {/* Color Inventory Status */}
+        {inventoryItem && (
+          <div className="mt-2 p-2 bg-background rounded border text-xs space-y-1">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">
+                {language === 'he' ? 'פתוחים זמינים:' : 'Open available:'}
+              </span>
+              <span className="font-medium">{inventoryItem.openTotalGrams}g</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">
+                {language === 'he' ? 'גלילים סגורים:' : 'Closed spools:'}
+              </span>
+              <span className="font-medium">{inventoryItem.closedCount}</span>
+            </div>
           </div>
         )}
+
+        {/* Action Buttons */}
+        <div className="mt-3 flex gap-2">
+          {inventoryItem && inventoryItem.openTotalGrams > 0 && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="flex-1"
+              onClick={handleUseOpen}
+            >
+              {language === 'he' ? 'השתמש בפתוח' : 'Use Open'}
+            </Button>
+          )}
+          {inventoryItem && inventoryItem.closedCount > 0 && (
+            <Button 
+              variant="default" 
+              size="sm" 
+              className="flex-1"
+              onClick={handleOpenNew}
+            >
+              {language === 'he' ? 'פתח חדש' : 'Open New'}
+            </Button>
+          )}
+        </div>
+
+        <div className="mt-2 text-xs text-muted-foreground">
+          {recommendation.affectedProjectNames.length > 0 && (
+            <span>{recommendation.affectedProjectNames.slice(0, 2).join(', ')}</span>
+          )}
+        </div>
       </div>
 
-      {/* Spool recommendation advice - NEW */}
-      {spoolAdvice && (
-        <div className={cn("mt-2 text-xs", spoolAdvice.className)}>
-          {spoolAdvice.text}
-        </div>
-      )}
-
-      {/* Suggested spools from inventory */}
-      {suggestedSpools.length > 0 && (
-        <div className="mt-2 pt-2 border-t border-dashed">
-          <span className="text-xs text-muted-foreground">
-            {language === 'he' ? 'גלילים מומלצים מהמלאי:' : 'Suggested spools from inventory:'}
-          </span>
-          <div className="flex flex-wrap gap-1 mt-1">
-            {suggestedSpools.map(spool => {
-              const isPartial = spool.gramsRemainingEst < 900;
-              return (
-                <Badge 
-                  key={spool.id} 
-                  variant="secondary" 
-                  className={cn(
-                    "text-xs",
-                    isPartial && recommendation.partialSpoolRecommendation === 'use_partial' && "bg-success/20 border-success/30"
-                  )}
-                >
-                  {spool.color} ({Math.ceil(spool.gramsRemainingEst)}g)
-                  {isPartial && <span className="ml-1 opacity-70">{language === 'he' ? '(חלקי)' : '(partial)'}</span>}
-                </Badge>
-              );
-            })}
+      {/* Load Dialog */}
+      <Dialog open={loadDialogOpen} onOpenChange={setLoadDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {loadChoice === 'open' 
+                ? (language === 'he' ? 'טעינת גליל פתוח' : 'Load Open Spool')
+                : (language === 'he' ? 'פתיחת גליל חדש' : 'Open New Spool')}
+            </DialogTitle>
+            <DialogDescription>
+              {loadChoice === 'open'
+                ? (language === 'he' 
+                    ? 'כמה גרם יש על הגליל שאתה טוען?'
+                    : 'How many grams are on the spool you are loading?')
+                : (language === 'he'
+                    ? `נפתח גליל סגור חדש של ${recommendation.color}`
+                    : `Opening a new closed ${recommendation.color} spool`)}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <div className="flex items-center gap-2 mb-4">
+              <SpoolIcon color={getSpoolColor(recommendation.color)} size={24} />
+              <span className="font-medium">{recommendation.color}</span>
+            </div>
+            
+            {loadChoice === 'open' && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  {language === 'he' ? 'גרמים על הגליל' : 'Grams on spool'}
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={openGramsInput}
+                  onChange={(e) => setOpenGramsInput(parseInt(e.target.value) || 0)}
+                  className="text-lg"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {language === 'he' 
+                    ? 'זה יעדכן את סה"כ הגרמים בפתוחים'
+                    : 'This will update the total open grams'}
+                </p>
+              </div>
+            )}
+            
+            {loadChoice === 'new' && inventoryItem && (
+              <div className="p-3 bg-muted/50 rounded-lg">
+                <p className="text-sm">
+                  {language === 'he' 
+                    ? `יופחת גליל סגור אחד ויתווספו ${inventoryItem.closedSpoolSizeGrams}g לפתוחים`
+                    : `Will decrement 1 closed spool and add ${inventoryItem.closedSpoolSizeGrams}g to open`}
+                </p>
+              </div>
+            )}
           </div>
-        </div>
-      )}
-
-      <div className="mt-2 text-xs text-muted-foreground">
-        {recommendation.affectedProjectNames.length > 0 && (
-          <span>{recommendation.affectedProjectNames.slice(0, 2).join(', ')}</span>
-        )}
-      </div>
-    </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLoadDialogOpen(false)}>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </Button>
+            <Button onClick={confirmLoad}>
+              {language === 'he' ? 'אישור' : 'Confirm'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
 
