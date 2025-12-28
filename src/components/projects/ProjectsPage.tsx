@@ -256,16 +256,12 @@ export const ProjectsPage: React.FC = () => {
     setProjects(getProjects());
     setProducts(getProducts());
     
-    // Get colors from inventory and factory settings
+    // Get colors from inventory only (Hebrew colors)
     const inventory = getColorInventory();
     const inventoryColors = inventory.map(item => item.color);
-    const settings = getFactorySettings();
-    const settingsColors = settings?.colors || [];
     
-    // Combine all unique colors: inventory colors + settings colors + defaults
-    const allColors = new Set([...inventoryColors, ...settingsColors, ...defaultColors]);
-    const colorsArray = Array.from(allColors);
-    setAvailableColors(colorsArray);
+    // Only use inventory colors - no English defaults
+    setAvailableColors(inventoryColors);
     
     // Set default color to first inventory color if available
     if (inventoryColors.length > 0 && !newProject.color) {
