@@ -95,11 +95,34 @@ export interface MergeCandidate {
   };
 }
 
+// Debug info for merge rejection
+export interface MergeRejection {
+  cycleId: string;
+  projectId: string;
+  startTime: string;
+  status: string;
+  plateType: string;
+  unitsPlanned: number;
+  printerId: string;
+  reason: 'not_planned' | 'not_future' | 'different_project' | 'closeout' | 'no_capacity' | 'missing_presets' | 'no_project';
+}
+
+export interface MergeDebugInfo {
+  totalCyclesChecked: number;
+  sameProjectCyclesFound: number;
+  rejections: MergeRejection[];
+  summary: Record<string, number>;
+  maxUnitsPerPlate: number;
+  hoursPerUnit: number;
+  productFound: boolean;
+}
+
 export interface DecisionAnalysis {
   unitsToRecover: number;
   gramsWasted: number;
   options: DecisionOptionAnalysis[];
   mergeCandidates: MergeCandidate[];
+  mergeDebug?: MergeDebugInfo; // Debug info for merge
   originalProject: {
     id: string;
     name: string;
@@ -439,6 +462,7 @@ const calculateDeferImpact = (
 /**
  * Finds future cycles that could potentially merge with remake units
  * Uses REAL capacity from product presets
+ * Returns both candidates AND debug info for rejected cycles
  */
 const findMergeCandidates = (
   projectId: string,
@@ -446,20 +470,37 @@ const findMergeCandidates = (
   unitsNeeded: number,
   cycles: PlannedCycle[],
   projects: Project[]
-): MergeCandidate[] => {
+): { candidates: MergeCandidate[]; debug: MergeDebugInfo } => {
   const candidates: MergeCandidate[] = [];
+  const rejections: MergeRejection[] = [];
   const printers = getActivePrinters();
   const today = new Date();
   
   const project = projects.find(p => p.id === projectId);
-  if (!project) return candidates;
+  if (!project) {
+    console.log('[findMergeCandidates] No project found for id:', projectId);
+    return { 
+      candidates, 
+      debug: { 
+        totalCyclesChecked: 0, 
+        sameProjectCyclesFound: 0, 
+        rejections: [], 
+        summary: { no_project: 1 }, 
+        maxUnitsPerPlate: 0, 
+        hoursPerUnit: 0,
+        productFound: false 
+      } 
+    };
+  }
   
   // Get product to find actual max units per plate and cycle time
   const product = getProduct(project.productId);
   let maxUnitsPerPlate = 10; // Default fallback
   let hoursPerUnit = 0.3; // Default hours per unit
+  let productFound = false;
   
   if (product && product.platePresets && product.platePresets.length > 0) {
+    productFound = true;
     // Find the preset with maximum units
     const maxPreset = product.platePresets.reduce((max, p) => 
       p.unitsPerPlate > max.unitsPerPlate ? p : max, product.platePresets[0]);
@@ -467,107 +508,204 @@ const findMergeCandidates = (
     hoursPerUnit = maxPreset.cycleHours / maxPreset.unitsPerPlate;
   }
   
-  // Find same-project cycles that aren't at full capacity
-  const allPlannedCycles = cycles.filter(c => c.status === 'planned')
-    .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+  console.log('[findMergeCandidates] Looking for project:', projectId, 'maxUnitsPerPlate:', maxUnitsPerPlate, 'hoursPerUnit:', hoursPerUnit);
   
-  const sameProjectCycles = allPlannedCycles.filter(c => 
-    c.projectId === projectId &&
-    new Date(c.startTime) > today &&
-    c.plateType !== 'closeout'
-  );
-  
-  for (const cycle of sameProjectCycles.slice(0, 3)) {
-    const printer = printers.find(p => p.id === cycle.printerId);
-    const canAdd = Math.min(maxUnitsPerPlate - cycle.unitsPlanned, unitsNeeded);
-    
-    if (canAdd > 0) {
-      const startTime = new Date(cycle.startTime);
-      const cycleDuration = getCycleDurationHours(cycle);
-      const additionalTimeNeeded = canAdd * hoursPerUnit;
-      
-      // Calculate extension impact
-      const originalEnd = new Date(cycle.endTime);
-      const newEnd = new Date(originalEnd.getTime() + additionalTimeNeeded * 60 * 60 * 1000);
-      
-      // Check if extension would cause issues
-      const dueDate = new Date(project.dueDate);
-      const wouldCrossDeadline = newEnd > dueDate;
-      
-      // Check for overnight
-      const settings = getFactorySettings();
-      const overrides = getTemporaryOverrides();
-      const daySchedule = getDayScheduleForDate(originalEnd, settings, overrides);
-      const workEndTime = daySchedule ? parseTime(daySchedule.endTime) : { hours: 18, minutes: 0 };
-      const workEndMinutes = workEndTime.hours * 60 + workEndTime.minutes;
-      const newEndMinutes = newEnd.getHours() * 60 + newEnd.getMinutes();
-      const wouldRequireOvernight = newEndMinutes > workEndMinutes;
-      
-      // Build domino effect for subsequent cycles on same printer
-      const subsequentCycles = allPlannedCycles.filter(c => 
-        c.printerId === cycle.printerId && 
-        new Date(c.startTime) > originalEnd
-      );
-      const affectedCycles: DominoCycle[] = [];
-      let previousNewEnd = newEnd;
-      
-      for (const subCycle of subsequentCycles.slice(0, 3)) {
-        const subProject = projects.find(p => p.id === subCycle.projectId);
-        const subOriginalStart = new Date(subCycle.startTime);
-        const subOriginalEnd = new Date(subCycle.endTime);
-        const subDuration = getCycleDurationHours(subCycle);
-        
-        const subNewStart = new Date(Math.max(previousNewEnd.getTime(), subOriginalStart.getTime() + additionalTimeNeeded * 60 * 60 * 1000));
-        const subNewEnd = new Date(subNewStart.getTime() + subDuration * 60 * 60 * 1000);
-        const subDelay = (subNewStart.getTime() - subOriginalStart.getTime()) / (1000 * 60 * 60);
-        
-        if (subDelay < 0.1) break;
-        
-        const subDueDate = subProject ? new Date(subProject.dueDate) : null;
-        
-        affectedCycles.push({
-          cycleId: subCycle.id,
-          projectId: subCycle.projectId,
-          projectName: subProject?.name || 'Unknown',
-          printerId: subCycle.printerId,
-          printerName: printer?.name || 'Unknown',
-          originalStart: subOriginalStart.toISOString(),
-          originalEnd: subOriginalEnd.toISOString(),
-          newStart: subNewStart.toISOString(),
-          newEnd: subNewEnd.toISOString(),
-          delayHours: subDelay,
-          crossesDeadline: subDueDate ? subNewEnd > subDueDate : false,
-        });
-        
-        previousNewEnd = subNewEnd;
-      }
-      
-      candidates.push({
+  // Check ALL cycles and categorize rejections
+  for (const cycle of cycles) {
+    // Check status
+    if (cycle.status !== 'planned') {
+      rejections.push({
         cycleId: cycle.id,
         projectId: cycle.projectId,
-        projectName: project.name,
+        startTime: cycle.startTime,
+        status: cycle.status,
+        plateType: cycle.plateType || 'unknown',
+        unitsPlanned: cycle.unitsPlanned,
         printerId: cycle.printerId,
-        printerName: printer?.name || 'Unknown',
-        scheduledDate: formatDateString(startTime),
-        scheduledTime: startTime.toTimeString().slice(0, 5),
-        currentUnits: cycle.unitsPlanned,
-        maxUnits: maxUnitsPerPlate,
-        canAddUnits: canAdd,
-        color,
-        cycleDurationHours: cycleDuration,
-        availableTimeHours: (maxUnitsPerPlate - cycle.unitsPlanned) * hoursPerUnit,
-        extensionImpact: {
-          additionalTimeNeeded,
-          newEndTime: newEnd.toISOString(),
-          wouldCrossDeadline,
-          wouldRequireOvernight,
-          affectedCycles,
-        },
+        reason: 'not_planned'
       });
+      continue;
     }
+    
+    // Check project match
+    if (cycle.projectId !== projectId) {
+      rejections.push({
+        cycleId: cycle.id,
+        projectId: cycle.projectId,
+        startTime: cycle.startTime,
+        status: cycle.status,
+        plateType: cycle.plateType || 'unknown',
+        unitsPlanned: cycle.unitsPlanned,
+        printerId: cycle.printerId,
+        reason: 'different_project'
+      });
+      continue;
+    }
+    
+    // Check future
+    if (new Date(cycle.startTime) <= today) {
+      rejections.push({
+        cycleId: cycle.id,
+        projectId: cycle.projectId,
+        startTime: cycle.startTime,
+        status: cycle.status,
+        plateType: cycle.plateType || 'unknown',
+        unitsPlanned: cycle.unitsPlanned,
+        printerId: cycle.printerId,
+        reason: 'not_future'
+      });
+      continue;
+    }
+    
+    // Check plateType
+    if (cycle.plateType === 'closeout') {
+      rejections.push({
+        cycleId: cycle.id,
+        projectId: cycle.projectId,
+        startTime: cycle.startTime,
+        status: cycle.status,
+        plateType: cycle.plateType,
+        unitsPlanned: cycle.unitsPlanned,
+        printerId: cycle.printerId,
+        reason: 'closeout'
+      });
+      continue;
+    }
+    
+    // Check capacity
+    const canAdd = Math.min(maxUnitsPerPlate - cycle.unitsPlanned, unitsNeeded);
+    if (canAdd <= 0) {
+      rejections.push({
+        cycleId: cycle.id,
+        projectId: cycle.projectId,
+        startTime: cycle.startTime,
+        status: cycle.status,
+        plateType: cycle.plateType || 'unknown',
+        unitsPlanned: cycle.unitsPlanned,
+        printerId: cycle.printerId,
+        reason: 'no_capacity'
+      });
+      continue;
+    }
+    
+    // This cycle is a valid merge candidate!
+    const printer = printers.find(p => p.id === cycle.printerId);
+    const startTime = new Date(cycle.startTime);
+    const cycleDuration = getCycleDurationHours(cycle);
+    const additionalTimeNeeded = canAdd * hoursPerUnit;
+    
+    // Calculate extension impact
+    const originalEnd = new Date(cycle.endTime);
+    const newEnd = new Date(originalEnd.getTime() + additionalTimeNeeded * 60 * 60 * 1000);
+    
+    // Check if extension would cause issues
+    const dueDate = new Date(project.dueDate);
+    const wouldCrossDeadline = newEnd > dueDate;
+    
+    // Check for overnight
+    const settings = getFactorySettings();
+    const overrides = getTemporaryOverrides();
+    const daySchedule = getDayScheduleForDate(originalEnd, settings, overrides);
+    const workEndTime = daySchedule ? parseTime(daySchedule.endTime) : { hours: 18, minutes: 0 };
+    const workEndMinutes = workEndTime.hours * 60 + workEndTime.minutes;
+    const newEndMinutes = newEnd.getHours() * 60 + newEnd.getMinutes();
+    const wouldRequireOvernight = newEndMinutes > workEndMinutes;
+    
+    // Build domino effect for subsequent cycles on same printer
+    const allPlannedCycles = cycles.filter(c => c.status === 'planned')
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+    const subsequentCycles = allPlannedCycles.filter(c => 
+      c.printerId === cycle.printerId && 
+      new Date(c.startTime) > originalEnd
+    );
+    const affectedCycles: DominoCycle[] = [];
+    let previousNewEnd = newEnd;
+    
+    for (const subCycle of subsequentCycles.slice(0, 3)) {
+      const subProject = projects.find(p => p.id === subCycle.projectId);
+      const subOriginalStart = new Date(subCycle.startTime);
+      const subOriginalEnd = new Date(subCycle.endTime);
+      const subDuration = getCycleDurationHours(subCycle);
+      
+      const subNewStart = new Date(Math.max(previousNewEnd.getTime(), subOriginalStart.getTime() + additionalTimeNeeded * 60 * 60 * 1000));
+      const subNewEnd = new Date(subNewStart.getTime() + subDuration * 60 * 60 * 1000);
+      const subDelay = (subNewStart.getTime() - subOriginalStart.getTime()) / (1000 * 60 * 60);
+      
+      if (subDelay < 0.1) break;
+      
+      const subDueDate = subProject ? new Date(subProject.dueDate) : null;
+      
+      affectedCycles.push({
+        cycleId: subCycle.id,
+        projectId: subCycle.projectId,
+        projectName: subProject?.name || 'Unknown',
+        printerId: subCycle.printerId,
+        printerName: printer?.name || 'Unknown',
+        originalStart: subOriginalStart.toISOString(),
+        originalEnd: subOriginalEnd.toISOString(),
+        newStart: subNewStart.toISOString(),
+        newEnd: subNewEnd.toISOString(),
+        delayHours: subDelay,
+        crossesDeadline: subDueDate ? subNewEnd > subDueDate : false,
+      });
+      
+      previousNewEnd = subNewEnd;
+    }
+    
+    candidates.push({
+      cycleId: cycle.id,
+      projectId: cycle.projectId,
+      projectName: project.name,
+      printerId: cycle.printerId,
+      printerName: printer?.name || 'Unknown',
+      scheduledDate: formatDateString(startTime),
+      scheduledTime: startTime.toTimeString().slice(0, 5),
+      currentUnits: cycle.unitsPlanned,
+      maxUnits: maxUnitsPerPlate,
+      canAddUnits: canAdd,
+      color,
+      cycleDurationHours: cycleDuration,
+      availableTimeHours: (maxUnitsPerPlate - cycle.unitsPlanned) * hoursPerUnit,
+      extensionImpact: {
+        additionalTimeNeeded,
+        newEndTime: newEnd.toISOString(),
+        wouldCrossDeadline,
+        wouldRequireOvernight,
+        affectedCycles,
+      },
+    });
+    
+    // Limit to 3 candidates
+    if (candidates.length >= 3) break;
   }
   
-  return candidates;
+  // Build summary
+  const summary: Record<string, number> = {};
+  for (const r of rejections) {
+    summary[r.reason] = (summary[r.reason] || 0) + 1;
+  }
+  
+  const sameProjectCycles = cycles.filter(c => c.projectId === projectId);
+  
+  console.log('[findMergeCandidates] Results:', {
+    totalCycles: cycles.length,
+    sameProjectCycles: sameProjectCycles.length,
+    candidates: candidates.length,
+    summary
+  });
+  
+  return { 
+    candidates, 
+    debug: {
+      totalCyclesChecked: cycles.length,
+      sameProjectCyclesFound: sameProjectCycles.length,
+      rejections: rejections.slice(0, 20), // Limit to 20 for readability
+      summary,
+      maxUnitsPerPlate,
+      hoursPerUnit,
+      productFound
+    }
+  };
 };
 
 /**
@@ -610,14 +748,16 @@ export const analyzeDecisionOptions = (
     projects
   );
   
-  // Find merge candidates with REAL capacity
-  const mergeCandidates = findMergeCandidates(
+  // Find merge candidates with REAL capacity + debug info
+  const mergeResult = findMergeCandidates(
     projectId,
     project.color,
     unitsScrap,
     cycles,
     projects
   );
+  const mergeCandidates = mergeResult.candidates;
+  const mergeDebug = mergeResult.debug;
   
   // Build options analysis
   const options: DecisionOptionAnalysis[] = [];
@@ -725,6 +865,7 @@ export const analyzeDecisionOptions = (
     gramsWasted,
     options,
     mergeCandidates,
+    mergeDebug, // Debug info for merge rejection analysis
     originalProject: {
       id: project.id,
       name: project.name,
