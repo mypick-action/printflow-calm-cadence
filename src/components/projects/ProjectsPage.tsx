@@ -61,8 +61,9 @@ import {
   CircleDot,
   CircleSlash,
   Circle,
+  Printer,
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { toast } from '@/hooks/use-toast';
 import { 
   getProjects, 
@@ -75,6 +76,8 @@ import {
   calculateDaysRemaining,
   getColorInventory,
   getFactorySettings,
+  getCyclesForProject,
+  PlannedCycle,
 } from '@/services/storage';
 import { validateProjectForPlanning, getValidationSummary } from '@/services/projectValidation';
 import { 
@@ -214,6 +217,17 @@ export const ProjectsPage: React.FC = () => {
     color: 'Black',
     manualUrgency: null as ProjectPriority | null,
   });
+
+  // Get earliest planned print date for a project
+  const getPlannedPrintDate = (projectId: string): string | null => {
+    const cycles = getCyclesForProject(projectId);
+    const plannedCycles = cycles.filter(c => c.status === 'planned' || c.status === 'in_progress');
+    if (plannedCycles.length === 0) return null;
+    
+    // Sort by startTime and get the earliest
+    plannedCycles.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+    return plannedCycles[0].startTime;
+  };
 
   const handleReportIssue = (projectId: string) => {
     setReportIssueProjectId(projectId);
@@ -964,6 +978,7 @@ export const ProjectsPage: React.FC = () => {
                   <TableHead>{language === 'he' ? 'מוצר' : 'Product'}</TableHead>
                   <TableHead>{language === 'he' ? 'חומר' : 'Material'}</TableHead>
                   <TableHead>{language === 'he' ? 'התקדמות' : 'Progress'}</TableHead>
+                  <TableHead>{language === 'he' ? 'הדפסה מתוכננת' : 'Planned Print'}</TableHead>
                   <TableHead>{language === 'he' ? 'תאריך יעד' : 'Due Date'}</TableHead>
                   <TableHead>{language === 'he' ? 'מצב' : 'Status'}</TableHead>
                   <TableHead>{language === 'he' ? 'דחיפות' : 'Priority'}</TableHead>
@@ -1013,6 +1028,26 @@ export const ProjectsPage: React.FC = () => {
                           </div>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const plannedDate = getPlannedPrintDate(project.id);
+                        if (plannedDate) {
+                          return (
+                            <div className="flex items-center gap-2 text-primary">
+                              <Printer className="w-4 h-4" />
+                              <span className="font-medium">
+                                {format(parseISO(plannedDate), 'dd/MM/yyyy')}
+                              </span>
+                            </div>
+                          );
+                        }
+                        return (
+                          <span className="text-muted-foreground text-sm">
+                            {language === 'he' ? 'לא מתוכנן' : 'Not scheduled'}
+                          </span>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
