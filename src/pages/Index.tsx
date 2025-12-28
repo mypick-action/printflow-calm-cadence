@@ -34,6 +34,7 @@ const PrintFlowApp: React.FC = () => {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
   const [endCyclePrinterId, setEndCyclePrinterId] = useState<string | undefined>(undefined);
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
   
   useEffect(() => {
     // Check bootstrap status first
@@ -115,6 +116,7 @@ const PrintFlowApp: React.FC = () => {
       case 'dashboard':
         return (
           <Dashboard 
+            key={dashboardRefreshKey}
             printerNames={factoryData?.printerNames || []} 
             onReportIssue={() => setReportIssueOpen(true)}
             onEndCycle={handleEndCycle}
@@ -134,6 +136,7 @@ const PrintFlowApp: React.FC = () => {
             preSelectedPrinterId={endCyclePrinterId}
             onComplete={() => {
               setEndCyclePrinterId(undefined);
+              setDashboardRefreshKey(prev => prev + 1); // Force dashboard refresh
               setCurrentPage('dashboard');
             }}
           />
