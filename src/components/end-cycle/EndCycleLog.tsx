@@ -326,7 +326,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
         },
       },
       outputs: {
-        cycleStatusAfter: 'completed',
+        cycleStatusAfter: pendingResult === 'failed' ? 'failed' : 'completed',
         plannedCyclesAfterImmediate: cyclesAfter.length,
         projectProgressAfter: {
           quantityGood: projectAfter?.quantityGood || 0,
@@ -393,7 +393,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
         }
         return undefined;
       })(),
-      replanTriggered: true,
+      replanTriggered: decision !== 'ignore',
     });
 
     setLastDecisionId(decisionEntry.id);
