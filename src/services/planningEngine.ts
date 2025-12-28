@@ -23,6 +23,8 @@ import {
   getDayScheduleForDate,
   getAvailableFilamentForPrinter,
   getGramsPerCycle,
+  getColorInventory,
+  getTotalGrams,
 } from './storage';
 import { normalizeColor } from './colorNormalization';
 
@@ -236,26 +238,46 @@ const validateMaterialConstraints = (
   const issues: BlockingIssue[] = [];
   const materialNeeds = new Map<string, { needed: number; projectIds: string[] }>();
   
-  // Calculate total material needed per color
+  // Calculate total material needed per color (using normalized color keys)
   for (const state of projectStates) {
     const gramsNeeded = state.remainingUnits * state.product.gramsPerUnit;
-    const color = state.project.color.toLowerCase();
+    const colorKey = normalizeColor(state.project.color);
     
-    const existing = materialNeeds.get(color) || { needed: 0, projectIds: [] };
+    const existing = materialNeeds.get(colorKey) || { needed: 0, projectIds: [] };
     existing.needed += gramsNeeded;
     existing.projectIds.push(state.project.id);
-    materialNeeds.set(color, existing);
+    materialNeeds.set(colorKey, existing);
+  }
+  
+  // Build available material map from ColorInventory (primary source)
+  const availableMaterial = new Map<string, number>();
+  const colorInventory = getColorInventory();
+  for (const item of colorInventory) {
+    const colorKey = normalizeColor(item.color);
+    const current = availableMaterial.get(colorKey) || 0;
+    availableMaterial.set(colorKey, current + getTotalGrams(item));
+  }
+  
+  // Also check spools for backward compatibility
+  for (const spool of spools) {
+    if (spool.state !== 'empty') {
+      const colorKey = normalizeColor(spool.color);
+      if (!availableMaterial.has(colorKey)) {
+        const current = availableMaterial.get(colorKey) || 0;
+        availableMaterial.set(colorKey, current + spool.gramsRemainingEst);
+      }
+    }
   }
   
   // Check against available material
-  for (const [color, needs] of materialNeeds) {
-    const available = getAvailableFilamentForColor(color, spools);
+  for (const [colorKey, needs] of materialNeeds) {
+    const available = availableMaterial.get(colorKey) || 0;
     
     if (available < needs.needed) {
       issues.push({
         type: 'insufficient_material',
-        message: `חסר פילמנט ${color}: נדרשים ${Math.ceil(needs.needed)}g, זמינים ${Math.ceil(available)}g`,
-        messageEn: `Insufficient ${color} filament: need ${Math.ceil(needs.needed)}g, have ${Math.ceil(available)}g`,
+        message: `חסר פילמנט ${colorKey}: נדרשים ${Math.ceil(needs.needed)}g, זמינים ${Math.ceil(available)}g`,
+        messageEn: `Insufficient ${colorKey} filament: need ${Math.ceil(needs.needed)}g, have ${Math.ceil(available)}g`,
         details: {
           required: needs.needed,
           available,
@@ -695,13 +717,24 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     });
   }
   
-  // Initialize material tracker - FIXED: use normalizeColor for consistency
+  // Initialize material tracker from ColorInventory (not just spools)
   const materialTracker = new Map<string, number>();
+  const colorInventory = getColorInventory();
+  for (const item of colorInventory) {
+    const colorKey = normalizeColor(item.color);
+    const current = materialTracker.get(colorKey) || 0;
+    materialTracker.set(colorKey, current + getTotalGrams(item));
+  }
+  
+  // Also add any spools not in color inventory (backward compatibility)
   for (const spool of spools) {
     if (spool.state !== 'empty') {
       const colorKey = normalizeColor(spool.color);
-      const current = materialTracker.get(colorKey) || 0;
-      materialTracker.set(colorKey, current + spool.gramsRemainingEst);
+      // Only add if not already tracked via ColorInventory
+      if (!materialTracker.has(colorKey)) {
+        const current = materialTracker.get(colorKey) || 0;
+        materialTracker.set(colorKey, current + spool.gramsRemainingEst);
+      }
     }
   }
   
