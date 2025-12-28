@@ -337,7 +337,9 @@ export function seedDeferScenario(): ScenarioResult {
  */
 export function seedMergeScenario(): ScenarioResult {
   const today = now();
-  const baseDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 9, 0, 0);
+  // CRITICAL: Use current time as base, not fixed 09:00
+  // This ensures future cycles are ALWAYS in the future
+  const baseDate = today;
 
   const product: Product = {
     id: testId('product-merge'),
@@ -425,14 +427,14 @@ export function seedMergeScenario(): ScenarioResult {
     needsAudit: false,
   };
 
-  // Current cycle that just finished with scrap
+  // Current cycle that just finished with scrap (started 3h ago, ending now)
   const currentCycle: PlannedCycle = {
     id: testId('cycle-merge-current'),
     projectId: project.id,
     printerId: printer.id,
     unitsPlanned: 6,
     gramsPlanned: 180,
-    plateType: 'full',
+    plateType: 'reduced', // NOT closeout - has room for more
     startTime: formatTime(addHours(baseDate, -3)),
     endTime: formatTime(baseDate),
     shift: 'day',
@@ -444,33 +446,34 @@ export function seedMergeScenario(): ScenarioResult {
   };
 
   // Future cycle of SAME project - merge candidate
+  // CRITICAL: Must be in the future (starts 2h from now), same project, same printer, with capacity
   const futureSameProjectCycle: PlannedCycle = {
     id: testId('cycle-merge-future'),
-    projectId: project.id,
-    printerId: printer.id,
-    unitsPlanned: 6,
+    projectId: project.id, // SAME project
+    printerId: printer.id, // SAME printer
+    unitsPlanned: 6, // Has room for 4 more (max is 10)
     gramsPlanned: 180,
-    plateType: 'full',
-    startTime: formatTime(addHours(baseDate, 3)), // 3 hours from now
-    endTime: formatTime(addHours(baseDate, 6)),
+    plateType: 'reduced', // NOT closeout - eligible for merge
+    startTime: formatTime(addHours(baseDate, 2)), // 2 hours from NOW (guaranteed future)
+    endTime: formatTime(addHours(baseDate, 5)),
     shift: 'day',
-    status: 'planned',
+    status: 'planned', // MUST be planned
     readinessState: 'waiting_for_spool',
     requiredColor: 'Purple',
     requiredMaterial: 'PLA',
     requiredGrams: 180,
   };
 
-  // 2 more cycles after the merge candidate
+  // 2 more cycles after the merge candidate (on same printer)
   const cycle2: PlannedCycle = {
     id: testId('cycle-after-1'),
     projectId: projectOther1.id,
     printerId: printer.id,
     unitsPlanned: 6,
     gramsPlanned: 180,
-    plateType: 'full',
-    startTime: formatTime(addHours(baseDate, 6)), // Right after future cycle
-    endTime: formatTime(addHours(baseDate, 9)),
+    plateType: 'reduced',
+    startTime: formatTime(addHours(baseDate, 5)), // Right after future cycle
+    endTime: formatTime(addHours(baseDate, 8)),
     shift: 'day',
     status: 'planned',
     readinessState: 'waiting_for_spool',
@@ -485,9 +488,9 @@ export function seedMergeScenario(): ScenarioResult {
     printerId: printer.id,
     unitsPlanned: 6,
     gramsPlanned: 180,
-    plateType: 'full',
-    startTime: formatTime(addHours(baseDate, 9)), // After cycle2
-    endTime: formatTime(addHours(baseDate, 12)),
+    plateType: 'reduced',
+    startTime: formatTime(addHours(baseDate, 8)), // After cycle2
+    endTime: formatTime(addHours(baseDate, 11)),
     shift: 'day',
     status: 'planned',
     readinessState: 'waiting_for_spool',
