@@ -145,9 +145,31 @@ const calculateMaterialShortages = (): MaterialShortage[] => {
 };
 
 /**
+ * Check if a color has any material in inventory (open or closed spools)
+ */
+const hasColorInInventory = (colorKey: string): boolean => {
+  const colorInventory = getColorInventory();
+  const invItem = colorInventory.find((i: ColorInventoryItem) => normalizeColor(i.color) === colorKey);
+  
+  if (invItem) {
+    const total = getTotalGrams(invItem);
+    return total > 0 || invItem.closedCount > 0;
+  }
+  
+  // Fallback to old spools model
+  const spools = getSpools();
+  return spools.some(s => 
+    normalizeColor(s.color) === colorKey && 
+    s.state !== 'empty' && 
+    s.gramsRemainingEst > 0
+  );
+};
+
+/**
  * Generate load recommendations based on planned cycles that need spool loading
  * CRITICAL: Only show the NEXT actionable load per printer (not future queue)
- * This ensures the panel is an operational checklist, not a roadmap
+ * CRITICAL: Only show recommendations for colors that EXIST in inventory
+ * If color doesn't exist in inventory, it should only appear in materialShortages, not as a load recommendation
  */
 export const generateLoadRecommendations = (
   cycles?: PlannedCycle[],
@@ -235,6 +257,12 @@ export const generateLoadRecommendations = (
     
     // If same color is mounted for the FIRST cycle, no action needed - skip this printer
     if (isSameColorMounted) {
+      continue;
+    }
+
+    // CRITICAL: Only show load recommendations for colors that EXIST in inventory
+    // If no inventory for this color, it will appear in materialShortages instead
+    if (!hasColorInInventory(colorKey)) {
       continue;
     }
 
