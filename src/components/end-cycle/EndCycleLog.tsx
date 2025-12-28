@@ -212,7 +212,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     const unitsToRecover = pendingResult === 'completed_with_scrap' ? scrapUnits : activeCycle.unitsPlanned;
     
     if (decision === 'complete_now' || decision === 'defer_to_later') {
-      // Create remake project
+      // Create remake project linked to the original
       if (project) {
         createProject({
           name: `${project.name} - השלמה`,
@@ -225,6 +225,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
           urgencyManualOverride: true,
           status: 'pending',
           color: project.color,
+          parentProjectId: project.id, // Link to original project
         });
         
         toast({

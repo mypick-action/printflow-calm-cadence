@@ -249,7 +249,7 @@ export const DecisionModal: React.FC<DecisionModalProps> = ({
       </div>
 
       <div className="space-y-2">
-        {analysis.mergeCandidates.map((candidate) => (
+        {analysis.mergeCandidates.map((candidate, index) => (
           <button
             key={candidate.cycleId}
             onClick={() => {
@@ -258,12 +258,22 @@ export const DecisionModal: React.FC<DecisionModalProps> = ({
             }}
             className={`
               w-full p-4 rounded-xl border-2 text-start transition-all duration-200
-              border-border hover:border-primary/50 hover:bg-accent cursor-pointer
+              ${index === 0 
+                ? 'border-success/30 bg-success/5 hover:bg-success/10' 
+                : 'border-border hover:border-primary/50 hover:bg-accent'
+              } cursor-pointer
             `}
           >
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-semibold text-foreground">{candidate.printerName}</div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-foreground">{candidate.printerName}</span>
+                  {index === 0 && (
+                    <Badge variant="outline" className="bg-success/10 text-success border-success/30">
+                      {language === 'he' ? 'מומלץ' : 'Recommended'}
+                    </Badge>
+                  )}
+                </div>
                 <div className="text-sm text-muted-foreground">
                   {candidate.scheduledDate} • {candidate.scheduledTime}
                 </div>

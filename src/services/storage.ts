@@ -44,6 +44,7 @@ export interface Project {
   status: 'pending' | 'in_progress' | 'completed' | 'on_hold';
   color: string;
   createdAt: string;
+  parentProjectId?: string; // Link to original project for remake/completion projects
 }
 
 export interface AMSModes {
