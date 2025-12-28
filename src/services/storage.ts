@@ -1208,6 +1208,14 @@ export const logCycleWithMaterialConsumption = (
     };
   }
 
+  // Also consume from new ColorInventory model (if exists)
+  // This keeps both models in sync during transition
+  // Uses 'PLA' as default material - in future could be passed as param
+  const colorInvResult = consumeFromColorInventory(color, 'PLA', gramsToConsume);
+  if (colorInvResult.remaining === 0 && colorInvResult.consumed > 0) {
+    console.log(`[ColorInventory] ${color} open spool depleted`);
+  }
+
   // Log the cycle
   const cycleResult = logCycle(log);
 
@@ -1868,14 +1876,16 @@ export const consumeFromColorInventory = (
   }
   
   const actualConsume = Math.min(item.openTotalGrams, gramsToConsume);
-  const newOpenGrams = Math.max(0, item.openTotalGrams - gramsToConsume);
+  const newOpenGrams = item.openTotalGrams - actualConsume;
   
-  adjustOpenTotalGrams(color, material, -actualConsume);
+  if (actualConsume > 0) {
+    adjustOpenTotalGrams(color, material, -actualConsume);
+  }
   
   return { 
     success: true, 
     consumed: actualConsume, 
-    remaining: newOpenGrams 
+    remaining: Math.max(0, newOpenGrams),
   };
 };
 

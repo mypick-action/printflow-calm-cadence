@@ -10,12 +10,15 @@ import {
   Spool,
   Printer,
   Project,
+  ColorInventoryItem,
   getPlannedCycles,
   getSpools,
   getPrinters,
   getProjects,
   getProducts,
   getFactorySettings,
+  getColorInventory,
+  getTotalGrams,
 } from './storage';
 import { SAFETY_THRESHOLD_GRAMS } from './materialStatus';
 import { normalizeColor } from './colorNormalization';
@@ -94,8 +97,6 @@ const calculateRemainingDemandByColor = (): Map<string, {
  * Uses normalizeColor() for consistent matching between projects and spools
  */
 const calculateMaterialShortages = (): MaterialShortage[] => {
-  // Try new ColorInventory first, fall back to old spools
-  const { getColorInventory, getTotalGrams } = require('./storage');
   const colorInventory = getColorInventory();
   const spools = getSpools();
   const demandByColor = calculateRemainingDemandByColor();
@@ -105,7 +106,7 @@ const calculateMaterialShortages = (): MaterialShortage[] => {
     let availableGrams = 0;
     
     // Check new ColorInventory first
-    const invItem = colorInventory.find((i: any) => normalizeColor(i.color) === colorKey);
+    const invItem = colorInventory.find((i: ColorInventoryItem) => normalizeColor(i.color) === colorKey);
     if (invItem) {
       availableGrams = getTotalGrams(invItem);
     } else {
