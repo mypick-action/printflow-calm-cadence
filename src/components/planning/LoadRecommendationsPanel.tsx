@@ -40,6 +40,7 @@ import {
   getColorInventoryItem,
   setOpenTotalGrams,
   openNewSpool,
+  updatePrinter,
   LoadRecommendation, 
   MaterialShortage,
   getTotalGrams,
@@ -319,8 +320,17 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
           title: language === 'he' ? 'אין גלילים סגורים' : 'No closed spools available',
           variant: 'destructive',
         });
+        setLoadDialogOpen(false);
+        setLoadChoice(null);
+        return;
       }
     }
+    
+    // Update printer's mounted color so the recommendation disappears
+    updatePrinter(recommendation.printerId, {
+      mountedColor: recommendation.color,
+      currentColor: recommendation.color,
+    });
     
     setLoadDialogOpen(false);
     setLoadChoice(null);
