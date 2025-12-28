@@ -94,19 +94,30 @@ const calculateRemainingDemandByColor = (): Map<string, {
  * Uses normalizeColor() for consistent matching between projects and spools
  */
 const calculateMaterialShortages = (): MaterialShortage[] => {
+  // Try new ColorInventory first, fall back to old spools
+  const { getColorInventory, getTotalGrams } = require('./storage');
+  const colorInventory = getColorInventory();
   const spools = getSpools();
   const demandByColor = calculateRemainingDemandByColor();
   const shortages: MaterialShortage[] = [];
 
   for (const [colorKey, demand] of demandByColor) {
-    // Calculate available grams using normalized color matching
-    const availableGrams = spools
-      .filter(s => 
-        normalizeColor(s.color) === colorKey && 
-        s.state !== 'empty' && 
-        s.gramsRemainingEst > 0
-      )
-      .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+    let availableGrams = 0;
+    
+    // Check new ColorInventory first
+    const invItem = colorInventory.find((i: any) => normalizeColor(i.color) === colorKey);
+    if (invItem) {
+      availableGrams = getTotalGrams(invItem);
+    } else {
+      // Fall back to old spools model
+      availableGrams = spools
+        .filter(s => 
+          normalizeColor(s.color) === colorKey && 
+          s.state !== 'empty' && 
+          s.gramsRemainingEst > 0
+        )
+        .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+    }
 
     // Include safety threshold in the calculation
     const effectiveRequired = demand.totalGrams + SAFETY_THRESHOLD_GRAMS;

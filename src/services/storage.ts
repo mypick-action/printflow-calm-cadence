@@ -394,6 +394,25 @@ export const checkCycleFilamentRequirements = (
   return { canProceed: true, warnings, recommendations };
 };
 
+// ============= COLOR INVENTORY (NEW MODEL) =============
+// Tracks inventory per color+material, not individual spools
+
+export interface ColorInventoryItem {
+  id: string;              // `${material}:${color}` or uuid
+  color: string;           // e.g. "White"
+  material: string;        // e.g. "PLA"
+  closedCount: number;     // number of sealed spools
+  closedSpoolSizeGrams: number; // default 1000
+  openTotalGrams: number;  // total grams across all open spools (one number)
+  reorderPointGrams?: number; // optional, default 2000
+  updatedAt?: string;
+}
+
+// Helper to compute total grams from a ColorInventoryItem
+export const getTotalGrams = (item: ColorInventoryItem): number => {
+  return item.closedCount * item.closedSpoolSizeGrams + item.openTotalGrams;
+};
+
 // ============= STORAGE KEYS =============
 
 export const KEYS = {
@@ -401,6 +420,7 @@ export const KEYS = {
   PROJECTS: 'printflow_projects',
   PRINTERS: 'printflow_printers',
   SPOOLS: 'printflow_spools',
+  COLOR_INVENTORY: 'printflow_color_inventory',
   PLANNED_CYCLES: 'printflow_planned_cycles',
   CYCLE_LOGS: 'printflow_cycle_logs',
   ISSUE_REPORTS: 'printflow_issue_reports',
@@ -1577,8 +1597,11 @@ export const bootstrapWithDemo = (): void => {
   // Printers will be created during onboarding based on count
   setItem(KEYS.PRINTERS, []);
   setItem(KEYS.SPOOLS, []);
+  setItem(KEYS.COLOR_INVENTORY, []);
   setItem(KEYS.CYCLE_LOGS, []);
   setItem(KEYS.ISSUE_REPORTS, []);
+  // Seed color inventory with demo data
+  seedColorInventoryDemo();
 };
 
 /**
@@ -1659,6 +1682,218 @@ export const deleteSpools = (ids: string[]): number => {
     notifyInventoryChanged();
   }
   return deletedCount;
+};
+
+// ============= COLOR INVENTORY FUNCTIONS =============
+
+export const getColorInventory = (): ColorInventoryItem[] => {
+  return getItem<ColorInventoryItem[]>(KEYS.COLOR_INVENTORY, []);
+};
+
+export const getColorInventoryItem = (color: string, material: string): ColorInventoryItem | undefined => {
+  const colorKey = normalizeColor(color);
+  const items = getColorInventory();
+  return items.find(item => 
+    normalizeColor(item.color) === colorKey && 
+    item.material.toLowerCase() === material.toLowerCase()
+  );
+};
+
+export const upsertColorInventoryItem = (item: Omit<ColorInventoryItem, 'id' | 'updatedAt'>): ColorInventoryItem => {
+  const items = getColorInventory();
+  const colorKey = normalizeColor(item.color);
+  const existingIndex = items.findIndex(i => 
+    normalizeColor(i.color) === colorKey && 
+    i.material.toLowerCase() === item.material.toLowerCase()
+  );
+  
+  const now = new Date().toISOString();
+  
+  if (existingIndex >= 0) {
+    // Update existing
+    items[existingIndex] = {
+      ...items[existingIndex],
+      ...item,
+      updatedAt: now,
+    };
+    setItem(KEYS.COLOR_INVENTORY, items);
+    notifyInventoryChanged();
+    return items[existingIndex];
+  } else {
+    // Create new
+    const newItem: ColorInventoryItem = {
+      ...item,
+      id: `${item.material}:${item.color}`,
+      updatedAt: now,
+    };
+    setItem(KEYS.COLOR_INVENTORY, [...items, newItem]);
+    notifyInventoryChanged();
+    return newItem;
+  }
+};
+
+export const adjustClosedCount = (color: string, material: string, delta: number): ColorInventoryItem | undefined => {
+  const items = getColorInventory();
+  const colorKey = normalizeColor(color);
+  const index = items.findIndex(i => 
+    normalizeColor(i.color) === colorKey && 
+    i.material.toLowerCase() === material.toLowerCase()
+  );
+  
+  if (index >= 0) {
+    items[index] = {
+      ...items[index],
+      closedCount: Math.max(0, items[index].closedCount + delta),
+      updatedAt: new Date().toISOString(),
+    };
+    setItem(KEYS.COLOR_INVENTORY, items);
+    scheduleAutoReplan('inventory_updated');
+    notifyInventoryChanged();
+    return items[index];
+  }
+  
+  // If item doesn't exist and delta is positive, create it
+  if (delta > 0) {
+    return upsertColorInventoryItem({
+      color,
+      material,
+      closedCount: delta,
+      closedSpoolSizeGrams: 1000,
+      openTotalGrams: 0,
+    });
+  }
+  
+  return undefined;
+};
+
+export const setOpenTotalGrams = (color: string, material: string, grams: number): ColorInventoryItem | undefined => {
+  const items = getColorInventory();
+  const colorKey = normalizeColor(color);
+  const index = items.findIndex(i => 
+    normalizeColor(i.color) === colorKey && 
+    i.material.toLowerCase() === material.toLowerCase()
+  );
+  
+  if (index >= 0) {
+    items[index] = {
+      ...items[index],
+      openTotalGrams: Math.max(0, grams),
+      updatedAt: new Date().toISOString(),
+    };
+    setItem(KEYS.COLOR_INVENTORY, items);
+    scheduleAutoReplan('inventory_updated');
+    notifyInventoryChanged();
+    return items[index];
+  }
+  
+  // If item doesn't exist and grams > 0, create it
+  if (grams > 0) {
+    return upsertColorInventoryItem({
+      color,
+      material,
+      closedCount: 0,
+      closedSpoolSizeGrams: 1000,
+      openTotalGrams: grams,
+    });
+  }
+  
+  return undefined;
+};
+
+export const adjustOpenTotalGrams = (color: string, material: string, delta: number): ColorInventoryItem | undefined => {
+  const items = getColorInventory();
+  const colorKey = normalizeColor(color);
+  const index = items.findIndex(i => 
+    normalizeColor(i.color) === colorKey && 
+    i.material.toLowerCase() === material.toLowerCase()
+  );
+  
+  if (index >= 0) {
+    const newOpenGrams = Math.max(0, items[index].openTotalGrams + delta);
+    items[index] = {
+      ...items[index],
+      openTotalGrams: newOpenGrams,
+      updatedAt: new Date().toISOString(),
+    };
+    setItem(KEYS.COLOR_INVENTORY, items);
+    scheduleAutoReplan('material_consumed');
+    notifyInventoryChanged();
+    return items[index];
+  }
+  
+  return undefined;
+};
+
+/**
+ * Open a new closed spool - decrements closed count, adds to open grams
+ */
+export const openNewSpool = (color: string, material: string): ColorInventoryItem | undefined => {
+  const item = getColorInventoryItem(color, material);
+  if (!item || item.closedCount <= 0) return undefined;
+  
+  const items = getColorInventory();
+  const colorKey = normalizeColor(color);
+  const index = items.findIndex(i => 
+    normalizeColor(i.color) === colorKey && 
+    i.material.toLowerCase() === material.toLowerCase()
+  );
+  
+  if (index >= 0) {
+    items[index] = {
+      ...items[index],
+      closedCount: items[index].closedCount - 1,
+      openTotalGrams: items[index].openTotalGrams + items[index].closedSpoolSizeGrams,
+      updatedAt: new Date().toISOString(),
+    };
+    setItem(KEYS.COLOR_INVENTORY, items);
+    scheduleAutoReplan('spool_opened');
+    notifyInventoryChanged();
+    return items[index];
+  }
+  
+  return undefined;
+};
+
+/**
+ * Consume material from color inventory (called after cycle completion)
+ */
+export const consumeFromColorInventory = (
+  color: string, 
+  material: string, 
+  gramsToConsume: number
+): { success: boolean; consumed: number; remaining: number } => {
+  const item = getColorInventoryItem(color, material);
+  if (!item) {
+    return { success: false, consumed: 0, remaining: 0 };
+  }
+  
+  const actualConsume = Math.min(item.openTotalGrams, gramsToConsume);
+  const newOpenGrams = Math.max(0, item.openTotalGrams - gramsToConsume);
+  
+  adjustOpenTotalGrams(color, material, -actualConsume);
+  
+  return { 
+    success: true, 
+    consumed: actualConsume, 
+    remaining: newOpenGrams 
+  };
+};
+
+/**
+ * Seed color inventory with demo data
+ */
+export const seedColorInventoryDemo = (): void => {
+  const demoInventory: Omit<ColorInventoryItem, 'id' | 'updatedAt'>[] = [
+    { color: 'Black', material: 'PLA', closedCount: 8, closedSpoolSizeGrams: 1000, openTotalGrams: 650, reorderPointGrams: 2000 },
+    { color: 'White', material: 'PLA', closedCount: 10, closedSpoolSizeGrams: 1000, openTotalGrams: 420, reorderPointGrams: 2000 },
+    { color: 'Gray', material: 'PLA', closedCount: 4, closedSpoolSizeGrams: 1000, openTotalGrams: 300, reorderPointGrams: 2000 },
+    { color: 'Red', material: 'PLA', closedCount: 3, closedSpoolSizeGrams: 1000, openTotalGrams: 0, reorderPointGrams: 1000 },
+    { color: 'Blue', material: 'PLA', closedCount: 5, closedSpoolSizeGrams: 1000, openTotalGrams: 180, reorderPointGrams: 1000 },
+    { color: 'Green', material: 'PLA', closedCount: 2, closedSpoolSizeGrams: 1000, openTotalGrams: 0, reorderPointGrams: 1000 },
+    { color: 'White', material: 'PETG', closedCount: 2, closedSpoolSizeGrams: 1000, openTotalGrams: 0, reorderPointGrams: 1000 },
+  ];
+  
+  demoInventory.forEach(item => upsertColorInventoryItem(item));
 };
 
 // ============= QUOTE CHECK SIMULATION =============
