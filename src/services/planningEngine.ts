@@ -27,6 +27,7 @@ import {
   getTotalGrams,
 } from './storage';
 import { normalizeColor } from './colorNormalization';
+import { getAvailableGramsByColor } from './materialAdapter';
 
 // ============= TYPES =============
 
@@ -173,11 +174,11 @@ const formatDateString = (date: Date): string => {
   return date.toISOString().split('T')[0];
 };
 
+// DEPRECATED: Use getAvailableGramsByColor from materialAdapter instead
+// Kept for backward compatibility during migration
 const getAvailableFilamentForColor = (color: string, spools: Spool[]): number => {
-  const colorKey = normalizeColor(color);
-  return spools
-    .filter(s => normalizeColor(s.color) === colorKey && s.state !== 'empty')
-    .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+  // Use centralized adapter as primary source
+  return getAvailableGramsByColor(color);
 };
 
 // ============= PROJECT PRIORITIZATION =============
@@ -447,8 +448,18 @@ const scheduleCyclesForDay = (
           const gramsThisCycle = unitsThisCycle * state.product.gramsPerUnit;
           
           // ============= CRITICAL: SPOOL-LIMITED SCHEDULING (PRD RULE) =============
-          // 1 physical spool = 1 printer at a time (for CONCURRENT cycles only)
-          // FIXED: Check ColorInventory first, fallback to spools for parallel spool limit
+          // Check ColorInventory for material availability (primary source)
+          // Physical spools only used for parallel printer limit calculation
+          
+          // Get available material from ColorInventory (single source of truth)
+          const hasMaterial = availableMaterial >= gramsThisCycle;
+          
+          if (!hasMaterial) {
+            // Not enough material - skip this project
+            continue;
+          }
+          
+          // For parallel scheduling, limit by physical spools OR virtual spools from ColorInventory
           const allSpools = getSpools();
           const availableSpoolsForColor = allSpools.filter(s => 
             normalizeColor(s.color) === colorKey && 
@@ -456,12 +467,10 @@ const scheduleCyclesForDay = (
             s.gramsRemainingEst > 0
           );
           
-          // If no physical spools but we have material in ColorInventory, assume 1 virtual spool
-          // This allows scheduling when material exists only in ColorInventory
-          let totalSpoolCount = availableSpoolsForColor.length;
-          if (totalSpoolCount === 0 && availableMaterial > 0) {
-            totalSpoolCount = 1; // Virtual spool from ColorInventory
-          }
+          // Calculate virtual spool count from ColorInventory
+          // Each 1000g of material = 1 virtual spool for parallel limit
+          const virtualSpoolCount = Math.max(1, Math.ceil(availableMaterial / 1000));
+          const totalSpoolCount = Math.max(availableSpoolsForColor.length, virtualSpoolCount);
           
           // Get how many DIFFERENT printers are assigned to this color currently
           // Note: Same printer can do multiple sequential cycles with same color

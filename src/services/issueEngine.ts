@@ -8,16 +8,15 @@ import {
   PlannedCycle,
   Product,
   FactorySettings,
-  Spool,
   getProjects,
   getPrinters,
   getProducts,
   getFactorySettings,
-  getSpools,
   getPlannedCycles,
   getActiveCycleForPrinter,
   getDayScheduleForDate,
 } from './storage';
+import { getAvailableGramsByColor } from './materialAdapter';
 
 // ============= TYPES =============
 
@@ -109,11 +108,9 @@ const getDaysUntilDue = (dueDate: string): number => {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 };
 
+// Use centralized adapter for material availability
 const getAvailableFilamentForColor = (color: string): number => {
-  const spools = getSpools();
-  return spools
-    .filter(s => s.color.toLowerCase() === color.toLowerCase() && s.state !== 'empty')
-    .reduce((sum, s) => sum + s.gramsRemainingEst, 0);
+  return getAvailableGramsByColor(color);
 };
 
 const getProductForProject = (project: Project): Product | null => {
