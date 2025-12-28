@@ -22,8 +22,10 @@ import {
   Info,
   Calendar,
   ClipboardCheck,
+  Play,
 } from 'lucide-react';
-import { getPlanningMeta, needsLoadedSpoolsSetup } from '@/services/storage';
+import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle } from '@/services/storage';
+import { toast } from '@/hooks/use-toast';
 import { 
   calculateTodayPlan, 
   TodayPlanResult,
@@ -102,6 +104,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const renderCycleCard = (cycle: DashboardCycle, printerId: string, index: number) => {
     const isActive = cycle.status === 'in_progress';
     const isCompleted = cycle.status === 'completed';
+    const isPlanned = cycle.status === 'planned';
+    
+    const handleStartCycle = () => {
+      // Mark cycle as in_progress
+      updatePlannedCycle(cycle.id, { status: 'in_progress' });
+      toast({
+        title: language === 'he' ? 'הדפסה התחילה' : 'Print Started',
+        description: language === 'he' 
+          ? `מחזור ${cycle.projectName} סומן כפעיל`
+          : `Cycle ${cycle.projectName} marked as active`,
+      });
+      refreshData();
+    };
     
     return (
       <div 
@@ -164,17 +179,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
           </div>
         </div>
         
-        {/* End Cycle Button - show for all non-completed cycles */}
-        {!isCompleted && onEndCycle && (
-          <Button 
-            size="sm" 
-            variant="outline"
-            onClick={() => onEndCycle(printerId)}
-            className="w-full mt-3 gap-2 border-success/30 text-success hover:bg-success/10"
-          >
-            <ClipboardCheck className="w-4 h-4" />
-            {language === 'he' ? 'סיום עבודה' : 'Mark Complete'}
-          </Button>
+        {/* Buttons for cycle management */}
+        {!isCompleted && (
+          <div className="flex gap-2 mt-3">
+            {/* Start Print Button - only for planned cycles */}
+            {isPlanned && (
+              <Button 
+                size="sm" 
+                variant="default"
+                onClick={handleStartCycle}
+                className="flex-1 gap-2"
+              >
+                <Play className="w-4 h-4" />
+                {language === 'he' ? 'התחל הדפסה' : 'Start Print'}
+              </Button>
+            )}
+            
+            {/* End Cycle Button - only for active (in_progress) cycles */}
+            {isActive && onEndCycle && (
+              <Button 
+                size="sm" 
+                variant="outline"
+                onClick={() => onEndCycle(printerId)}
+                className="flex-1 gap-2 border-success/30 text-success hover:bg-success/10"
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                {language === 'he' ? 'סיום עבודה' : 'Mark Complete'}
+              </Button>
+            )}
+          </div>
         )}
       </div>
     );
