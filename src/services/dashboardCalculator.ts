@@ -34,6 +34,7 @@ export interface DashboardCycle {
   units: number;
   gramsNeeded: number;
   color: string;
+  material: string;
   startTime: string;
   endTime: string;
   cycleHours: number;
@@ -219,6 +220,7 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
         units: cycle.unitsPlanned,
         gramsNeeded: cycle.gramsPlanned,
         color: project?.color || 'Unknown',
+        material: 'PLA', // Default material - projects don't have material field yet
         startTime: formatTime(startTime),
         endTime: formatTime(endTime),
         cycleHours,

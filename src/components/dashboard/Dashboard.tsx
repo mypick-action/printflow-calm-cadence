@@ -24,7 +24,8 @@ import {
   ClipboardCheck,
   Play,
 } from 'lucide-react';
-import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle } from '@/services/storage';
+import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle, getProducts, getProjects } from '@/services/storage';
+import { StartPrintModal } from './StartPrintModal';
 import { toast } from '@/hooks/use-toast';
 import { 
   calculateTodayPlan, 
@@ -55,6 +56,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [todayPlan, setTodayPlan] = useState<TodayPlanResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [startPrintModalOpen, setStartPrintModalOpen] = useState(false);
+  const [selectedCycleForStart, setSelectedCycleForStart] = useState<DashboardCycle | null>(null);
+  const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null);
 
   const refreshData = useCallback(() => {
     setIsLoading(true);
@@ -107,15 +111,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     const isPlanned = cycle.status === 'planned';
     
     const handleStartCycle = () => {
-      // Mark cycle as in_progress
-      updatePlannedCycle(cycle.id, { status: 'in_progress' });
-      toast({
-        title: language === 'he' ? 'הדפסה התחילה' : 'Print Started',
-        description: language === 'he' 
-          ? `מחזור ${cycle.projectName} סומן כפעיל`
-          : `Cycle ${cycle.projectName} marked as active`,
-      });
-      refreshData();
+      // Open the start print modal instead of directly starting
+      setSelectedCycleForStart(cycle);
+      setSelectedPrinterId(printerId);
+      setStartPrintModalOpen(true);
     };
     
     return (
@@ -474,6 +473,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
 
       {/* Debug Panel */}
       <PlanningDebugPanel />
+
+      {/* Start Print Modal */}
+      {selectedCycleForStart && (
+        <StartPrintModal
+          open={startPrintModalOpen}
+          onOpenChange={(open) => {
+            setStartPrintModalOpen(open);
+            if (!open) {
+              setSelectedCycleForStart(null);
+              setSelectedPrinterId(null);
+            }
+          }}
+          cycle={{
+            id: selectedCycleForStart.id,
+            projectName: selectedCycleForStart.projectName,
+            productName: selectedCycleForStart.productName,
+            color: selectedCycleForStart.color,
+            material: selectedCycleForStart.material || 'PLA',
+            gramsPerCycle: selectedCycleForStart.gramsNeeded,
+            units: selectedCycleForStart.units,
+          }}
+          onConfirm={() => {
+            // Mark cycle as in_progress after confirmation
+            updatePlannedCycle(selectedCycleForStart.id, { status: 'in_progress' });
+            toast({
+              title: language === 'he' ? 'הדפסה התחילה' : 'Print Started',
+              description: language === 'he' 
+                ? `מחזור ${selectedCycleForStart.projectName} סומן כפעיל`
+                : `Cycle ${selectedCycleForStart.projectName} marked as active`,
+            });
+            refreshData();
+          }}
+        />
+      )}
     </div>
   );
 };
