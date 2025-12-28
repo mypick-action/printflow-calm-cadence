@@ -33,6 +33,7 @@ import {
 } from '@/services/storage';
 import { analyzeDecisionOptions, DecisionOption, DecisionAnalysis } from '@/services/impactAnalysis';
 import { DecisionModal } from './DecisionModal';
+import { RecoveryInputStep, RecoveryInputData } from './RecoveryInputStep';
 
 type CycleResult = 'completed' | 'completed_with_scrap' | 'failed';
 type WasteMethod = 'quick' | 'estimate' | 'manual';
@@ -67,6 +68,9 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
   const [showDecisionModal, setShowDecisionModal] = useState(false);
   const [decisionAnalysis, setDecisionAnalysis] = useState<DecisionAnalysis | null>(null);
   const [pendingResult, setPendingResult] = useState<CycleResult | null>(null);
+  
+  // NEW: Recovery input data state
+  const [recoveryInputData, setRecoveryInputData] = useState<RecoveryInputData | null>(null);
 
   useEffect(() => {
     loadData();
@@ -137,22 +141,31 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     }
   };
 
-  // NEW: Handle submit - now opens decision modal for scrap/failed
-  const handleSubmitWithDecision = () => {
+  // NEW: Proceed to recovery input step (step 4)
+  const handleProceedToRecoveryInput = () => {
     if (!activeCycle || !result) return;
+    setStep(4); // Go to recovery input step
+  };
+
+  // NEW: Handle recovery input submission - now uses user-provided data for analysis
+  const handleRecoveryInputSubmit = (data: RecoveryInputData) => {
+    if (!activeCycle || !result) return;
+    
+    setRecoveryInputData(data);
     
     const unitsToRecover = result === 'completed_with_scrap' ? scrapUnits : activeCycle.unitsPlanned;
     const gramsLost = result === 'completed_with_scrap' 
       ? scrapUnits * activeCycle.gramsPerUnit 
       : wastedGrams;
     
-    // Analyze options and show decision modal
+    // Analyze options using user-provided estimated hours
     try {
       const analysis = analyzeDecisionOptions(
         activeCycle.projectId,
         unitsToRecover,
         gramsLost,
-        2.5 // default cycle hours
+        data.estimatedPrintHours, // Use user-provided estimate instead of default
+        data.needsSpoolChange // Pass material availability info
       );
       setDecisionAnalysis(analysis);
       setPendingResult(result);
@@ -323,6 +336,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     setShowDecisionModal(false);
     setDecisionAnalysis(null);
     setPendingResult(null);
+    setRecoveryInputData(null);
     loadData();
   };
 
@@ -376,9 +390,9 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
         </p>
       </div>
 
-      {/* Progress indicator */}
+      {/* Progress indicator - dynamic based on flow */}
       <div className="flex items-center justify-center gap-2">
-        {[1, 2, 3].map((s) => (
+        {(result === 'completed' ? [1, 2] : [1, 2, 3, 4]).map((s) => (
           <div
             key={s}
             className={`h-2 rounded-full transition-all duration-300 ${
@@ -608,12 +622,12 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
                 )}
                 
                 <Button 
-                  onClick={handleSubmitWithDecision} 
+                  onClick={handleProceedToRecoveryInput} 
                   className="w-full h-14 text-lg gap-2"
                   disabled={scrapUnits === 0}
                 >
-                  <Send className="w-5 h-5" />
-                  {language === 'he' ? 'המשך להחלטה' : 'Continue to Decision'}
+                  <ArrowRight className="w-5 h-5" />
+                  {language === 'he' ? 'המשך' : 'Continue'}
                 </Button>
               </div>
             )}
@@ -710,17 +724,28 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
                 </div>
 
                 <Button 
-                  onClick={handleSubmitWithDecision} 
+                  onClick={handleProceedToRecoveryInput} 
                   className="w-full h-14 text-lg gap-2"
                   disabled={wastedGrams === 0}
                 >
-                  <Send className="w-5 h-5" />
-                  {language === 'he' ? 'המשך להחלטה' : 'Continue to Decision'}
+                  <ArrowRight className="w-5 h-5" />
+                  {language === 'he' ? 'המשך' : 'Continue'}
                 </Button>
               </div>
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Step 4: Recovery Input - collect estimated print time and material availability */}
+      {step === 4 && activeCycle && (
+        <RecoveryInputStep
+          unitsToRecover={result === 'completed_with_scrap' ? scrapUnits : activeCycle.unitsPlanned}
+          gramsPerUnit={activeCycle.gramsPerUnit}
+          color={activeCycle.color}
+          onSubmit={handleRecoveryInputSubmit}
+          onBack={() => setStep(3)}
+        />
       )}
 
       {/* Reset Button */}

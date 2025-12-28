@@ -111,20 +111,29 @@ const getWorkingHoursForDay = (schedule: { enabled: boolean; startTime: string; 
 
 /**
  * Calculates the impact on schedule if we add units immediately
+ * Now uses user-provided estimated hours instead of assuming based on units
  */
 const calculateImmediateImpact = (
   unitsToAdd: number,
   color: string,
-  cycleHours: number,
+  estimatedHours: number, // User-provided estimate
   existingCycles: PlannedCycle[],
-  projects: Project[]
+  projects: Project[],
+  needsSpoolChange: boolean = false
 ): ScheduleImpact => {
   const settings = getFactorySettings();
   const printers = getActivePrinters();
   
-  // Calculate how many cycles needed for the units
-  const cyclesNeeded = Math.ceil(unitsToAdd / 8); // Assume ~8 units per cycle
-  const hoursNeeded = cyclesNeeded * cycleHours;
+  // Use the user-provided estimated hours directly
+  const hoursNeeded = estimatedHours;
+  
+  // Add time for spool change if needed (approximately 10-15 minutes)
+  const totalHoursNeeded = needsSpoolChange ? hoursNeeded + 0.25 : hoursNeeded;
+  
+  // Calculate how many cycles will be pushed based on time, not units
+  // Assume average cycle is ~3 hours
+  const avgCycleHours = 3;
+  const cyclesAffected = Math.ceil(totalHoursNeeded / avgCycleHours);
   
   // Find cycles that would be pushed
   const today = new Date();
@@ -132,7 +141,7 @@ const calculateImmediateImpact = (
     c.status === 'planned' && new Date(c.startTime) > today
   ).sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
   
-  const cyclesPushed = Math.min(futureCycles.length, cyclesNeeded);
+  const cyclesPushed = Math.min(futureCycles.length, cyclesAffected);
   const affectedProjectIds = new Set<string>();
   
   // Find which projects are affected
@@ -142,22 +151,29 @@ const calculateImmediateImpact = (
   
   const affectedProjects = projects.filter(p => affectedProjectIds.has(p.id));
   
-  // Check for overnight/weekend work
+  // Check for overnight/weekend work based on user-provided hours
   let requiresOvernightPrinting = false;
   let requiresWeekendWork = false;
   
-  // Simple heuristic: if we're adding more than 4 hours, likely needs extended work
-  if (hoursNeeded > 4) {
-    const daySchedule = getDayScheduleForDate(today, settings, []);
-    if (daySchedule) {
-      const workHours = getWorkingHoursForDay(daySchedule);
-      requiresOvernightPrinting = hoursNeeded > workHours;
-    }
+  const daySchedule = getDayScheduleForDate(today, settings, []);
+  if (daySchedule) {
+    const workHoursRemaining = getWorkingHoursForDay(daySchedule);
+    // If the recovery print takes longer than remaining work hours today
+    requiresOvernightPrinting = totalHoursNeeded > workHoursRemaining;
+  }
+  
+  // Check if today is Friday and work extends past normal hours
+  const dayOfWeek = today.getDay();
+  if (dayOfWeek === 5 && requiresOvernightPrinting) { // Friday
+    requiresWeekendWork = true;
   }
   
   // Check deadline risks
   const deadlineRisks: DeadlineRisk[] = [];
-  const estimatedDelay = Math.ceil(hoursNeeded / (printers.length * 8)); // Days of delay
+  
+  // Calculate actual delay in days based on hours pushed
+  const workHoursPerDay = 8; // Assume 8 hour work day
+  const estimatedDelay = Math.ceil(totalHoursNeeded / (printers.length * workHoursPerDay));
   
   for (const project of affectedProjects) {
     const dueDate = new Date(project.dueDate);
@@ -189,7 +205,7 @@ const calculateImmediateImpact = (
     requiresWeekendWork,
     deadlineRisks,
     estimatedCompletionDate: formatDateString(completionDate),
-    hoursAdded: hoursNeeded,
+    hoursAdded: totalHoursNeeded,
   };
 };
 
@@ -251,7 +267,8 @@ export const analyzeDecisionOptions = (
   projectId: string,
   unitsScrap: number,
   gramsWasted: number,
-  cycleHours: number = 2.5
+  cycleHours: number = 2.5,
+  needsSpoolChange: boolean = false
 ): DecisionAnalysis => {
   const projects = getProjects();
   const cycles = getPlannedCycles();
@@ -263,13 +280,14 @@ export const analyzeDecisionOptions = (
   
   const remainingUnits = project.quantityTarget - project.quantityGood;
   
-  // Calculate impact for immediate completion
+  // Calculate impact for immediate completion using user-provided hours
   const immediateImpact = calculateImmediateImpact(
     unitsScrap,
     project.color,
-    cycleHours,
+    cycleHours, // Now this is the user-provided estimate
     cycles,
-    projects
+    projects,
+    needsSpoolChange
   );
   
   // Find merge candidates
