@@ -607,12 +607,12 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
                 )}
                 
                 <Button 
-                  onClick={handleSubmit} 
+                  onClick={handleSubmitWithDecision} 
                   className="w-full h-14 text-lg gap-2"
                   disabled={scrapUnits === 0}
                 >
                   <Send className="w-5 h-5" />
-                  {language === 'he' ? 'אישור' : 'Confirm'}
+                  {language === 'he' ? 'המשך להחלטה' : 'Continue to Decision'}
                 </Button>
               </div>
             )}
@@ -709,12 +709,12 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
                 </div>
 
                 <Button 
-                  onClick={handleSubmit} 
+                  onClick={handleSubmitWithDecision} 
                   className="w-full h-14 text-lg gap-2"
                   disabled={wastedGrams === 0}
                 >
                   <Send className="w-5 h-5" />
-                  {language === 'he' ? 'אישור' : 'Confirm'}
+                  {language === 'he' ? 'המשך להחלטה' : 'Continue to Decision'}
                 </Button>
               </div>
             )}
@@ -733,6 +733,15 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
           {language === 'he' ? 'התחל מחדש' : 'Start Over'}
         </Button>
       )}
+
+      {/* Decision Modal */}
+      <DecisionModal
+        open={showDecisionModal}
+        onOpenChange={setShowDecisionModal}
+        analysis={decisionAnalysis}
+        cycleResult={pendingResult === 'failed' ? 'failed' : 'completed_with_scrap'}
+        onDecision={handleDecision}
+      />
     </div>
   );
 };
