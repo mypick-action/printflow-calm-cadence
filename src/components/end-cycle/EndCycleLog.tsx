@@ -43,6 +43,7 @@ import {
   markDecisionUndone,
   DecisionLogEntry
 } from '@/services/decisionLog';
+import { logEndCycleEvent } from '@/services/endCycleEventLog';
 import { DecisionModal } from './DecisionModal';
 import { RecoveryInputStep, RecoveryInputData } from './RecoveryInputStep';
 import { TestModePanel } from '@/components/dev/TestModePanel';
@@ -200,6 +201,10 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
   const handleDecision = (decision: DecisionOption, mergeCycleId?: string) => {
     if (!activeCycle || !pendingResult || !decisionAnalysis) return;
 
+    // Capture state before
+    const cyclesBefore = getPlannedCycles();
+    const projectBefore = getProject(activeCycle.projectId);
+
     const printer = printers.find(p => p.id === selectedPrinter);
     let unitsCompleted = activeCycle.unitsPlanned;
     let unitsScrap = 0;
@@ -214,6 +219,8 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       unitsScrap = 0;
       gramsWasted = wastedGrams;
     }
+
+    const unitsToRecover = pendingResult === 'completed_with_scrap' ? scrapUnits : activeCycle.unitsPlanned;
 
     // Log cycle
     const logResult = logCycleWithMaterialConsumption(
@@ -241,7 +248,6 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     }
 
     const project = getProject(activeCycle.projectId);
-    const unitsToRecover = pendingResult === 'completed_with_scrap' ? scrapUnits : activeCycle.unitsPlanned;
     let createdProjectId: string | undefined;
     let previousMergedUnits: number | undefined;
 
@@ -296,6 +302,56 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
         mergedCycleId: mergeCycleId,
         previousMergedUnits,
       },
+    });
+
+    // Capture state after and log event
+    const cyclesAfter = getPlannedCycles();
+    const projectAfter = getProject(activeCycle.projectId);
+    
+    logEndCycleEvent({
+      ts: new Date().toISOString(),
+      cycleId: activeCycle.id,
+      printerId: selectedPrinter,
+      projectId: activeCycle.projectId,
+      decision,
+      inputs: {
+        result: pendingResult,
+        unitsCompleted,
+        unitsScrap,
+        unitsToRecover,
+        gramsWasted,
+        cycleStatusBefore: activeCycle.status,
+        plannedCyclesBefore: cyclesBefore.length,
+        projectProgressBefore: {
+          quantityGood: projectBefore?.quantityGood || 0,
+          quantityScrap: projectBefore?.quantityScrap || 0,
+          quantityTarget: projectBefore?.quantityTarget || 0,
+        },
+      },
+      outputs: {
+        cycleStatusAfter: 'completed',
+        plannedCyclesAfter: cyclesAfter.length,
+        projectProgressAfter: {
+          quantityGood: projectAfter?.quantityGood || 0,
+          quantityScrap: projectAfter?.quantityScrap || 0,
+          quantityTarget: projectAfter?.quantityTarget || 0,
+        },
+        remakeProjectCreated: createdProjectId,
+        mergeCycleId,
+      },
+      computedImpact: {
+        dominoEffect: completeNowOption?.impact?.dominoEffect?.map(d => ({
+          cycleId: d.cycleId,
+          delayHours: d.delayHours,
+          crossesDeadline: d.crossesDeadline,
+        })),
+        deferAnalysis: decisionAnalysis.deferAnalysis ? {
+          latestStart: decisionAnalysis.deferAnalysis.latestStart || '',
+          estimatedStart: decisionAnalysis.deferAnalysis.estimatedStart || '',
+          riskLevel: decisionAnalysis.deferAnalysis.riskLevel,
+        } : undefined,
+      },
+      replanTriggered: true,
     });
 
     setLastDecisionId(decisionEntry.id);
@@ -370,6 +426,10 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
   const handleSubmitWithResult = (resultType: CycleResult) => {
     if (!activeCycle) return;
 
+    // Capture state before
+    const cyclesBefore = getPlannedCycles();
+    const projectBefore = getProject(activeCycle.projectId);
+
     const logResult = logCycleWithMaterialConsumption(
       {
         printerId: selectedPrinter,
@@ -393,6 +453,43 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       });
       return;
     }
+
+    // Capture state after
+    const cyclesAfter = getPlannedCycles();
+    const projectAfter = getProject(activeCycle.projectId);
+
+    // Log event
+    logEndCycleEvent({
+      ts: new Date().toISOString(),
+      cycleId: activeCycle.id,
+      printerId: selectedPrinter,
+      projectId: activeCycle.projectId,
+      decision: 'completed_successfully',
+      inputs: {
+        result: resultType,
+        unitsCompleted: activeCycle.unitsPlanned,
+        unitsScrap: 0,
+        unitsToRecover: 0,
+        gramsWasted: 0,
+        cycleStatusBefore: activeCycle.status,
+        plannedCyclesBefore: cyclesBefore.length,
+        projectProgressBefore: {
+          quantityGood: projectBefore?.quantityGood || 0,
+          quantityScrap: projectBefore?.quantityScrap || 0,
+          quantityTarget: projectBefore?.quantityTarget || 0,
+        },
+      },
+      outputs: {
+        cycleStatusAfter: 'completed',
+        plannedCyclesAfter: cyclesAfter.length,
+        projectProgressAfter: {
+          quantityGood: projectAfter?.quantityGood || 0,
+          quantityScrap: projectAfter?.quantityScrap || 0,
+          quantityTarget: projectAfter?.quantityTarget || 0,
+        },
+      },
+      replanTriggered: true,
+    });
 
     toast({
       title: language === 'he' ? 'המחזור הושלם' : 'Cycle Completed',

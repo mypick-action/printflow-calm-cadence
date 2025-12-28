@@ -558,6 +558,110 @@ export function clearTestData() {
   localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(filterNonTest(cycles)));
 }
 
+// ============= SCENARIO FREEZE/REPLAY =============
+
+const FROZEN_SCENARIO_KEY = 'frozen_test_scenario';
+
+export interface FrozenScenario {
+  id: string;
+  name: string;
+  frozenAt: string;
+  scenario: TestScenario;
+  data: {
+    products: Product[];
+    projects: Project[];
+    printers: Printer[];
+    spools: Spool[];
+    cycles: PlannedCycle[];
+  };
+}
+
+/**
+ * Freeze current test scenario state for replay
+ */
+export function freezeCurrentScenario(name: string, scenario: TestScenario): FrozenScenario {
+  const products = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]').filter(
+    (p: Product) => p.id.startsWith('test-')
+  );
+  const projects = JSON.parse(localStorage.getItem(KEYS.PROJECTS) || '[]').filter(
+    (p: Project) => p.id.startsWith('test-')
+  );
+  const printers = JSON.parse(localStorage.getItem(KEYS.PRINTERS) || '[]').filter(
+    (p: Printer) => p.id.startsWith('test-')
+  );
+  const spools = JSON.parse(localStorage.getItem(KEYS.SPOOLS) || '[]').filter(
+    (s: Spool) => s.id.startsWith('test-')
+  );
+  const cycles = JSON.parse(localStorage.getItem(KEYS.PLANNED_CYCLES) || '[]').filter(
+    (c: PlannedCycle) => c.id.startsWith('test-')
+  );
+
+  const frozen: FrozenScenario = {
+    id: `frozen-${Date.now()}`,
+    name,
+    frozenAt: new Date().toISOString(),
+    scenario,
+    data: { products, projects, printers, spools, cycles },
+  };
+
+  // Save to localStorage
+  const existing = getFrozenScenarios();
+  existing.push(frozen);
+  localStorage.setItem(FROZEN_SCENARIO_KEY, JSON.stringify(existing));
+
+  return frozen;
+}
+
+/**
+ * Get all frozen scenarios
+ */
+export function getFrozenScenarios(): FrozenScenario[] {
+  try {
+    const data = localStorage.getItem(FROZEN_SCENARIO_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Restore a frozen scenario
+ */
+export function restoreFrozenScenario(scenarioId: string): boolean {
+  const scenarios = getFrozenScenarios();
+  const scenario = scenarios.find(s => s.id === scenarioId);
+  if (!scenario) return false;
+
+  // Clear existing test data
+  clearTestData();
+
+  // Restore frozen data
+  saveTestData(
+    scenario.data.products,
+    scenario.data.projects,
+    scenario.data.printers,
+    scenario.data.spools,
+    scenario.data.cycles
+  );
+
+  return true;
+}
+
+/**
+ * Delete a frozen scenario
+ */
+export function deleteFrozenScenario(scenarioId: string): void {
+  const scenarios = getFrozenScenarios().filter(s => s.id !== scenarioId);
+  localStorage.setItem(FROZEN_SCENARIO_KEY, JSON.stringify(scenarios));
+}
+
+/**
+ * Clear all frozen scenarios
+ */
+export function clearAllFrozenScenarios(): void {
+  localStorage.setItem(FROZEN_SCENARIO_KEY, JSON.stringify([]));
+}
+
 /**
  * Get test scenario info for display
  */
