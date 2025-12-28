@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ import {
   upsertColorInventoryItem,
   adjustClosedCount,
   setOpenTotalGrams,
+  adjustOpenTotalGrams,
   getFactorySettings,
   ColorInventoryItem,
   getTotalGrams,
@@ -38,11 +40,17 @@ export const InventoryPage: React.FC = () => {
   const [inventory, setInventory] = useState<ColorInventoryItem[]>([]);
   const [availableColors, setAvailableColors] = useState<string[]>(['Black', 'White', 'Gray', 'Red', 'Blue', 'Green']);
   
+  // Add mode: 'closed' or 'open'
+  const [addMode, setAddMode] = useState<'closed' | 'open'>('closed');
+  
   // Quick add states
   const [quickAddColor, setQuickAddColor] = useState('Black');
+  const [quickAddCustomColor, setQuickAddCustomColor] = useState('');
+  const [useCustomColor, setUseCustomColor] = useState(false);
   const [quickAddMaterial, setQuickAddMaterial] = useState('PLA');
   const [quickAddCount, setQuickAddCount] = useState(1);
   const [quickAddSpoolSize, setQuickAddSpoolSize] = useState(1000);
+  const [quickAddOpenGrams, setQuickAddOpenGrams] = useState(100);
   
   // Edit dialog
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -63,19 +71,24 @@ export const InventoryPage: React.FC = () => {
     setAvailableColors(colors);
   };
 
+  const getSelectedColor = () => {
+    return useCustomColor ? quickAddCustomColor.trim() : quickAddColor;
+  };
+
   const handleAddClosedSpools = () => {
-    if (!quickAddColor || quickAddCount <= 0) return;
+    const color = getSelectedColor();
+    if (!color || quickAddCount <= 0) return;
     
     const existing = inventory.find(i => 
-      i.color.toLowerCase() === quickAddColor.toLowerCase() && 
+      i.color.toLowerCase() === color.toLowerCase() && 
       i.material.toLowerCase() === quickAddMaterial.toLowerCase()
     );
     
     if (existing) {
-      adjustClosedCount(quickAddColor, quickAddMaterial, quickAddCount);
+      adjustClosedCount(color, quickAddMaterial, quickAddCount);
     } else {
       upsertColorInventoryItem({
-        color: quickAddColor,
+        color,
         material: quickAddMaterial,
         closedCount: quickAddCount,
         closedSpoolSizeGrams: quickAddSpoolSize,
@@ -86,10 +99,49 @@ export const InventoryPage: React.FC = () => {
     
     refreshData();
     setQuickAddCount(1);
+    if (useCustomColor) {
+      setQuickAddCustomColor('');
+      setUseCustomColor(false);
+    }
     
     toast({
       title: language === 'he' ? 'גלילים נוספו' : 'Spools added',
-      description: `+${quickAddCount} ${quickAddColor} ${quickAddMaterial}`,
+      description: `+${quickAddCount} ${color} ${quickAddMaterial}`,
+    });
+  };
+
+  const handleAddOpenGrams = () => {
+    const color = getSelectedColor();
+    if (!color || quickAddOpenGrams <= 0) return;
+    
+    const existing = inventory.find(i => 
+      i.color.toLowerCase() === color.toLowerCase() && 
+      i.material.toLowerCase() === quickAddMaterial.toLowerCase()
+    );
+    
+    if (existing) {
+      adjustOpenTotalGrams(color, quickAddMaterial, quickAddOpenGrams);
+    } else {
+      upsertColorInventoryItem({
+        color,
+        material: quickAddMaterial,
+        closedCount: 0,
+        closedSpoolSizeGrams: quickAddSpoolSize,
+        openTotalGrams: quickAddOpenGrams,
+        reorderPointGrams: 2000,
+      });
+    }
+    
+    refreshData();
+    setQuickAddOpenGrams(100);
+    if (useCustomColor) {
+      setQuickAddCustomColor('');
+      setUseCustomColor(false);
+    }
+    
+    toast({
+      title: language === 'he' ? 'גרמים נוספו' : 'Grams added',
+      description: `+${quickAddOpenGrams}g ${color} ${quickAddMaterial}`,
     });
   };
 
@@ -141,74 +193,195 @@ export const InventoryPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Quick Add Closed Spools */}
+      {/* Quick Add Spools */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Plus className="w-4 h-4" />
-            {language === 'he' ? 'הוסף גלילים סגורים' : 'Add Closed Spools'}
+            {language === 'he' ? 'הוסף למלאי' : 'Add to Inventory'}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">{language === 'he' ? 'צבע' : 'Color'}</Label>
-              <Select value={quickAddColor} onValueChange={setQuickAddColor}>
-                <SelectTrigger className="w-28 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-background border shadow-lg">
-                  {availableColors.filter(c => c && c.trim()).map(c => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">{language === 'he' ? 'חומר' : 'Material'}</Label>
-              <Select value={quickAddMaterial} onValueChange={setQuickAddMaterial}>
-                <SelectTrigger className="w-24 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-background border shadow-lg">
-                  <SelectItem value="PLA">PLA</SelectItem>
-                  <SelectItem value="PETG">PETG</SelectItem>
-                  <SelectItem value="ABS">ABS</SelectItem>
-                  <SelectItem value="TPU">TPU</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">{language === 'he' ? 'גודל' : 'Size'}</Label>
-              <Select 
-                value={String(quickAddSpoolSize)} 
-                onValueChange={(v) => setQuickAddSpoolSize(parseInt(v))}
-              >
-                <SelectTrigger className="w-20 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-background border shadow-lg">
-                  <SelectItem value="1000">1kg</SelectItem>
-                  <SelectItem value="2000">2kg</SelectItem>
-                  <SelectItem value="5000">5kg</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">{language === 'he' ? 'כמות' : 'Qty'}</Label>
-              <Input 
-                type="number" 
-                min={1} 
-                value={quickAddCount} 
-                onChange={(e) => setQuickAddCount(parseInt(e.target.value) || 1)}
-                className="w-16 h-9"
-              />
-            </div>
-            <Button onClick={handleAddClosedSpools} size="sm" className="h-9">
-              <Plus className="w-4 h-4 mr-1" />
-              {language === 'he' ? 'הוסף' : 'Add'}
-            </Button>
-          </div>
+        <CardContent className="space-y-4">
+          {/* Tabs for Closed vs Open */}
+          <Tabs value={addMode} onValueChange={(v) => setAddMode(v as 'closed' | 'open')}>
+            <TabsList className="grid w-full grid-cols-2 max-w-xs">
+              <TabsTrigger value="closed">
+                {language === 'he' ? 'גלילים סגורים' : 'Closed Spools'}
+              </TabsTrigger>
+              <TabsTrigger value="open">
+                {language === 'he' ? 'גלילים פתוחים' : 'Open Spools'}
+              </TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="closed" className="mt-4">
+              <div className="flex flex-wrap items-end gap-3">
+                {/* Color Selection */}
+                <div className="space-y-1">
+                  <Label className="text-xs">{language === 'he' ? 'צבע' : 'Color'}</Label>
+                  <Select 
+                    value={useCustomColor ? '__custom__' : quickAddColor} 
+                    onValueChange={(v) => {
+                      if (v === '__custom__') {
+                        setUseCustomColor(true);
+                      } else {
+                        setUseCustomColor(false);
+                        setQuickAddColor(v);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-28 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg">
+                      {availableColors.filter(c => c && c.trim()).map(c => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                      <SelectItem value="__custom__">
+                        {language === 'he' ? '+ צבע חדש' : '+ New color'}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                {/* Custom Color Input */}
+                {useCustomColor && (
+                  <div className="space-y-1">
+                    <Label className="text-xs">{language === 'he' ? 'שם צבע' : 'Color name'}</Label>
+                    <Input 
+                      value={quickAddCustomColor}
+                      onChange={(e) => setQuickAddCustomColor(e.target.value)}
+                      placeholder={language === 'he' ? 'לדוגמא: Orange' : 'e.g. Orange'}
+                      className="w-28 h-9"
+                    />
+                  </div>
+                )}
+                
+                <div className="space-y-1">
+                  <Label className="text-xs">{language === 'he' ? 'חומר' : 'Material'}</Label>
+                  <Select value={quickAddMaterial} onValueChange={setQuickAddMaterial}>
+                    <SelectTrigger className="w-24 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg">
+                      <SelectItem value="PLA">PLA</SelectItem>
+                      <SelectItem value="PETG">PETG</SelectItem>
+                      <SelectItem value="ABS">ABS</SelectItem>
+                      <SelectItem value="TPU">TPU</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">{language === 'he' ? 'גודל' : 'Size'}</Label>
+                  <Select 
+                    value={String(quickAddSpoolSize)} 
+                    onValueChange={(v) => setQuickAddSpoolSize(parseInt(v))}
+                  >
+                    <SelectTrigger className="w-20 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg">
+                      <SelectItem value="1000">1kg</SelectItem>
+                      <SelectItem value="2000">2kg</SelectItem>
+                      <SelectItem value="5000">5kg</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">{language === 'he' ? 'כמות' : 'Qty'}</Label>
+                  <Input 
+                    type="number" 
+                    min={1} 
+                    value={quickAddCount} 
+                    onChange={(e) => setQuickAddCount(parseInt(e.target.value) || 1)}
+                    className="w-16 h-9"
+                  />
+                </div>
+                <Button onClick={handleAddClosedSpools} size="sm" className="h-9">
+                  <Plus className="w-4 h-4 mr-1" />
+                  {language === 'he' ? 'הוסף' : 'Add'}
+                </Button>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="open" className="mt-4">
+              <div className="flex flex-wrap items-end gap-3">
+                {/* Color Selection */}
+                <div className="space-y-1">
+                  <Label className="text-xs">{language === 'he' ? 'צבע' : 'Color'}</Label>
+                  <Select 
+                    value={useCustomColor ? '__custom__' : quickAddColor} 
+                    onValueChange={(v) => {
+                      if (v === '__custom__') {
+                        setUseCustomColor(true);
+                      } else {
+                        setUseCustomColor(false);
+                        setQuickAddColor(v);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-28 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg">
+                      {availableColors.filter(c => c && c.trim()).map(c => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                      <SelectItem value="__custom__">
+                        {language === 'he' ? '+ צבע חדש' : '+ New color'}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                {/* Custom Color Input */}
+                {useCustomColor && (
+                  <div className="space-y-1">
+                    <Label className="text-xs">{language === 'he' ? 'שם צבע' : 'Color name'}</Label>
+                    <Input 
+                      value={quickAddCustomColor}
+                      onChange={(e) => setQuickAddCustomColor(e.target.value)}
+                      placeholder={language === 'he' ? 'לדוגמא: Orange' : 'e.g. Orange'}
+                      className="w-28 h-9"
+                    />
+                  </div>
+                )}
+                
+                <div className="space-y-1">
+                  <Label className="text-xs">{language === 'he' ? 'חומר' : 'Material'}</Label>
+                  <Select value={quickAddMaterial} onValueChange={setQuickAddMaterial}>
+                    <SelectTrigger className="w-24 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg">
+                      <SelectItem value="PLA">PLA</SelectItem>
+                      <SelectItem value="PETG">PETG</SelectItem>
+                      <SelectItem value="ABS">ABS</SelectItem>
+                      <SelectItem value="TPU">TPU</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">{language === 'he' ? 'גרמים' : 'Grams'}</Label>
+                  <Input 
+                    type="number" 
+                    min={1} 
+                    value={quickAddOpenGrams} 
+                    onChange={(e) => setQuickAddOpenGrams(parseInt(e.target.value) || 100)}
+                    className="w-20 h-9"
+                  />
+                </div>
+                <Button onClick={handleAddOpenGrams} size="sm" className="h-9">
+                  <Plus className="w-4 h-4 mr-1" />
+                  {language === 'he' ? 'הוסף' : 'Add'}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                {language === 'he' 
+                  ? 'הוסף גרמים לגלילים פתוחים קיימים (למשל גליל שקיבלת פתוח)'
+                  : 'Add grams to existing open spools (e.g. a spool you received already open)'}
+              </p>
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
 
