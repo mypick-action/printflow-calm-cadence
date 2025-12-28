@@ -550,6 +550,8 @@ export const PrintersPage: React.FC = () => {
                     <div className="grid grid-cols-2 gap-2">
                       {Array.from({ length: printer.amsSlots || 4 }, (_, i) => {
                         const slot = printer.amsSlotStates?.find(s => s.slotIndex === i);
+                        const slotSpool = slot?.spoolId ? spools.find(sp => sp.id === slot.spoolId) : null;
+                        const slotMaterial = slotSpool?.material;
                         return (
                           <div 
                             key={i} 
@@ -564,7 +566,9 @@ export const PrintersPage: React.FC = () => {
                             {slot?.color ? (
                               <div className="flex flex-col items-center gap-1">
                                 <SpoolIcon color={getSpoolColor(slot.color)} size={24} />
-                                <span className="text-xs font-medium">{slot.color}</span>
+                                <span className="text-xs font-medium">
+                                  {slot.color} {slotMaterial ? `• ${slotMaterial}` : ''}
+                                </span>
                                 <Badge variant="outline" className="text-[10px] h-4">
                                   {slot.spoolId ? '✓' : '⚠️'}
                                 </Badge>
@@ -585,7 +589,9 @@ export const PrintersPage: React.FC = () => {
                         <div className="flex items-center gap-3">
                           <SpoolIcon color={getSpoolColor(loadedState.color)} size={32} />
                           <div>
-                            <span className="font-medium">{loadedState.color}</span>
+                            <span className="font-medium">
+                              {loadedState.color} {printer.currentMaterial ? `• ${printer.currentMaterial}` : ''}
+                            </span>
                             <div className="text-xs text-muted-foreground">
                               {loadedState.spoolId 
                                 ? (language === 'he' ? 'גליל מהמלאי' : 'From inventory')
