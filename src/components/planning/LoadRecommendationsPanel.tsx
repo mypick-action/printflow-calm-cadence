@@ -41,6 +41,7 @@ import {
   setOpenTotalGrams,
   openNewSpool,
   updatePrinter,
+  getPrinters,
   LoadRecommendation, 
   MaterialShortage,
   getTotalGrams,
@@ -326,11 +327,41 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
       }
     }
     
-    // Update printer's mounted color so the recommendation disappears
-    updatePrinter(recommendation.printerId, {
-      mountedColor: recommendation.color,
-      currentColor: recommendation.color,
-    });
+    // Get the printer to check if it has AMS
+    const printers = getPrinters();
+    const printer = printers.find(p => p.id === recommendation.printerId);
+    
+    if (printer?.hasAMS) {
+      // For AMS printers, update amsSlotStates to add the color to a slot
+      const currentSlots = printer.amsSlotStates || [];
+      // Find first empty slot or create a new one
+      const emptySlotIndex = currentSlots.findIndex(s => !s.color);
+      const newSlots = [...currentSlots];
+      
+      if (emptySlotIndex >= 0) {
+        newSlots[emptySlotIndex] = {
+          slotIndex: emptySlotIndex,
+          color: recommendation.color,
+        };
+      } else {
+        // Add to first slot if no empty slot found
+        newSlots[0] = {
+          slotIndex: 0,
+          color: recommendation.color,
+        };
+      }
+      
+      updatePrinter(recommendation.printerId, {
+        amsSlotStates: newSlots,
+        currentColor: recommendation.color,
+      });
+    } else {
+      // For non-AMS printers, update mountedColor
+      updatePrinter(recommendation.printerId, {
+        mountedColor: recommendation.color,
+        currentColor: recommendation.color,
+      });
+    }
     
     // Notify inventory system to trigger UI refresh
     notifyInventoryChanged();
