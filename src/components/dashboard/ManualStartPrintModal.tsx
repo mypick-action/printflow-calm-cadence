@@ -60,6 +60,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
   const [startTime, setStartTime] = useState<string>(format(new Date(), "yyyy-MM-dd'T'HH:mm"));
   const [estimatedHours, setEstimatedHours] = useState<string>('');
   const [unitsPlanned, setUnitsPlanned] = useState<string>('');
+  const [spoolGrams, setSpoolGrams] = useState<string>('');
 
   const projects = useMemo(() => getActiveProjects(), [open]);
   const printers = useMemo(() => getActivePrinters(), [open]);
@@ -95,6 +96,8 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     const units = parseInt(unitsPlanned) || defaultUnits;
     const end = addHours(start, hours);
 
+    const spoolGramsNum = parseInt(spoolGrams) || undefined;
+
     const newCycle: PlannedCycle = {
       id: `manual-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       projectId: selectedProjectId,
@@ -113,6 +116,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
       requiredColor: selectedProject.color,
       requiredMaterial: 'PLA',
       requiredGrams: units * gramsPerUnit,
+      spoolStartGrams: spoolGramsNum,
     };
 
     addManualCycle(newCycle);
@@ -133,6 +137,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     setStartTime(format(new Date(), "yyyy-MM-dd'T'HH:mm"));
     setEstimatedHours('');
     setUnitsPlanned('');
+    setSpoolGrams('');
     
     onComplete();
     onOpenChange(false);
@@ -230,6 +235,27 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
               <Label>{language === 'he' ? 'יחידות' : 'Units'}</Label>
               <Input type="number" placeholder={defaultUnits.toString()} value={unitsPlanned} onChange={(e) => setUnitsPlanned(e.target.value)} min={1} />
             </div>
+          </div>
+
+          {/* Spool Grams */}
+          <div className="space-y-2">
+            <Label className="flex items-center gap-2">
+              <SpoolIcon color={selectedProject ? getSpoolColor(selectedProject.color) : '#888'} size={16} />
+              {language === 'he' ? 'גרמים על הגליל' : 'Grams on Spool'}
+            </Label>
+            <Input 
+              type="number" 
+              placeholder={language === 'he' ? 'לדוגמה: 800' : 'e.g. 800'} 
+              value={spoolGrams} 
+              onChange={(e) => setSpoolGrams(e.target.value)} 
+              min={0}
+              max={1500}
+            />
+            <p className="text-xs text-muted-foreground">
+              {language === 'he' 
+                ? 'כמה גרם יש כרגע על הגליל? המערכת תקזז את השימוש בסוף המחזור'
+                : 'How many grams are currently on the spool? System will deduct usage after cycle'}
+            </p>
           </div>
 
           {/* Selected Project Info */}
