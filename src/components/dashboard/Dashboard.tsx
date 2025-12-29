@@ -7,6 +7,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SpoolIcon, getSpoolColor, getSpoolTextStyle } from '@/components/icons/SpoolIcon';
 import { 
   Sun, 
@@ -23,6 +24,7 @@ import {
   Calendar,
   ClipboardCheck,
   Play,
+  ChevronDown,
 } from 'lucide-react';
 import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle, getProducts, getProjects } from '@/services/storage';
 import { StartPrintModal } from './StartPrintModal';
@@ -59,6 +61,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const [startPrintModalOpen, setStartPrintModalOpen] = useState(false);
   const [selectedCycleForStart, setSelectedCycleForStart] = useState<DashboardCycle | null>(null);
   const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null);
+  const [expandedPrinters, setExpandedPrinters] = useState<Set<string>>(new Set());
 
   const refreshData = useCallback(() => {
     setIsLoading(true);
@@ -212,8 +215,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     );
   };
 
+  const togglePrinterExpanded = (printerId: string) => {
+    setExpandedPrinters(prev => {
+      const next = new Set(prev);
+      if (next.has(printerId)) {
+        next.delete(printerId);
+      } else {
+        next.add(printerId);
+      }
+      return next;
+    });
+  };
+
   const renderPrinterCard = (plan: PrinterDayPlan) => {
     const hasCycles = plan.cycles.length > 0;
+    const hasMultipleCycles = plan.cycles.length > 1;
+    const isExpanded = expandedPrinters.has(plan.printer.id);
+    const firstCycle = plan.cycles[0];
+    const remainingCycles = plan.cycles.slice(1);
     
     return (
       <Card key={plan.printer.id} variant="elevated" className="overflow-hidden">
@@ -240,7 +259,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
         <CardContent className="space-y-3">
           {hasCycles ? (
             <>
-              {plan.cycles.map((cycle, idx) => renderCycleCard(cycle, plan.printer.id, idx))}
+              {/* Always show first cycle */}
+              {renderCycleCard(firstCycle, plan.printer.id, 0)}
+              
+              {/* Expandable section for additional cycles */}
+              {hasMultipleCycles && (
+                <Collapsible open={isExpanded} onOpenChange={() => togglePrinterExpanded(plan.printer.id)}>
+                  <CollapsibleTrigger asChild>
+                    <Button 
+                      variant="ghost" 
+                      className="w-full justify-between gap-2 text-muted-foreground hover:text-foreground"
+                    >
+                      <span className="text-sm">
+                        {isExpanded 
+                          ? (language === 'he' ? 'הסתר עבודות נוספות' : 'Hide more jobs')
+                          : (language === 'he' ? `עוד ${remainingCycles.length} עבודות` : `${remainingCycles.length} more jobs`)
+                        }
+                      </span>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-3 mt-3">
+                    {remainingCycles.map((cycle, idx) => renderCycleCard(cycle, plan.printer.id, idx + 1))}
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
               
               {/* Leave spool instruction */}
               {plan.lastColor && (
