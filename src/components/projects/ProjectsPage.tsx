@@ -92,6 +92,9 @@ import {
 } from '@/services/materialStatus';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { ProductEditorModal } from '@/components/products/ProductEditorModal';
+import { AssignmentChoiceModal } from './AssignmentChoiceModal';
+import { ManualStartPrintModal } from '@/components/dashboard/ManualStartPrintModal';
+import { scheduleAutoReplan } from '@/services/autoReplan';
 import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
 import {
   AlertDialog,
@@ -195,6 +198,11 @@ export const ProjectsPage: React.FC = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  
+  // Assignment choice modal state
+  const [assignmentChoiceOpen, setAssignmentChoiceOpen] = useState(false);
+  const [createdProject, setCreatedProject] = useState<Project | null>(null);
+  const [manualStartOpen, setManualStartOpen] = useState(false);
   
   // Custom color state
   const [useCustomColor, setUseCustomColor] = useState(false);
@@ -461,7 +469,7 @@ export const ProjectsPage: React.FC = () => {
       }
     }
     
-    const createdProject = createProject({
+    const newCreatedProject = createProject({
       name: newProject.name,
       productId: newProject.productId,
       productName: product.name,
@@ -493,15 +501,33 @@ export const ProjectsPage: React.FC = () => {
     // Refresh to include the new color
     refreshData();
     
-    // Validate and show detailed toast
-    const validationResult = validateProjectForPlanning(createdProject);
-    const summary = getValidationSummary(validationResult, language);
+    // Show assignment choice modal
+    setCreatedProject(newCreatedProject);
+    setAssignmentChoiceOpen(true);
+  };
+
+  const handleManualAssignment = () => {
+    // Open the manual start modal with the created project
+    setManualStartOpen(true);
+  };
+
+  const handleAutomaticAssignment = () => {
+    // Trigger auto replan to schedule the project
+    scheduleAutoReplan('project_created');
     
-    toast({
-      title: summary.title,
-      description: summary.description,
-      variant: summary.variant,
-    });
+    if (createdProject) {
+      // Validate and show detailed toast
+      const validationResult = validateProjectForPlanning(createdProject);
+      const summary = getValidationSummary(validationResult, language);
+      
+      toast({
+        title: summary.title,
+        description: summary.description,
+        variant: summary.variant,
+      });
+    }
+    
+    setCreatedProject(null);
   };
 
   const handleOpenProductEditor = () => {
@@ -1201,6 +1227,36 @@ export const ProjectsPage: React.FC = () => {
           setReportIssueProjectId(undefined);
         }}
         preselectedProjectId={reportIssueProjectId}
+      />
+
+      {/* Assignment Choice Modal */}
+      <AssignmentChoiceModal
+        open={assignmentChoiceOpen}
+        onOpenChange={setAssignmentChoiceOpen}
+        project={createdProject}
+        onManualAssignment={handleManualAssignment}
+        onAutomaticAssignment={handleAutomaticAssignment}
+      />
+
+      {/* Manual Start Modal */}
+      <ManualStartPrintModal
+        open={manualStartOpen}
+        onOpenChange={(open) => {
+          setManualStartOpen(open);
+          if (!open) {
+            setCreatedProject(null);
+          }
+        }}
+        onComplete={() => {
+          setManualStartOpen(false);
+          setCreatedProject(null);
+          refreshData();
+          toast({
+            title: language === 'he' ? 'הדפסה התחילה' : 'Print Started',
+            description: language === 'he' ? 'המחזור הידני נוסף בהצלחה' : 'Manual cycle added successfully',
+          });
+        }}
+        defaultProjectId={createdProject?.id}
       />
     </div>
   );
