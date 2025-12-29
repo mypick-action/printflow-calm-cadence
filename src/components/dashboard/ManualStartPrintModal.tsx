@@ -161,7 +161,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
                       <SpoolIcon color={getSpoolColor(project.color)} size={16} />
                       <span>{project.name}</span>
                       <span className="text-muted-foreground text-xs">
-                        ({project.quantityTarget - project.quantityDone} {language === 'he' ? 'נותרו' : 'left'})
+                        ({project.quantityTarget - project.quantityGood} {language === 'he' ? 'נותרו' : 'left'})
                       </span>
                     </div>
                   </SelectItem>
