@@ -148,9 +148,12 @@ export const PrintersPage: React.FC = () => {
     setPrinters(getPrinters());
     setSpools(getSpools());
     const settings = getFactorySettings();
-    if (settings?.colors) {
-      setAvailableColors(settings.colors);
-    }
+    // Hebrew predefined colors (same as InventoryPage)
+    const hebrewColors = ['שחור', 'לבן', 'אפור', 'אדום', 'כחול', 'ירוק', 'צהוב', 'כתום', 'סגול', 'ורוד', 'חום'];
+    // Combine predefined + settings colors
+    const settingsColors = settings?.colors || [];
+    const allColors = new Set([...hebrewColors, ...settingsColors]);
+    setAvailableColors(Array.from(allColors));
   };
 
   const handleEditPrinter = (printer: Printer) => {
