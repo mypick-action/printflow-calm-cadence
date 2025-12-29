@@ -1,16 +1,17 @@
 // Cloud Bridge - One-way sync from Cloud (Supabase) to localStorage
 // Cloud = SSOT, localStorage = temporary cache for legacy engines
 
-import { getPrinters, getFactorySettings } from '@/services/cloudStorage';
+import { getPrinters, getFactorySettings, getProjects } from '@/services/cloudStorage';
 import { 
   KEYS, 
   Printer, 
+  Project,
   FactorySettings, 
   WeeklySchedule, 
   DaySchedule,
   getDefaultWeeklySchedule 
 } from '@/services/storage';
-import type { DbPrinter, DbFactorySettings } from '@/services/cloudStorage';
+import type { DbPrinter, DbFactorySettings, DbProject } from '@/services/cloudStorage';
 
 // Bridge-specific localStorage keys for tracking hydration
 const BRIDGE_KEYS = {
@@ -209,15 +210,54 @@ export async function hydrateLocalFromCloud(
   localStorage.setItem(KEYS.FACTORY_SETTINGS, JSON.stringify(localFactorySettings));
   console.log('[CloudBridge] Wrote factory_settings to localStorage');
 
-  // Mark onboarding as complete locally (since cloud has data)
-  localStorage.setItem(KEYS.ONBOARDING_COMPLETE, 'true');
+  // Only mark onboarding complete if we actually have cloud data
+  if (cloudPrinters?.length && cloudSettings) {
+    localStorage.setItem(KEYS.ONBOARDING_COMPLETE, 'true');
+  }
+
+  // Optional: Hydrate projects
+  if (opts?.includeProjects) {
+    const cloudProjects = await getProjects(workspaceId);
+    const existingProjects = safeJsonParse<Project[]>(localStorage.getItem(KEYS.PROJECTS));
+    
+    // Map projects: cloud format → localStorage format
+    const mappedProjects: Project[] = (cloudProjects || []).map((p: DbProject) => {
+      // Find existing project to preserve local-only fields
+      const existing = existingProjects?.find(ep => ep.id === p.id);
+      
+      return {
+        id: p.id,
+        name: p.name,
+        productId: p.product_id ?? '',
+        productName: existing?.productName ?? '', // Not in cloud, preserve or empty
+        preferredPresetId: p.preset_id ?? undefined,
+        quantityTarget: p.quantity_target ?? 1,
+        quantityGood: p.quantity_completed ?? 0,
+        quantityScrap: p.quantity_failed ?? 0,
+        dueDate: p.deadline ?? '',
+        urgency: (p.priority === 'urgent' || p.priority === 'critical') 
+          ? p.priority as 'urgent' | 'critical' 
+          : 'normal',
+        urgencyManualOverride: false, // Not in cloud
+        status: (p.status ?? 'pending') as 'pending' | 'in_progress' | 'completed' | 'on_hold',
+        color: existing?.color ?? '', // Not in cloud, preserve or empty
+        createdAt: p.created_at ?? new Date().toISOString(),
+        parentProjectId: p.parent_project_id ?? undefined,
+        customCycleHours: p.custom_cycle_hours ?? undefined,
+        isRecoveryProject: p.is_recovery_project ?? false,
+      };
+    });
+
+    localStorage.setItem(KEYS.PROJECTS, JSON.stringify(mappedProjects));
+    console.log('[CloudBridge] Wrote projects to localStorage:', mappedProjects.length);
+  }
 
   markHydrated(workspaceId);
   
   return { 
     ok: true,
     printersCount: printersFinal.length,
-    hasSettings: true,
+    hasSettings: !!cloudSettings,
   };
 }
 
