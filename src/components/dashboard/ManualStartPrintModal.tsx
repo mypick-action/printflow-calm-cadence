@@ -33,6 +33,8 @@ import {
   PlannedCycle,
   addManualCycle,
   getPlannedCycles,
+  updatePrinter,
+  getPrinters,
 } from '@/services/storage';
 import { format, addHours } from 'date-fns';
 import { scheduleAutoReplan } from '@/services/autoReplan';
@@ -114,6 +116,16 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     };
 
     addManualCycle(newCycle);
+    
+    // Also update the printer's mounted color to reflect reality
+    const printer = getPrinters().find(p => p.id === selectedPrinterId);
+    if (printer) {
+      updatePrinter(selectedPrinterId, {
+        mountedColor: selectedProject.color,
+        currentMaterial: 'PLA',
+      });
+    }
+    
     scheduleAutoReplan('manual_cycle_added');
     
     setSelectedProjectId(defaultProjectId || '');

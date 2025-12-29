@@ -26,7 +26,7 @@ import {
   Play,
   ChevronDown,
 } from 'lucide-react';
-import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle, getProducts, getProjects } from '@/services/storage';
+import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle, getProducts, getProjects, updatePrinter } from '@/services/storage';
 import { StartPrintModal } from './StartPrintModal';
 import { ManualStartPrintModal } from './ManualStartPrintModal';
 import { toast } from '@/hooks/use-toast';
@@ -550,6 +550,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
           onConfirm={() => {
             // Mark cycle as in_progress after confirmation
             updatePlannedCycle(selectedCycleForStart.id, { status: 'in_progress' });
+            
+            // Also update printer's mounted color to reflect the loaded spool
+            if (selectedPrinterId && selectedCycleForStart.color) {
+              updatePrinter(selectedPrinterId, {
+                mountedColor: selectedCycleForStart.color,
+                currentMaterial: selectedCycleForStart.material || 'PLA',
+              });
+            }
+            
             toast({
               title: language === 'he' ? 'הדפסה התחילה' : 'Print Started',
               description: language === 'he' 
