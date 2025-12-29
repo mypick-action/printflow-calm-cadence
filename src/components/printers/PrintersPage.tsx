@@ -134,6 +134,15 @@ export const PrintersPage: React.FC = () => {
     refreshData();
   }, [workspaceId]);
 
+  // Listen for printer changes (e.g., when loading spools from LoadRecommendationsPanel)
+  useEffect(() => {
+    const onPrintersChanged = () => {
+      refreshData();
+    };
+    window.addEventListener('printflow:printers-changed', onPrintersChanged);
+    return () => window.removeEventListener('printflow:printers-changed', onPrintersChanged);
+  }, []);
+
   const refreshData = async () => {
     // Refresh from localStorage (for legacy compatibility with engines)
     setPrinters(getPrinters());

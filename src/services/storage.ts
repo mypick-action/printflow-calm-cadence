@@ -901,6 +901,9 @@ export const updatePrinter = (id: string, updates: Partial<Printer>): Printer | 
   printers[index] = { ...printers[index], ...updates };
   setItem(KEYS.PRINTERS, printers);
   
+  // Notify UI components that printers have changed
+  window.dispatchEvent(new CustomEvent('printflow:printers-changed'));
+  
   // Schedule auto-replan for planning-relevant changes
   const planningRelevantKeys = ['active', 'status', 'hasAMS', 'amsSlots', 'amsMode'];
   const hasRelevantChange = Object.keys(updates).some(key => planningRelevantKeys.includes(key));

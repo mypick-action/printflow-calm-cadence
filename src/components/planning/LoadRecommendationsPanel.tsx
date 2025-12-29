@@ -304,11 +304,28 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
     const material = recommendation.material || 'PLA';
     
     if (loadChoice === 'open') {
-      // Update open grams to what user reported
-      setOpenTotalGrams(recommendation.color, material, openGramsInput);
+      // Validate: don't allow loading more than available
+      const previousOpen = inventoryItem?.openTotalGrams || 0;
+      if (openGramsInput > previousOpen) {
+        toast({
+          title: language === 'he' ? 'אין מספיק חומר פתוח' : 'Not enough open material',
+          description: language === 'he' 
+            ? `זמין: ${previousOpen}g, נבחר: ${openGramsInput}g`
+            : `Available: ${previousOpen}g, Selected: ${openGramsInput}g`,
+          variant: 'destructive',
+        });
+        return;
+      }
+      
+      // Calculate remaining open material after loading onto printer
+      const remainingOpen = Math.max(0, previousOpen - openGramsInput);
+      setOpenTotalGrams(recommendation.color, material, remainingOpen);
+      
       toast({
         title: language === 'he' ? 'גליל פתוח נטען' : 'Open spool loaded',
-        description: `${recommendation.color} - ${openGramsInput}g`,
+        description: language === 'he'
+          ? `${recommendation.color} - ${openGramsInput}g (נשאר פתוח: ${remainingOpen}g)`
+          : `${recommendation.color} - ${openGramsInput}g (remaining open: ${remainingOpen}g)`,
       });
     } else if (loadChoice === 'new') {
       // Open a new closed spool with specified size
