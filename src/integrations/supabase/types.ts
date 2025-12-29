@@ -281,6 +281,7 @@ export type Database = {
           can_start_new_cycles_after_hours: boolean
           created_at: string
           current_preset_id: string | null
+          display_order: number | null
           has_ams: boolean
           id: string
           max_spool_weight: number | null
@@ -299,6 +300,7 @@ export type Database = {
           can_start_new_cycles_after_hours?: boolean
           created_at?: string
           current_preset_id?: string | null
+          display_order?: number | null
           has_ams?: boolean
           id?: string
           max_spool_weight?: number | null
@@ -317,6 +319,7 @@ export type Database = {
           can_start_new_cycles_after_hours?: boolean
           created_at?: string
           current_preset_id?: string | null
+          display_order?: number | null
           has_ams?: boolean
           id?: string
           max_spool_weight?: number | null

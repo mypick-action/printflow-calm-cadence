@@ -49,6 +49,7 @@ export interface DbPrinter {
   ams_slots: number | null;
   ams_backup_mode: boolean;
   ams_multi_color: boolean;
+  display_order: number;
   created_at: string;
   updated_at: string;
 }
@@ -253,6 +254,7 @@ export const getPrinters = async (workspaceId: string): Promise<DbPrinter[]> => 
     .from('printers')
     .select('*')
     .eq('workspace_id', workspaceId)
+    .order('display_order', { ascending: true })
     .order('name', { ascending: true });
   
   if (error) {
@@ -337,6 +339,26 @@ export const deleteAllPrinters = async (workspaceId: string): Promise<boolean> =
   }
   
   return true;
+};
+
+export const updatePrintersOrder = async (
+  printerOrders: { id: string; display_order: number }[]
+): Promise<boolean> => {
+  try {
+    // Update each printer's display_order
+    const promises = printerOrders.map(({ id, display_order }) =>
+      supabase
+        .from('printers')
+        .update({ display_order })
+        .eq('id', id)
+    );
+    
+    await Promise.all(promises);
+    return true;
+  } catch (error) {
+    console.error('Error updating printers order:', error);
+    return false;
+  }
 };
 
 // ============= SPOOLS (INVENTORY) =============
