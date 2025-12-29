@@ -1172,7 +1172,7 @@ export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): LogCycleWithR
   // Update planned cycle status if linked
   if (log.plannedCycleId) {
     updatePlannedCycle(log.plannedCycleId, {
-      status: log.result === 'failed' ? 'failed' : 'completed',
+      status: (log.result === 'failed' || log.result === 'cancelled') ? 'failed' : 'completed',
     });
   }
   
@@ -1210,7 +1210,8 @@ export const logCycleWithMaterialConsumption = (
   // Availability check is only needed for PLANNING scenarios (not end-cycle logging).
   const isExecutionMode = log.result === 'completed' || 
                           log.result === 'completed_with_scrap' ||
-                          log.result === 'failed';
+                          log.result === 'failed' ||
+                          log.result === 'cancelled';
   
   // Skip availability check for execution mode - the material was already used
   // Only check availability for planning validation scenarios
