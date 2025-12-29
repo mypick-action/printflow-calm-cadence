@@ -1204,15 +1204,17 @@ export const logCycleWithMaterialConsumption = (
     gramsToConsume = totalUnits * gramsPerUnit;
   }
 
-  // EXECUTION vs PLANNING separation:
-  // - For completed_successfully: material was already consumed during printing,
-  //   we only need to deduct from inventory records (no availability check)
-  // - For planning/failed: we may need to check availability for future recovery
-  const isExecutionCompletion = log.result === 'completed' || 
-                                  log.result === 'completed_with_scrap';
+  // EXECUTION mode - material was already physically consumed during printing.
+  // This applies to ALL end-cycle results (completed, completed_with_scrap, failed)
+  // because we're recording what ALREADY happened, not planning future consumption.
+  // Availability check is only needed for PLANNING scenarios (not end-cycle logging).
+  const isExecutionMode = log.result === 'completed' || 
+                          log.result === 'completed_with_scrap' ||
+                          log.result === 'failed';
   
-  if (!skipAvailabilityCheck && !isExecutionCompletion) {
-    // Only check availability for non-completion scenarios (like planning validation)
+  // Skip availability check for execution mode - the material was already used
+  // Only check availability for planning validation scenarios
+  if (!skipAvailabilityCheck && !isExecutionMode) {
     const availability = checkMaterialAvailability(color, gramsToConsume);
     if (!availability.available) {
       return {
@@ -1225,7 +1227,7 @@ export const logCycleWithMaterialConsumption = (
 
   // Consume material (deduct from inventory records)
   // For execution: force consume even if insufficient (material was already physically used)
-  const materialResult = consumeMaterial(color, gramsToConsume, printerId, isExecutionCompletion);
+  const materialResult = consumeMaterial(color, gramsToConsume, printerId, isExecutionMode);
   if (!materialResult.success) {
     return {
       success: false,
