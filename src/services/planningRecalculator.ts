@@ -12,6 +12,7 @@ import {
 } from './storage';
 import { generatePlan } from './planningEngine';
 import { addPlanningLogEntry } from './planningLogger';
+import { pdebug } from './planningDebug';
 
 // Re-export the KEYS constant for internal use
 const setItem = <T>(key: string, value: T): void => {
@@ -38,6 +39,8 @@ export const recalculatePlan = (
   const cycles = getPlannedCycles();
   const settings = getFactorySettings();
   const printers = getActivePrinters();
+  
+  pdebug('Replan start', { scope, lockStarted, reason, cyclesCount: cycles.length, printersCount: printers.length });
   
   if (!settings || printers.length === 0) {
     const result: RecalculateResult = { 
@@ -85,21 +88,26 @@ export const recalculatePlan = (
   }
 
   // Determine which cycles to keep (completed, failed, or in-progress if locked)
-  const cyclesToKeep: PlannedCycle[] = cycles.filter(cycle => {
-    const cycleDate = new Date(cycle.startTime);
-    const isStarted = cycle.status === 'in_progress';
+  // CRITICAL: Never keep 'planned' cycles in from_now scope - they will be regenerated
+  // This prevents duplication when generatePlan creates new cycles
+  const cyclesToKeep: PlannedCycle[] = cycles.filter((cycle) => {
     const isCompleted = cycle.status === 'completed' || cycle.status === 'failed';
-
-    // Always keep completed/failed cycles
     if (isCompleted) return true;
 
-    // Keep in-progress if locked
-    if (lockStarted && isStarted) return true;
+    const isInProgress = cycle.status === 'in_progress';
+    if (lockStarted && isInProgress) return true;
 
-    // Keep cycles before start date
-    if (cycleDate < startDate) return true;
+    // ✅ CRITICAL: Never keep planned cycles in from_now - they will be regenerated
+    if (scope === 'from_now') return false;
 
+    // For whole_week scope, also don't keep planned (full regeneration)
     return false;
+  });
+
+  pdebug('Cycles kept', {
+    total: cyclesToKeep.length,
+    completed: cyclesToKeep.filter(c => c.status === 'completed' || c.status === 'failed').length,
+    inProgress: cyclesToKeep.filter(c => c.status === 'in_progress').length,
   });
 
   // Generate new plan using the planning engine
@@ -112,6 +120,13 @@ export const recalculatePlan = (
 
   // Merge kept cycles with new plan cycles
   const newCycles = [...cyclesToKeep, ...planResult.cycles];
+
+  pdebug('Replan result', {
+    keptCycles: cyclesToKeep.length,
+    newCycles: planResult.cycles.length,
+    totalCycles: newCycles.length,
+    success: planResult.success,
+  });
 
   // Log before saving for debugging
   console.log(`[planningRecalculator] Saving ${newCycles.length} cycles to origin: ${window.location.origin}`);

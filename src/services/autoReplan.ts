@@ -42,17 +42,19 @@ export const scheduleAutoReplan = (reason: string): void => {
   // Accumulate reasons (dedupe multiple triggers during debounce window)
   pendingReasons.add(reason);
 
-  // Clear existing timer if any
+  // ✅ CRITICAL: If timer already exists, just accumulate reasons - DON'T reset timer
+  // This prevents continuous timer resets when multiple triggers arrive
   if (debounceTimer) {
-    clearTimeout(debounceTimer);
+    console.log(`[AutoReplan] Reason added: ${reason}, pending: ${Array.from(pendingReasons).join(', ')}`);
+    return;
   }
 
-  // Schedule new replan
+  // Schedule new replan (only if no timer exists)
   debounceTimer = setTimeout(() => {
     executeAutoReplan();
   }, DEBOUNCE_MS);
 
-  console.log(`[AutoReplan] Scheduled replan in ${DEBOUNCE_MS}ms, reason: ${reason}, accumulated: ${pendingReasons.size}`);
+  console.log(`[AutoReplan] Scheduled replan in ${DEBOUNCE_MS}ms, reason: ${reason}`);
 };
 
 /**
@@ -164,4 +166,15 @@ export const cancelPendingAutoReplan = (): void => {
  */
 export const isAutoReplanPending = (): boolean => {
   return debounceTimer !== null || isReplanning;
+};
+
+/**
+ * Reset state for testing purposes only.
+ * @internal
+ */
+export const __resetAutoReplanForTests = (): void => {
+  pendingReasons.clear();
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = null;
+  isReplanning = false;
 };
