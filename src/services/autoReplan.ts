@@ -108,19 +108,29 @@ const executeAutoReplan = async (): Promise<void> => {
         duration: 3000,
       });
       console.log(`[AutoReplan] Success: ${result.summary}`);
+    } else if (result.cyclesModified > 0) {
+      // Partial success - some cycles created but with issues
+      // Don't show blocking toast, just log it
+      console.log(`[AutoReplan] Partial: ${result.summary} (${result.cyclesModified} cycles created)`);
     } else {
-      // Show warning toast with blocking info
-      toast.warning('התכנון נעצר – יש חסם', {
-        description: 'Planning blocked – constraints found',
-        duration: 5000,
-        action: {
-          label: 'פרטים',
-          onClick: () => {
-            // Navigate to planning page - will show the blocking issues
-            window.location.hash = '#planning-conflicts';
+      // True blocking - no cycles could be created
+      // Only show toast if there are actually projects to plan
+      const hasActiveProjects = result.summary.includes('No settings') || 
+                                result.summary.includes('No active printers') ||
+                                result.summary.includes('Planning failed');
+      
+      if (hasActiveProjects) {
+        toast.warning('התכנון נעצר – יש חסם', {
+          description: 'Planning blocked – constraints found',
+          duration: 5000,
+          action: {
+            label: 'פרטים',
+            onClick: () => {
+              window.location.hash = '#planning-conflicts';
+            },
           },
-        },
-      });
+        });
+      }
       console.log(`[AutoReplan] Blocked: ${result.summary}`);
     }
   } catch (error) {
