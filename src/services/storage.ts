@@ -960,6 +960,34 @@ export const addManualCycle = (cycle: PlannedCycle): PlannedCycle => {
   return cycle;
 };
 
+// Delete a planned cycle by ID
+export const deletePlannedCycle = (id: string): boolean => {
+  const cycles = getPlannedCycles();
+  const filteredCycles = cycles.filter(c => c.id !== id);
+  if (filteredCycles.length === cycles.length) {
+    return false; // No cycle was deleted
+  }
+  setItem(KEYS.PLANNED_CYCLES, filteredCycles);
+  return true;
+};
+
+// Mark in_progress cycles for a printer as failed (cleanup utility)
+export const markPrinterCyclesAsFailed = (printerId: string): number => {
+  const cycles = getPlannedCycles();
+  let count = 0;
+  const updatedCycles = cycles.map(c => {
+    if (c.printerId === printerId && c.status === 'in_progress') {
+      count++;
+      return { ...c, status: 'failed' as const };
+    }
+    return c;
+  });
+  if (count > 0) {
+    setItem(KEYS.PLANNED_CYCLES, updatedCycles);
+  }
+  return count;
+};
+
 // ============= CYCLE LOGS =============
 
 export const getCycleLogs = (): CycleLog[] => {

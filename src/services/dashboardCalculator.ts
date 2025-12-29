@@ -188,10 +188,13 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     }
   });
   
-  // Filter cycles for today
+  // Filter cycles for today - only show active cycles (planned or in_progress)
+  // Completed/failed/cancelled cycles should not appear in the dashboard
   const todayCycles = plannedCycles.filter(cycle => {
     const cycleDate = parseISO(cycle.startTime);
-    return isSameDay(cycleDate, targetDate);
+    const isToday = isSameDay(cycleDate, targetDate);
+    const isActiveStatus = cycle.status === 'planned' || cycle.status === 'in_progress';
+    return isToday && isActiveStatus;
   });
   
   // Build printer plans
