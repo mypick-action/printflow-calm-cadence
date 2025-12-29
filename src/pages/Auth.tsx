@@ -3,13 +3,31 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Loader2, Factory } from 'lucide-react';
+import { Loader2, Factory, Mail, Lock, User } from 'lucide-react';
+import { z } from 'zod';
+
+const emailSchema = z.string().email('כתובת מייל לא תקינה');
+const passwordSchema = z.string().min(6, 'הסיסמה חייבת להכיל לפחות 6 תווים');
 
 const Auth: React.FC = () => {
   const navigate = useNavigate();
-  const { user, loading: authLoading, signInWithGoogle } = useAuth();
+  const { user, loading: authLoading, signIn, signUp, signInWithGoogle } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(false);
+  
+  // Form fields
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [factoryName, setFactoryName] = useState('');
+  
+  // Errors
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [confirmError, setConfirmError] = useState('');
 
   // Redirect if already logged in
   useEffect(() => {
@@ -18,17 +36,77 @@ const Auth: React.FC = () => {
     }
   }, [user, authLoading, navigate]);
 
+  const validateForm = (): boolean => {
+    let valid = true;
+    setEmailError('');
+    setPasswordError('');
+    setConfirmError('');
+
+    const emailResult = emailSchema.safeParse(email);
+    if (!emailResult.success) {
+      setEmailError(emailResult.error.errors[0].message);
+      valid = false;
+    }
+
+    const passwordResult = passwordSchema.safeParse(password);
+    if (!passwordResult.success) {
+      setPasswordError(passwordResult.error.errors[0].message);
+      valid = false;
+    }
+
+    if (isSignUp && password !== confirmPassword) {
+      setConfirmError('הסיסמאות לא תואמות');
+      valid = false;
+    }
+
+    return valid;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!validateForm()) return;
+    
+    setLoading(true);
+
+    try {
+      if (isSignUp) {
+        const { error } = await signUp(email, password, factoryName || undefined);
+        if (error) {
+          if (error.message.includes('already registered')) {
+            toast.error('משתמש עם מייל זה כבר קיים');
+          } else {
+            toast.error('שגיאה בהרשמה: ' + error.message);
+          }
+        } else {
+          toast.success('נרשמת בהצלחה! מתחבר...');
+        }
+      } else {
+        const { error } = await signIn(email, password);
+        if (error) {
+          if (error.message.includes('Invalid login credentials')) {
+            toast.error('מייל או סיסמה שגויים');
+          } else {
+            toast.error('שגיאה בהתחברות: ' + error.message);
+          }
+        }
+      }
+    } catch (error) {
+      toast.error('שגיאה לא צפויה');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     setLoading(true);
     
     const { error } = await signInWithGoogle();
     
     if (error) {
-      console.error('Google sign in error:', error);
       toast.error('שגיאה בהתחברות עם גוגל: ' + error.message);
       setLoading(false);
     }
-    // Note: On success, the page will redirect to Google, so no need to reset loading
   };
 
   if (authLoading) {
@@ -53,16 +131,129 @@ const Auth: React.FC = () => {
 
         <Card variant="elevated" className="border-0 shadow-lg">
           <CardHeader className="text-center pb-4">
-            <CardTitle className="text-xl">ברוכים הבאים</CardTitle>
-            <CardDescription>התחבר עם חשבון גוגל כדי להתחיל</CardDescription>
+            <CardTitle className="text-xl">
+              {isSignUp ? 'יצירת חשבון חדש' : 'ברוכים הבאים'}
+            </CardTitle>
+            <CardDescription>
+              {isSignUp ? 'הזן את פרטיך כדי להירשם' : 'התחבר לחשבון שלך'}
+            </CardDescription>
           </CardHeader>
           
           <CardContent className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Factory Name - only for signup */}
+              {isSignUp && (
+                <div className="space-y-2">
+                  <Label htmlFor="factoryName" className="flex items-center gap-2">
+                    <User className="w-4 h-4" />
+                    שם המפעל (אופציונלי)
+                  </Label>
+                  <Input
+                    id="factoryName"
+                    type="text"
+                    placeholder="לדוגמה: המפעל שלי"
+                    value={factoryName}
+                    onChange={(e) => setFactoryName(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+              )}
+              
+              {/* Email */}
+              <div className="space-y-2">
+                <Label htmlFor="email" className="flex items-center gap-2">
+                  <Mail className="w-4 h-4" />
+                  אימייל
+                </Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="your@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                  className={emailError ? 'border-destructive' : ''}
+                />
+                {emailError && (
+                  <p className="text-sm text-destructive">{emailError}</p>
+                )}
+              </div>
+              
+              {/* Password */}
+              <div className="space-y-2">
+                <Label htmlFor="password" className="flex items-center gap-2">
+                  <Lock className="w-4 h-4" />
+                  סיסמה
+                </Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={loading}
+                  className={passwordError ? 'border-destructive' : ''}
+                />
+                {passwordError && (
+                  <p className="text-sm text-destructive">{passwordError}</p>
+                )}
+              </div>
+              
+              {/* Confirm Password - only for signup */}
+              {isSignUp && (
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword" className="flex items-center gap-2">
+                    <Lock className="w-4 h-4" />
+                    אישור סיסמה
+                  </Label>
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    placeholder="••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    disabled={loading}
+                    className={confirmError ? 'border-destructive' : ''}
+                  />
+                  {confirmError && (
+                    <p className="text-sm text-destructive">{confirmError}</p>
+                  )}
+                </div>
+              )}
+              
+              <Button 
+                type="submit"
+                className="w-full h-12 text-base"
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin ml-2" />
+                    {isSignUp ? 'נרשם...' : 'מתחבר...'}
+                  </>
+                ) : (
+                  isSignUp ? 'הירשם' : 'התחבר'
+                )}
+              </Button>
+            </form>
+
+            {/* Divider */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">או</span>
+              </div>
+            </div>
+
+            {/* Google Button */}
             <Button 
               onClick={handleGoogleSignIn} 
               className="w-full h-12 gap-3 text-base"
               variant="outline"
               disabled={loading}
+              type="button"
             >
               {loading ? (
                 <>
@@ -94,8 +285,33 @@ const Auth: React.FC = () => {
               )}
             </Button>
             
-            <div className="text-center text-sm text-muted-foreground pt-2">
-              <p>התחברות מאובטחת באמצעות חשבון Google שלך</p>
+            {/* Toggle signup/signin */}
+            <div className="text-center text-sm pt-2">
+              {isSignUp ? (
+                <p className="text-muted-foreground">
+                  כבר יש לך חשבון?{' '}
+                  <button 
+                    type="button"
+                    onClick={() => setIsSignUp(false)}
+                    className="text-primary hover:underline font-medium"
+                    disabled={loading}
+                  >
+                    התחבר
+                  </button>
+                </p>
+              ) : (
+                <p className="text-muted-foreground">
+                  עוד אין לך חשבון?{' '}
+                  <button 
+                    type="button"
+                    onClick={() => setIsSignUp(true)}
+                    className="text-primary hover:underline font-medium"
+                    disabled={loading}
+                  >
+                    הירשם עכשיו
+                  </button>
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
