@@ -18,12 +18,8 @@ import { WeeklyPlanningPage } from '@/components/weekly/WeeklyPlanningPage';
 import { OperationalDashboard } from '@/components/weekly/OperationalDashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Construction, Loader2 } from 'lucide-react';
-import { checkWorkspaceHasData } from '@/services/cloudStorage';
-import { 
-  saveFactorySettings,
-  completeOnboarding,
-  isOnboardingComplete,
-} from '@/services/storage';
+import { isOnboardingCompleteCloud, saveOnboardingToCloud } from '@/services/cloudStorage';
+import { toast } from 'sonner';
 
 const PrintFlowApp: React.FC = () => {
   const navigate = useNavigate();
@@ -31,7 +27,6 @@ const PrintFlowApp: React.FC = () => {
   const { language } = useLanguage();
   
   const [checkingData, setCheckingData] = useState(true);
-  const [hasWorkspaceData, setHasWorkspaceData] = useState(false);
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [factoryData, setFactoryData] = useState<OnboardingData | null>(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -46,57 +41,55 @@ const PrintFlowApp: React.FC = () => {
     }
   }, [user, authLoading, navigate]);
 
-  // Check if workspace has data (to determine if onboarding is needed)
+  // Check if onboarding is complete (has printers in cloud)
   useEffect(() => {
-    const checkData = async () => {
+    const checkOnboarding = async () => {
       if (!user || !workspaceId) {
         setCheckingData(false);
         return;
       }
       
       try {
-        const hasData = await checkWorkspaceHasData();
-        setHasWorkspaceData(hasData);
-        
-        // Also check localStorage for legacy onboarding
-        const localOnboarding = isOnboardingComplete();
-        setOnboardingDone(hasData || localOnboarding);
+        const isComplete = await isOnboardingCompleteCloud();
+        setOnboardingDone(isComplete);
       } catch (error) {
-        console.error('Error checking workspace data:', error);
+        console.error('Error checking onboarding status:', error);
       }
       
       setCheckingData(false);
     };
     
-    if (!authLoading && user) {
-      checkData();
+    if (!authLoading && user && workspaceId) {
+      checkOnboarding();
     }
   }, [user, workspaceId, authLoading]);
   
-  const handleOnboardingComplete = (data: OnboardingData) => {
+  const handleOnboardingComplete = async (data: OnboardingData) => {
     setFactoryData(data);
-    setOnboardingDone(true);
     
-    // Save to localStorage for now (will migrate to cloud later)
-    saveFactorySettings(
-      {
-        printerCount: data.printerCount,
-        weeklySchedule: data.weeklySchedule,
-        afterHoursBehavior: data.afterHoursBehavior,
-        colors: data.colors,
-        standardSpoolWeight: data.spoolWeight,
-        deliveryDays: data.deliveryDays,
-        transitionMinutes: 10,
-        priorityRules: {
-          urgentDaysThreshold: 14,
-          criticalDaysThreshold: 7,
-        },
-        hasAMS: data.hasAMS,
-      },
-      data.printerNames,
-      data.printerAMSConfigs
-    );
-    completeOnboarding();
+    // Convert WeeklySchedule to plain object for cloud storage
+    const weeklyScheduleObj = JSON.parse(JSON.stringify(data.weeklySchedule));
+    
+    // Save to cloud
+    const success = await saveOnboardingToCloud({
+      weeklySchedule: weeklyScheduleObj,
+      afterHoursBehavior: data.afterHoursBehavior,
+      transitionMinutes: 10,
+      printers: data.printerNames.map((name, index) => ({
+        name,
+        hasAMS: data.printerAMSConfigs[index]?.hasAMS || false,
+        amsSlots: data.printerAMSConfigs[index]?.amsSlots,
+        amsBackupMode: data.printerAMSConfigs[index]?.amsModes?.backupSameColor,
+        amsMultiColor: data.printerAMSConfigs[index]?.amsModes?.multiColor,
+      })),
+    });
+    
+    if (success) {
+      toast.success(language === 'he' ? 'ההגדרות נשמרו בהצלחה!' : 'Settings saved successfully!');
+      setOnboardingDone(true);
+    } else {
+      toast.error(language === 'he' ? 'שגיאה בשמירת ההגדרות' : 'Error saving settings');
+    }
   };
 
   // Show loading while checking auth
@@ -105,7 +98,7 @@ const PrintFlowApp: React.FC = () => {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <p className="text-muted-foreground">טוען...</p>
+          <p className="text-muted-foreground">{language === 'he' ? 'טוען...' : 'Loading...'}</p>
         </div>
       </div>
     );
@@ -116,7 +109,7 @@ const PrintFlowApp: React.FC = () => {
     return null;
   }
   
-  // Show onboarding if workspace has no data
+  // Show onboarding if not complete
   if (!onboardingDone) {
     return <OnboardingWizard onComplete={handleOnboardingComplete} />;
   }
