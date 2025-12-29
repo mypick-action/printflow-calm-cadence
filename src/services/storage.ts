@@ -155,6 +155,7 @@ export interface PlannedCycle {
   locked?: boolean; // If true, this cycle cannot be moved/deleted by replanning
   actualStartTime?: string; // When the print actually started
   actualEndTime?: string; // When the print actually ended
+  spoolStartGrams?: number; // Grams on spool when cycle started (for material tracking)
 }
 
 // Load recommendation for operators
