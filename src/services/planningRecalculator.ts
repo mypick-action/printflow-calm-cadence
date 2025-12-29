@@ -20,22 +20,33 @@ const setItem = <T>(key: string, value: T): void => {
 
 export type RecalculateScope = 'from_now' | 'from_tomorrow' | 'whole_week';
 
+export interface RecalculateResult {
+  success: boolean;
+  cyclesModified: number;
+  summary: string;
+  summaryHe: string;
+  blockingIssuesCount: number;
+  warningsCount: number;
+}
+
 export const recalculatePlan = (
   scope: RecalculateScope,
   lockStarted: boolean = true,
   reason: string = 'manual_replan'
-): { success: boolean; cyclesModified: number; summary: string; summaryHe: string } => {
+): RecalculateResult => {
   const startTime = Date.now();
   const cycles = getPlannedCycles();
   const settings = getFactorySettings();
   const printers = getActivePrinters();
   
   if (!settings || printers.length === 0) {
-    const result = { 
+    const result: RecalculateResult = { 
       success: false, 
       cyclesModified: 0, 
       summary: 'No settings or printers available',
-      summaryHe: 'חסרות הגדרות או מדפסות'
+      summaryHe: 'חסרות הגדרות או מדפסות',
+      blockingIssuesCount: 1,
+      warningsCount: 0,
     };
     
     // Log this attempt
@@ -150,6 +161,8 @@ export const recalculatePlan = (
     cyclesModified,
     summary,
     summaryHe,
+    blockingIssuesCount: planResult.blockingIssues.length,
+    warningsCount: planResult.warnings.length,
   };
 };
 
