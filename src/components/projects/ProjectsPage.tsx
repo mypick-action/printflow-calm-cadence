@@ -350,6 +350,14 @@ export const ProjectsPage: React.FC = () => {
   // Filtered projects based on status, priority, and material shortage
   const filteredProjects = useMemo(() => {
     return projects.filter(project => {
+      // Material shortage filter - when active, show ALL projects with shortage (ignore status filter)
+      if (materialShortageFilter) {
+        const materialStatus = projectMaterialStatuses.get(project.id);
+        // Show project if it has material shortage (partial or none), skip completed
+        if (project.status === 'completed') return false;
+        return materialStatus && materialStatus.status !== 'full';
+      }
+      
       // Status filter (primary)
       const statusMatch = statusFilters[project.status];
       if (!statusMatch) return false;
@@ -357,14 +365,6 @@ export const ProjectsPage: React.FC = () => {
       // Priority filter (secondary)
       if (priorityFilter !== 'all' && project.urgency !== priorityFilter) {
         return false;
-      }
-      
-      // Material shortage filter
-      if (materialShortageFilter) {
-        const materialStatus = projectMaterialStatuses.get(project.id);
-        if (!materialStatus || materialStatus.status === 'full') {
-          return false;
-        }
       }
       
       return true;
