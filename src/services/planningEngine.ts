@@ -2,6 +2,13 @@
 // Deterministic rules-based scheduler for PrintFlow
 // NO AI, NO LLM, NO Cloud - Pure local constraint-based logic
 
+// Debug flag for planning start times
+const DEBUG_PLANNING_START = true;
+function dbgStart(...args: any[]) {
+  if (!DEBUG_PLANNING_START) return;
+  console.log('[PlanningStart]', ...args);
+}
+
 import {
   Project,
   Printer,
@@ -357,7 +364,8 @@ const scheduleCyclesForDay = (
   materialTracker: Map<string, number>,
   existingCycles: PlannedCycle[],
   spoolAssignmentTracker: Map<string, Set<string>>, // tracks which spools are assigned to which printers
-  allowCrossMidnight: boolean = false // NEW: allow cycles to cross midnight
+  allowCrossMidnight: boolean = false, // allow cycles to cross midnight
+  planningStartTime?: Date // NEW: When replanning starts (from recalculatePlan)
 ): { dayPlan: DayPlan; updatedProjectStates: ProjectPlanningState[]; updatedMaterialTracker: Map<string, number>; updatedSpoolAssignments: Map<string, Set<string>> } => {
   const dayStart = createDateWithTime(date, schedule.startTime);
   let dayEnd = createDateWithTime(date, schedule.endTime);
@@ -374,32 +382,80 @@ const scheduleCyclesForDay = (
   
   const dateString = formatDateString(date);
   
-  // Initialize printer time slots
-  const printerSlots: PrinterTimeSlot[] = printers.map(p => ({
-    printerId: p.id,
-    printerName: p.name,
-    currentTime: new Date(dayStart),
-    endOfDayTime: new Date(dayEnd),
-    cyclesScheduled: [],
-  }));
-  
-  // Check for existing in-progress or locked cycles for this day
-  const existingDayCycles = existingCycles.filter(c => {
-    const cycleDate = new Date(c.startTime);
-    return formatDateString(cycleDate) === dateString && 
-           (c.status === 'in_progress' || c.status === 'completed');
+  dbgStart('Day init', {
+    dateString,
+    dayStart: dayStart.toISOString(),
+    dayEnd: dayEnd.toISOString(),
+    planningStartTime: planningStartTime?.toISOString() ?? null,
   });
   
-  // Adjust printer slots for existing cycles
-  for (const existingCycle of existingDayCycles) {
-    const slot = printerSlots.find(s => s.printerId === existingCycle.printerId);
-    if (slot) {
-      const cycleEnd = new Date(existingCycle.endTime);
-      if (cycleEnd > slot.currentTime) {
-        slot.currentTime = addHours(cycleEnd, settings.transitionMinutes / 60);
-      }
+  // ============= SAFE FIX: Calculate effective start time =============
+  // If planningStartTime is provided and it's today, use max(dayStart, planningStartTime)
+  // This prevents scheduling cycles in the past when replanning mid-day
+  const isSameDay = planningStartTime && 
+    formatDateString(planningStartTime) === dateString;
+  const effectiveStart = isSameDay && planningStartTime
+    ? new Date(Math.max(dayStart.getTime(), planningStartTime.getTime()))
+    : new Date(dayStart);
+  
+  dbgStart('EffectiveStart', {
+    dateString,
+    isSameDay: Boolean(isSameDay),
+    effectiveStart: effectiveStart.toISOString(),
+  });
+  
+  // Find locked cycles (completed/in_progress) for this day
+  const lockedCyclesForDay = existingCycles.filter(c => {
+    const cycleDate = formatDateString(new Date(c.startTime));
+    if (cycleDate !== dateString) return false;
+    return c.status === 'in_progress' || c.status === 'completed';
+  });
+  
+  // Compute latest locked end per printer (busyUntil)
+  const busyUntilByPrinter = new Map<string, Date>();
+  for (const c of lockedCyclesForDay) {
+    const pid = c.printerId;
+    const end = new Date(c.endTime);
+    const prev = busyUntilByPrinter.get(pid);
+    if (!prev || end.getTime() > prev.getTime()) {
+      busyUntilByPrinter.set(pid, end);
     }
   }
+  
+  dbgStart('BusyUntilByPrinter', Array.from(busyUntilByPrinter.entries()).map(([pid, dt]) => ({
+    printerId: pid,
+    busyUntil: dt.toISOString(),
+  })));
+  
+  const transitionMs = (settings.transitionMinutes ?? 0) * 60_000;
+  
+  // Initialize printer time slots with correct start time
+  // Each printer starts at max(effectiveStart, busyUntil + transition)
+  const printerSlots: PrinterTimeSlot[] = printers.map(p => {
+    const busyUntil = busyUntilByPrinter.get(p.id);
+    const startFromBusy = busyUntil 
+      ? new Date(busyUntil.getTime() + transitionMs) 
+      : null;
+    
+    // Use the later of: effectiveStart OR when printer becomes free
+    const startTime = startFromBusy && startFromBusy.getTime() > effectiveStart.getTime()
+      ? startFromBusy
+      : effectiveStart;
+    
+    return {
+      printerId: p.id,
+      printerName: p.name,
+      currentTime: new Date(startTime),
+      endOfDayTime: new Date(dayEnd),
+      cyclesScheduled: [],
+    };
+  });
+  
+  dbgStart('SlotsStartTimes', printerSlots.map(s => ({
+    printer: s.printerName,
+    printerId: s.printerId,
+    slotStart: s.currentTime.toISOString(),
+  })));
   
   // Clone project states for modification
   let workingStates = projectStates.map(s => ({ ...s }));
@@ -804,6 +860,7 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     
     // Schedule cycles for this day
     // Pass spool assignment tracker to enforce 1 spool = 1 printer rule
+    // Pass startDate as planningStartTime to prevent scheduling in the past
     const { dayPlan, updatedProjectStates, updatedMaterialTracker, updatedSpoolAssignments } = scheduleCyclesForDay(
       planDate,
       schedule,
@@ -812,7 +869,9 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
       settings,
       workingMaterialTracker,
       existingCycles,
-      workingSpoolAssignments
+      workingSpoolAssignments,
+      false,      // allowCrossMidnight
+      startDate   // planningStartTime - prevents scheduling before this time
     );
     
     days.push(dayPlan);
