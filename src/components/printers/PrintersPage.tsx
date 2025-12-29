@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,10 +44,20 @@ import { LoadRecommendationsPanel } from '@/components/planning/LoadRecommendati
 import { format } from 'date-fns';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { cn } from '@/lib/utils';
+
+// Cloud storage for persistence
+import { 
+  getPrinters as getCloudPrinters,
+  createPrinter as createCloudPrinter,
+  updatePrinter as updateCloudPrinter,
+  DbPrinter,
+} from '@/services/cloudStorage';
+import { hydrateLocalFromCloud } from '@/services/cloudBridge';
+
+// Local storage for legacy compatibility (spools, cycles, settings)
 import { 
   getPrinters, 
   updatePrinter,
-  createPrinter,
   getSpools,
   updateSpool,
   getPlannedCycles,
@@ -64,6 +75,7 @@ import { notifyInventoryChanged } from '@/services/inventoryEvents';
 
 export const PrintersPage: React.FC = () => {
   const { language } = useLanguage();
+  const { workspaceId } = useAuth();
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [spools, setSpools] = useState<Spool[]>([]);
   const [editingPrinter, setEditingPrinter] = useState<Printer | null>(null);
@@ -101,9 +113,10 @@ export const PrintersPage: React.FC = () => {
 
   useEffect(() => {
     refreshData();
-  }, []);
+  }, [workspaceId]);
 
-  const refreshData = () => {
+  const refreshData = async () => {
+    // Refresh from localStorage (for legacy compatibility with engines)
     setPrinters(getPrinters());
     setSpools(getSpools());
     const settings = getFactorySettings();
@@ -117,10 +130,27 @@ export const PrintersPage: React.FC = () => {
     setSheetOpen(true);
   };
 
-  const handleSavePrinter = () => {
-    if (!editingPrinter) return;
+  const handleSavePrinter = async () => {
+    if (!editingPrinter || !workspaceId) return;
     
+    // Update in cloud
+    await updateCloudPrinter(editingPrinter.id, {
+      name: editingPrinter.name,
+      status: editingPrinter.status,
+      has_ams: editingPrinter.hasAMS,
+      ams_slots: editingPrinter.amsSlots ?? null,
+      ams_backup_mode: editingPrinter.amsModes?.backupSameColor ?? editingPrinter.amsMode === 'backup_same_color',
+      ams_multi_color: editingPrinter.amsModes?.multiColor ?? editingPrinter.amsMode === 'multi_color',
+      mounted_spool_id: editingPrinter.mountedSpoolId ?? null,
+      notes: (editingPrinter as any).notes ?? null,
+    });
+    
+    // Also update local storage for spools/slot states (which aren't in cloud schema)
     updatePrinter(editingPrinter.id, editingPrinter);
+    
+    // Sync localStorage from cloud
+    await hydrateLocalFromCloud(workspaceId, { force: true });
+    
     refreshData();
     setSheetOpen(false);
     setEditingPrinter(null);
@@ -144,7 +174,16 @@ export const PrintersPage: React.FC = () => {
     setAddDialogOpen(true);
   };
 
-  const handleAddPrinter = () => {
+  const handleAddPrinter = async () => {
+    if (!workspaceId) {
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: language === 'he' ? 'לא נמצא מזהה workspace' : 'Workspace ID not found',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const count = Math.max(1, Math.min(20, newPrinter.count)); // Limit 1-20
     const addedPrinters: string[] = [];
     
@@ -155,17 +194,23 @@ export const PrintersPage: React.FC = () => {
         ? newPrinter.name
         : (language === 'he' ? `מדפסת ${printerNum}` : `Printer ${printerNum}`);
       
-      const printer = createPrinter({
-        printerNumber: printerNum,
+      // Save to cloud (Supabase)
+      const cloudPrinter = await createCloudPrinter(workspaceId, {
         name: printerName,
-        active: true,
         status: 'active',
-        hasAMS: newPrinter.hasAMS,
-        amsSlots: newPrinter.hasAMS ? newPrinter.amsSlots : undefined,
-        amsMode: newPrinter.hasAMS ? newPrinter.amsMode : undefined,
+        has_ams: newPrinter.hasAMS,
+        ams_slots: newPrinter.hasAMS ? newPrinter.amsSlots : null,
+        ams_backup_mode: newPrinter.hasAMS && newPrinter.amsMode === 'backup_same_color',
+        ams_multi_color: newPrinter.hasAMS && newPrinter.amsMode === 'multi_color',
       });
-      addedPrinters.push(printer.name);
+      
+      if (cloudPrinter) {
+        addedPrinters.push(cloudPrinter.name);
+      }
     }
+    
+    // Sync localStorage from cloud to keep engines in sync
+    await hydrateLocalFromCloud(workspaceId, { force: true });
     
     // Mark capacity as changed
     markCapacityChanged(language === 'he' 
@@ -177,10 +222,10 @@ export const PrintersPage: React.FC = () => {
     
     toast({
       title: language === 'he' 
-        ? (count > 1 ? `${count} מדפסות נוספו` : 'מדפסת נוספה')
-        : (count > 1 ? `${count} printers added` : 'Printer added'),
-      description: count > 1 
-        ? addedPrinters.slice(0, 3).join(', ') + (count > 3 ? '...' : '')
+        ? (addedPrinters.length > 1 ? `${addedPrinters.length} מדפסות נוספו` : 'מדפסת נוספה')
+        : (addedPrinters.length > 1 ? `${addedPrinters.length} printers added` : 'Printer added'),
+      description: addedPrinters.length > 1 
+        ? addedPrinters.slice(0, 3).join(', ') + (addedPrinters.length > 3 ? '...' : '')
         : addedPrinters[0],
     });
   };
@@ -203,10 +248,15 @@ export const PrintersPage: React.FC = () => {
     }
   };
 
-  const handleConfirmDisable = (reassignCycles: boolean) => {
-    if (!printerToDisable) return;
+  const handleConfirmDisable = async (reassignCycles: boolean) => {
+    if (!printerToDisable || !workspaceId) return;
     
-    // Disable the printer
+    // Disable the printer in cloud
+    await updateCloudPrinter(printerToDisable.id, {
+      status: 'out_of_service',
+    });
+    
+    // Also update local storage with additional fields
     updatePrinter(printerToDisable.id, {
       status: 'out_of_service',
       active: false,
@@ -236,6 +286,9 @@ export const PrintersPage: React.FC = () => {
       });
     }
     
+    // Sync localStorage from cloud
+    await hydrateLocalFromCloud(workspaceId, { force: true });
+    
     // Mark capacity as changed
     markCapacityChanged(language === 'he' ? 'מדפסת הושבתה' : 'Printer disabled');
     
@@ -251,7 +304,15 @@ export const PrintersPage: React.FC = () => {
     });
   };
 
-  const handleReactivatePrinter = (printer: Printer) => {
+  const handleReactivatePrinter = async (printer: Printer) => {
+    if (!workspaceId) return;
+    
+    // Update in cloud
+    await updateCloudPrinter(printer.id, {
+      status: 'active',
+    });
+    
+    // Also update local storage with additional fields
     updatePrinter(printer.id, {
       status: 'active',
       active: true,
@@ -259,6 +320,9 @@ export const PrintersPage: React.FC = () => {
       disabledAt: undefined,
       expectedReturnDate: undefined,
     });
+    
+    // Sync localStorage from cloud
+    await hydrateLocalFromCloud(workspaceId, { force: true });
     
     // Mark capacity as changed
     markCapacityChanged(language === 'he' ? 'מדפסת הופעלה מחדש' : 'Printer reactivated');
