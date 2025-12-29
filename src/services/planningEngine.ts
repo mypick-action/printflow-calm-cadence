@@ -428,7 +428,8 @@ const scheduleCyclesForDay = (
         for (const state of workingStates) {
           if (state.remainingUnits <= 0) continue;
           
-          const cycleHours = state.preset.cycleHours;
+          // Use custom cycle hours if set (for recovery projects), otherwise use preset default
+          const cycleHours = state.project.customCycleHours ?? state.preset.cycleHours;
           const transitionMinutes = settings.transitionMinutes;
           const cycleEndTime = addHours(slot.currentTime, cycleHours);
           

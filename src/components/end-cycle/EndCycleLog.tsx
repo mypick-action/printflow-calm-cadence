@@ -263,6 +263,9 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
           status: 'pending',
           color: project.color,
           parentProjectId: project.id,
+          // Recovery-specific: use the estimated print hours from Recovery Input
+          customCycleHours: recoveryInputData?.estimatedPrintHours,
+          isRecoveryProject: true,
         });
         createdProjectId = newProject?.id;
       }

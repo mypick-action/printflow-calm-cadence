@@ -45,6 +45,9 @@ export interface Project {
   color: string;
   createdAt: string;
   parentProjectId?: string; // Link to original project for remake/completion projects
+  // Recovery project fields
+  customCycleHours?: number; // Override cycle hours (from Recovery Input estimatedPrintHours)
+  isRecoveryProject?: boolean; // True if this is a recovery/remake project
 }
 
 export interface AMSModes {
@@ -1137,6 +1140,9 @@ export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): LogCycleWithR
           urgencyManualOverride: false,
           status: 'pending',
           color: project.color,
+          isRecoveryProject: true, // Mark as recovery project
+          // Note: customCycleHours not set here - will use preset default
+          // Manual EndCycleLog flow sets customCycleHours from user input
         });
       }
     }
