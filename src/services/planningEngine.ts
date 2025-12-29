@@ -433,11 +433,20 @@ const scheduleCyclesForDay = (
           const transitionMinutes = settings.transitionMinutes;
           const cycleEndTime = addHours(slot.currentTime, cycleHours);
           
-          // ============= RULE B: Operating hours control START time only =============
-          // A cycle can START during operating hours and RUN past closing time (unattended)
-          // Only check if the START time is within operating hours, not the end time
-          // This maximizes printer utilization without requiring human presence overnight
-          if (slot.currentTime >= slot.endOfDayTime) continue; // Can't start new cycle after hours
+          // ============= RULE B: Night scheduling with 3-level control =============
+          // Level 1: Factory - afterHoursBehavior === 'FULL_AUTOMATION' enables night work
+          // Level 2: Printer - canStartNewCyclesAfterHours allows this specific printer to start new cycles
+          // Level 3: Preset - allowedForNightCycle allows this specific job type at night (safe vs risky)
+          // 
+          // A cycle can always START during operating hours and RUN past closing time
+          // Starting NEW cycles after hours requires all 3 conditions to be true
+          const printer = printers.find(p => p.id === slot.printerId);
+          const canStartAtNight = 
+            settings.afterHoursBehavior === 'FULL_AUTOMATION' &&
+            printer?.canStartNewCyclesAfterHours === true &&
+            state.preset.allowedForNightCycle !== false; // Default true if not explicitly set to false
+          
+          if (slot.currentTime >= slot.endOfDayTime && !canStartAtNight) continue;
           
           // Calculate material needs
           const gramsNeeded = getGramsPerCycle(state.product, state.preset);
