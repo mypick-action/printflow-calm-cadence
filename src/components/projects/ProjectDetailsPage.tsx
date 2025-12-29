@@ -332,7 +332,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {/* Total Quantity */}
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">
@@ -347,6 +347,16 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
                 {language === 'he' ? 'הופק' : 'Produced'}
               </p>
               <p className="text-2xl font-bold text-success">{project.quantityGood}</p>
+            </div>
+
+            {/* Scrap/Failed - Always visible */}
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">
+                {language === 'he' ? 'נפלים' : 'Failed'}
+              </p>
+              <p className={`text-2xl font-bold ${project.quantityScrap > 0 ? 'text-warning' : 'text-muted-foreground'}`}>
+                {project.quantityScrap}
+              </p>
             </div>
 
             {/* Remaining */}
@@ -403,15 +413,6 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
             <Progress value={progressPercent} className="h-3" />
           </div>
 
-          {/* Scrap Info */}
-          {project.quantityScrap > 0 && (
-            <div className="flex items-center gap-2 p-2 bg-warning/10 rounded-lg">
-              <AlertTriangle className="w-4 h-4 text-warning" />
-              <span className="text-sm text-warning">
-                {language === 'he' ? 'פסולת:' : 'Scrap:'} {project.quantityScrap} {language === 'he' ? 'יחידות' : 'units'}
-              </span>
-            </div>
-          )}
         </CardContent>
       </Card>
 
