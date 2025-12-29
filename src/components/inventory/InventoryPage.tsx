@@ -29,6 +29,7 @@ import {
   adjustClosedCount,
   setOpenTotalGrams,
   adjustOpenTotalGrams,
+  renameColorInventoryItem,
   getFactorySettings,
   ColorInventoryItem,
   getTotalGrams,
@@ -56,6 +57,11 @@ export const InventoryPage: React.FC = () => {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ColorInventoryItem | null>(null);
   const [editOpenGrams, setEditOpenGrams] = useState(0);
+  
+  // Color rename dialog
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renamingItem, setRenamingItem] = useState<ColorInventoryItem | null>(null);
+  const [newColorName, setNewColorName] = useState('');
 
   useEffect(() => {
     refreshData();
@@ -168,6 +174,23 @@ export const InventoryPage: React.FC = () => {
     setEditingItem(null);
     toast({
       title: language === 'he' ? 'מלאי עודכן' : 'Inventory updated',
+    });
+  };
+
+  const handleOpenRenameDialog = (item: ColorInventoryItem) => {
+    setRenamingItem(item);
+    setNewColorName(item.color);
+    setRenameDialogOpen(true);
+  };
+
+  const handleSaveColorName = () => {
+    if (!renamingItem || !newColorName.trim()) return;
+    renameColorInventoryItem(renamingItem.color, renamingItem.material, newColorName);
+    refreshData();
+    setRenameDialogOpen(false);
+    setRenamingItem(null);
+    toast({
+      title: language === 'he' ? 'שם הצבע עודכן' : 'Color name updated',
     });
   };
 
@@ -404,7 +427,17 @@ export const InventoryPage: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <SpoolIcon color={getSpoolColor(item.color)} size={24} />
                     <div>
-                      <CardTitle className="text-base">{item.color}</CardTitle>
+                      <div className="flex items-center gap-1">
+                        <CardTitle className="text-base">{item.color}</CardTitle>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-6 w-6"
+                          onClick={() => handleOpenRenameDialog(item)}
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </Button>
+                      </div>
                       <p className="text-xs text-muted-foreground">{item.material}</p>
                     </div>
                   </div>
@@ -542,6 +575,43 @@ export const InventoryPage: React.FC = () => {
               {language === 'he' ? 'ביטול' : 'Cancel'}
             </Button>
             <Button onClick={handleSaveOpenGrams}>
+              {language === 'he' ? 'שמור' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Color Dialog */}
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {language === 'he' ? 'שנה שם צבע' : 'Rename Color'}
+            </DialogTitle>
+          </DialogHeader>
+          {renamingItem && (
+            <div className="space-y-4 py-4">
+              <div className="flex items-center gap-2 mb-4">
+                <SpoolIcon color={getSpoolColor(renamingItem.color)} size={24} />
+                <span className="font-medium">{renamingItem.material}</span>
+              </div>
+              <div className="space-y-2">
+                <Label>
+                  {language === 'he' ? 'שם הצבע' : 'Color name'}
+                </Label>
+                <Input
+                  value={newColorName}
+                  onChange={(e) => setNewColorName(e.target.value)}
+                  placeholder={language === 'he' ? 'הזן שם צבע' : 'Enter color name'}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameDialogOpen(false)}>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </Button>
+            <Button onClick={handleSaveColorName} disabled={!newColorName.trim()}>
               {language === 'he' ? 'שמור' : 'Save'}
             </Button>
           </DialogFooter>

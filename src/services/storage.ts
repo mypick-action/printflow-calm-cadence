@@ -1848,6 +1848,35 @@ export const adjustOpenTotalGrams = (color: string, material: string, delta: num
 };
 
 /**
+ * Rename the color of an inventory item
+ */
+export const renameColorInventoryItem = (oldColor: string, material: string, newColor: string): ColorInventoryItem | undefined => {
+  if (!newColor.trim()) return undefined;
+  
+  const items = getColorInventory();
+  const oldColorKey = normalizeColor(oldColor);
+  const index = items.findIndex(i => 
+    normalizeColor(i.color) === oldColorKey && 
+    i.material.toLowerCase() === material.toLowerCase()
+  );
+  
+  if (index >= 0) {
+    items[index] = {
+      ...items[index],
+      color: newColor.trim(),
+      id: `${items[index].material}:${newColor.trim()}`,
+      updatedAt: new Date().toISOString(),
+    };
+    setItem(KEYS.COLOR_INVENTORY, items);
+    scheduleAutoReplan('inventory_updated');
+    notifyInventoryChanged();
+    return items[index];
+  }
+  
+  return undefined;
+};
+
+/**
  * Open a new closed spool - decrements closed count, adds to open grams
  * @param sizeGrams - optional size override (defaults to item's closedSpoolSizeGrams)
  */
