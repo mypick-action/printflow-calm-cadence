@@ -74,6 +74,7 @@ export const PrintersPage: React.FC = () => {
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newPrinter, setNewPrinter] = useState({
     printerNumber: 1,
+    count: 1, // Number of printers to add
     name: '',
     hasAMS: false,
     amsSlots: 4,
@@ -134,7 +135,8 @@ export const PrintersPage: React.FC = () => {
     const nextNumber = getNextPrinterNumber();
     setNewPrinter({
       printerNumber: nextNumber,
-      name: language === 'he' ? `מדפסת ${nextNumber}` : `Printer ${nextNumber}`,
+      count: 1,
+      name: '',
       hasAMS: false,
       amsSlots: 4,
       amsMode: 'backup_same_color',
@@ -143,25 +145,43 @@ export const PrintersPage: React.FC = () => {
   };
 
   const handleAddPrinter = () => {
-    const printer = createPrinter({
-      printerNumber: newPrinter.printerNumber,
-      name: newPrinter.name || (language === 'he' ? `מדפסת ${newPrinter.printerNumber}` : `Printer ${newPrinter.printerNumber}`),
-      active: true,
-      status: 'active',
-      hasAMS: newPrinter.hasAMS,
-      amsSlots: newPrinter.hasAMS ? newPrinter.amsSlots : undefined,
-      amsMode: newPrinter.hasAMS ? newPrinter.amsMode : undefined,
-    });
+    const count = Math.max(1, Math.min(20, newPrinter.count)); // Limit 1-20
+    const addedPrinters: string[] = [];
+    
+    for (let i = 0; i < count; i++) {
+      const printerNum = newPrinter.printerNumber + i;
+      // If count > 1, always use auto-generated names; if count === 1 and user provided a name, use it
+      const printerName = count === 1 && newPrinter.name
+        ? newPrinter.name
+        : (language === 'he' ? `מדפסת ${printerNum}` : `Printer ${printerNum}`);
+      
+      const printer = createPrinter({
+        printerNumber: printerNum,
+        name: printerName,
+        active: true,
+        status: 'active',
+        hasAMS: newPrinter.hasAMS,
+        amsSlots: newPrinter.hasAMS ? newPrinter.amsSlots : undefined,
+        amsMode: newPrinter.hasAMS ? newPrinter.amsMode : undefined,
+      });
+      addedPrinters.push(printer.name);
+    }
     
     // Mark capacity as changed
-    markCapacityChanged(language === 'he' ? 'נוספה מדפסת חדשה' : 'New printer added');
+    markCapacityChanged(language === 'he' 
+      ? (count > 1 ? `נוספו ${count} מדפסות חדשות` : 'נוספה מדפסת חדשה')
+      : (count > 1 ? `${count} new printers added` : 'New printer added'));
     
     refreshData();
     setAddDialogOpen(false);
     
     toast({
-      title: language === 'he' ? 'מדפסת נוספה' : 'Printer added',
-      description: printer.name,
+      title: language === 'he' 
+        ? (count > 1 ? `${count} מדפסות נוספו` : 'מדפסת נוספה')
+        : (count > 1 ? `${count} printers added` : 'Printer added'),
+      description: count > 1 
+        ? addedPrinters.slice(0, 3).join(', ') + (count > 3 ? '...' : '')
+        : addedPrinters[0],
     });
   };
 
@@ -724,7 +744,17 @@ export const PrintersPage: React.FC = () => {
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>{language === 'he' ? 'מספר מדפסת' : 'Printer Number'}</Label>
+                <Label>{language === 'he' ? 'כמות מדפסות' : 'Number of Printers'}</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={newPrinter.count}
+                  onChange={(e) => setNewPrinter({ ...newPrinter, count: parseInt(e.target.value) || 1 })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>{language === 'he' ? 'מספר התחלה' : 'Starting Number'}</Label>
                 <Input
                   type="number"
                   min={1}
@@ -732,15 +762,32 @@ export const PrintersPage: React.FC = () => {
                   onChange={(e) => setNewPrinter({ ...newPrinter, printerNumber: parseInt(e.target.value) || 1 })}
                 />
               </div>
+            </div>
+            
+            {/* Preview of printer names */}
+            {newPrinter.count > 0 && (
+              <div className="text-sm text-muted-foreground p-3 bg-muted/30 rounded-md">
+                <span className="font-medium">{language === 'he' ? 'יווצרו: ' : 'Will create: '}</span>
+                {Array.from({ length: Math.min(newPrinter.count, 5) }, (_, i) => 
+                  language === 'he' 
+                    ? `מדפסת ${newPrinter.printerNumber + i}`
+                    : `Printer ${newPrinter.printerNumber + i}`
+                ).join(', ')}
+                {newPrinter.count > 5 && (language === 'he' ? ` ועוד ${newPrinter.count - 5}...` : ` and ${newPrinter.count - 5} more...`)}
+              </div>
+            )}
+            
+            {/* Custom name - only for single printer */}
+            {newPrinter.count === 1 && (
               <div className="space-y-2">
-                <Label>{language === 'he' ? 'שם (אופציונלי)' : 'Name (optional)'}</Label>
+                <Label>{language === 'he' ? 'שם מותאם (אופציונלי)' : 'Custom Name (optional)'}</Label>
                 <Input
                   value={newPrinter.name}
                   onChange={(e) => setNewPrinter({ ...newPrinter, name: e.target.value })}
                   placeholder={language === 'he' ? `מדפסת ${newPrinter.printerNumber}` : `Printer ${newPrinter.printerNumber}`}
                 />
               </div>
-            </div>
+            )}
 
             <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
               <div className="flex items-center justify-between">
@@ -796,7 +843,9 @@ export const PrintersPage: React.FC = () => {
               {language === 'he' ? 'ביטול' : 'Cancel'}
             </Button>
             <Button onClick={handleAddPrinter}>
-              {language === 'he' ? 'הוסף מדפסת' : 'Add Printer'}
+              {newPrinter.count > 1
+                ? (language === 'he' ? `הוסף ${newPrinter.count} מדפסות` : `Add ${newPrinter.count} Printers`)
+                : (language === 'he' ? 'הוסף מדפסת' : 'Add Printer')}
             </Button>
           </DialogFooter>
         </DialogContent>
