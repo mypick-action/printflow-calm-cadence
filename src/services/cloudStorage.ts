@@ -45,6 +45,11 @@ export interface DbPrinter {
   can_start_new_cycles_after_hours: boolean;
   max_spool_weight: number | null;
   notes: string | null;
+  // Extended fields for onboarding
+  has_ams?: boolean;
+  ams_slots?: number;
+  ams_backup_mode?: boolean;
+  ams_multi_color?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -130,6 +135,39 @@ export interface DbFactorySettings {
   updated_at: string;
 }
 
+// ============= HELPER: Get current workspace ID =============
+
+export const getCurrentWorkspaceId = async (): Promise<string | null> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.error('No authenticated user');
+      return null;
+    }
+
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('current_workspace_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    
+    if (error) {
+      console.error('Error fetching profile:', error);
+      return null;
+    }
+    
+    if (!profile?.current_workspace_id) {
+      console.error('No workspace found for user');
+      return null;
+    }
+    
+    return profile.current_workspace_id;
+  } catch (err) {
+    console.error('Error getting workspace ID:', err);
+    return null;
+  }
+};
+
 // ============= PRODUCTS =============
 
 export const getProducts = async (): Promise<DbProduct[]> => {
@@ -147,14 +185,9 @@ export const getProducts = async (): Promise<DbProduct[]> => {
 };
 
 export const createProduct = async (product: Omit<DbProduct, 'id' | 'workspace_id' | 'created_at' | 'updated_at'>): Promise<DbProduct | null> => {
-  // Get current workspace from profile
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('current_workspace_id')
-    .single();
-  
-  if (!profile?.current_workspace_id) {
-    console.error('No workspace found');
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) {
+    console.error('Cannot create product: No workspace found');
     return null;
   }
   
@@ -162,7 +195,7 @@ export const createProduct = async (product: Omit<DbProduct, 'id' | 'workspace_i
     .from('products')
     .insert({
       ...product,
-      workspace_id: profile.current_workspace_id,
+      workspace_id: workspaceId,
     })
     .select()
     .single();
@@ -228,18 +261,14 @@ export const getPlatePresets = async (productId?: string): Promise<DbPlatePreset
 };
 
 export const createPlatePreset = async (preset: Omit<DbPlatePreset, 'id' | 'workspace_id' | 'created_at' | 'updated_at'>): Promise<DbPlatePreset | null> => {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('current_workspace_id')
-    .single();
-  
-  if (!profile?.current_workspace_id) return null;
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) return null;
   
   const { data, error } = await supabase
     .from('plate_presets')
     .insert({
       ...preset,
-      workspace_id: profile.current_workspace_id,
+      workspace_id: workspaceId,
     })
     .select()
     .single();
@@ -268,19 +297,25 @@ export const getPrinters = async (): Promise<DbPrinter[]> => {
   return data || [];
 };
 
-export const createPrinter = async (printer: Omit<DbPrinter, 'id' | 'workspace_id' | 'created_at' | 'updated_at'>): Promise<DbPrinter | null> => {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('current_workspace_id')
-    .single();
-  
-  if (!profile?.current_workspace_id) return null;
+export const createPrinter = async (printer: Partial<DbPrinter> & { name: string }): Promise<DbPrinter | null> => {
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) {
+    console.error('Cannot create printer: No workspace found');
+    return null;
+  }
   
   const { data, error } = await supabase
     .from('printers')
     .insert({
-      ...printer,
-      workspace_id: profile.current_workspace_id,
+      name: printer.name,
+      model: printer.model || null,
+      status: printer.status || 'active',
+      current_preset_id: printer.current_preset_id || null,
+      mounted_spool_id: printer.mounted_spool_id || null,
+      can_start_new_cycles_after_hours: printer.can_start_new_cycles_after_hours || false,
+      max_spool_weight: printer.max_spool_weight || null,
+      notes: printer.notes || null,
+      workspace_id: workspaceId,
     })
     .select()
     .single();
@@ -340,18 +375,14 @@ export const getSpools = async (): Promise<DbSpool[]> => {
 };
 
 export const createSpool = async (spool: Omit<DbSpool, 'id' | 'workspace_id' | 'created_at' | 'updated_at'>): Promise<DbSpool | null> => {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('current_workspace_id')
-    .single();
-  
-  if (!profile?.current_workspace_id) return null;
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) return null;
   
   const { data, error } = await supabase
     .from('spools')
     .insert({
       ...spool,
-      workspace_id: profile.current_workspace_id,
+      workspace_id: workspaceId,
     })
     .select()
     .single();
@@ -411,18 +442,14 @@ export const getProjects = async (): Promise<DbProject[]> => {
 };
 
 export const createProject = async (project: Omit<DbProject, 'id' | 'workspace_id' | 'created_at' | 'updated_at'>): Promise<DbProject | null> => {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('current_workspace_id')
-    .single();
-  
-  if (!profile?.current_workspace_id) return null;
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) return null;
   
   const { data, error } = await supabase
     .from('projects')
     .insert({
       ...project,
-      workspace_id: profile.current_workspace_id,
+      workspace_id: workspaceId,
     })
     .select()
     .single();
@@ -482,18 +509,14 @@ export const getPlannedCycles = async (): Promise<DbPlannedCycle[]> => {
 };
 
 export const createPlannedCycle = async (cycle: Omit<DbPlannedCycle, 'id' | 'workspace_id' | 'created_at' | 'updated_at'>): Promise<DbPlannedCycle | null> => {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('current_workspace_id')
-    .single();
-  
-  if (!profile?.current_workspace_id) return null;
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) return null;
   
   const { data, error } = await supabase
     .from('planned_cycles')
     .insert({
       ...cycle,
-      workspace_id: profile.current_workspace_id,
+      workspace_id: workspaceId,
     })
     .select()
     .single();
@@ -507,13 +530,16 @@ export const createPlannedCycle = async (cycle: Omit<DbPlannedCycle, 'id' | 'wor
 };
 
 export const deletePlannedCycles = async (projectId?: string): Promise<boolean> => {
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) return false;
+  
   let query = supabase.from('planned_cycles').delete();
   
   if (projectId) {
     query = query.eq('project_id', projectId);
   } else {
-    // Delete all - need a condition that matches all rows
-    query = query.neq('id', '00000000-0000-0000-0000-000000000000');
+    // Delete all for this workspace
+    query = query.eq('workspace_id', workspaceId);
   }
   
   const { error } = await query;
@@ -543,18 +569,14 @@ export const getCycleLogs = async (): Promise<DbCycleLog[]> => {
 };
 
 export const createCycleLog = async (log: Omit<DbCycleLog, 'id' | 'workspace_id' | 'created_at'>): Promise<DbCycleLog | null> => {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('current_workspace_id')
-    .single();
-  
-  if (!profile?.current_workspace_id) return null;
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) return null;
   
   const { data, error } = await supabase
     .from('cycle_logs')
     .insert({
       ...log,
-      workspace_id: profile.current_workspace_id,
+      workspace_id: workspaceId,
     })
     .select()
     .single();
@@ -570,9 +592,16 @@ export const createCycleLog = async (log: Omit<DbCycleLog, 'id' | 'workspace_id'
 // ============= FACTORY SETTINGS =============
 
 export const getFactorySettings = async (): Promise<DbFactorySettings | null> => {
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) {
+    console.error('Cannot get factory settings: No workspace found');
+    return null;
+  }
+  
   const { data, error } = await supabase
     .from('factory_settings')
     .select('*')
+    .eq('workspace_id', workspaceId)
     .maybeSingle();
   
   if (error) {
@@ -582,25 +611,28 @@ export const getFactorySettings = async (): Promise<DbFactorySettings | null> =>
   
   if (!data) return null;
   
-  // Cast the data to our type
   return {
     ...data,
     weekly_work_hours: data.weekly_work_hours as unknown,
   } as DbFactorySettings;
 };
 
-export const updateFactorySettings = async (updates: Partial<Omit<DbFactorySettings, 'weekly_work_hours'>> & { weekly_work_hours?: Record<string, unknown> }): Promise<DbFactorySettings | null> => {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('current_workspace_id')
-    .single();
-  
-  if (!profile?.current_workspace_id) return null;
+export const updateFactorySettings = async (updates: {
+  factory_name?: string;
+  weekly_work_hours?: Record<string, unknown>;
+  transition_minutes?: number;
+  after_hours_behavior?: string;
+}): Promise<DbFactorySettings | null> => {
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) {
+    console.error('Cannot update factory settings: No workspace found');
+    return null;
+  }
   
   const { data, error } = await supabase
     .from('factory_settings')
     .update(updates as any)
-    .eq('workspace_id', profile.current_workspace_id)
+    .eq('workspace_id', workspaceId)
     .select()
     .single();
   
@@ -618,17 +650,13 @@ export const updateFactorySettings = async (updates: Partial<Omit<DbFactorySetti
 // ============= WORKSPACE INFO =============
 
 export const getCurrentWorkspace = async () => {
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('current_workspace_id')
-    .single();
-  
-  if (!profile?.current_workspace_id) return null;
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) return null;
   
   const { data, error } = await supabase
     .from('workspaces')
     .select('*')
-    .eq('id', profile.current_workspace_id)
+    .eq('id', workspaceId)
     .single();
   
   if (error) {
@@ -649,4 +677,71 @@ export const checkWorkspaceHasData = async (): Promise<boolean> => {
   ]);
   
   return products.length > 0 || printers.length > 0 || projects.length > 0;
+};
+
+// ============= ONBOARDING: Save factory settings and printers =============
+
+export interface OnboardingCloudData {
+  factoryName?: string;
+  weeklySchedule: Record<string, unknown>;
+  afterHoursBehavior: string;
+  transitionMinutes: number;
+  printers: Array<{
+    name: string;
+    hasAMS: boolean;
+    amsSlots?: number;
+    amsBackupMode?: boolean;
+    amsMultiColor?: boolean;
+    canStartNewCyclesAfterHours?: boolean;
+  }>;
+}
+
+export const saveOnboardingToCloud = async (data: OnboardingCloudData): Promise<boolean> => {
+  const workspaceId = await getCurrentWorkspaceId();
+  if (!workspaceId) {
+    console.error('Cannot save onboarding: No workspace found');
+    return false;
+  }
+  
+  try {
+    // 1. Update factory settings
+    const settingsResult = await updateFactorySettings({
+      factory_name: data.factoryName,
+      weekly_work_hours: data.weeklySchedule,
+      after_hours_behavior: data.afterHoursBehavior,
+      transition_minutes: data.transitionMinutes,
+    });
+    
+    if (!settingsResult) {
+      console.error('Failed to update factory settings');
+      return false;
+    }
+    
+    // 2. Create printers
+    for (const printer of data.printers) {
+      const printerResult = await createPrinter({
+        name: printer.name,
+        status: 'active',
+        can_start_new_cycles_after_hours: printer.canStartNewCyclesAfterHours || false,
+      });
+      
+      if (!printerResult) {
+        console.error('Failed to create printer:', printer.name);
+        // Continue with other printers
+      }
+    }
+    
+    console.log('[CloudStorage] Onboarding saved successfully');
+    return true;
+  } catch (error) {
+    console.error('Error saving onboarding to cloud:', error);
+    return false;
+  }
+};
+
+// ============= CHECK ONBOARDING STATUS =============
+
+export const isOnboardingCompleteCloud = async (): Promise<boolean> => {
+  const printers = await getPrinters();
+  return printers.length > 0;
 };

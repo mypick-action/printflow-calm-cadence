@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { Button } from '@/components/ui/button';
 import { 
@@ -13,7 +14,8 @@ import {
   Settings,
   Menu,
   X,
-  Boxes
+  Boxes,
+  LogOut
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -24,6 +26,7 @@ interface AppLayoutProps {
 
 export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onNavigate }) => {
   const { t, direction, language } = useLanguage();
+  const { signOut, profile } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   
   const navItems = [
@@ -39,6 +42,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onN
     { id: 'endCycleLog', label: t('nav.endCycleLog'), icon: ClipboardCheck },
     { id: 'settings', label: t('nav.settings'), icon: Settings },
   ];
+  
+  const handleSignOut = async () => {
+    await signOut();
+  };
   
   return (
     <div className="min-h-screen gradient-bg" dir={direction}>
@@ -92,6 +99,11 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onN
               </Button>
             </div>
             <p className="text-sm text-sidebar-foreground/70 mt-1">{t('app.tagline')}</p>
+            {profile?.email && (
+              <p className="text-xs text-sidebar-foreground/50 mt-2 truncate">
+                {profile.email}
+              </p>
+            )}
           </div>
           
           {/* Navigation */}
@@ -122,9 +134,22 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onN
             })}
           </nav>
           
-          {/* Language switcher (desktop) */}
-          <div className="hidden lg:block p-4 border-t border-sidebar-border">
-            <LanguageSwitcher />
+          {/* Footer with language switcher and logout */}
+          <div className="p-4 border-t border-sidebar-border space-y-3">
+            {/* Language switcher (desktop) */}
+            <div className="hidden lg:block">
+              <LanguageSwitcher />
+            </div>
+            
+            {/* Logout button */}
+            <Button 
+              variant="ghost" 
+              className="w-full justify-start gap-3 text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={handleSignOut}
+            >
+              <LogOut className="w-5 h-5" />
+              <span>{language === 'he' ? 'התנתקות' : 'Sign Out'}</span>
+            </Button>
           </div>
         </div>
       </aside>
