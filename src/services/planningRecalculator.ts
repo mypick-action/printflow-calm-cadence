@@ -87,12 +87,16 @@ export const recalculatePlan = (
       startDate = now;
   }
 
-  // Determine which cycles to keep (completed, failed, or in-progress if locked)
+  // Determine which cycles to keep (completed, failed, locked, or in-progress if lockStarted)
   // CRITICAL: Never keep 'planned' cycles in from_now scope - they will be regenerated
   // This prevents duplication when generatePlan creates new cycles
+  // ALSO: Always keep manually created cycles with locked=true
   const cyclesToKeep: PlannedCycle[] = cycles.filter((cycle) => {
     const isCompleted = cycle.status === 'completed' || cycle.status === 'failed';
     if (isCompleted) return true;
+
+    // Always keep locked manual cycles (even if planned status)
+    if (cycle.locked && cycle.source === 'manual') return true;
 
     const isInProgress = cycle.status === 'in_progress';
     if (lockStarted && isInProgress) return true;
