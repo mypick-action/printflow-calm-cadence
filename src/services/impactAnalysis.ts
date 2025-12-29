@@ -152,9 +152,9 @@ export interface DecisionOptionAnalysis {
 
 // ============= HELPER FUNCTIONS =============
 
-const formatDateString = (date: Date): string => {
-  return date.toISOString().split('T')[0];
-};
+// Use timezone-safe local date formatting
+import { formatDateStringLocal } from './dateUtils';
+const formatDateString = formatDateStringLocal;
 
 const parseTime = (timeStr: string): { hours: number; minutes: number } => {
   const [hours, minutes] = timeStr.split(':').map(Number);

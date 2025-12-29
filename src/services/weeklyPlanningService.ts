@@ -14,6 +14,7 @@ import {
   getTemporaryOverrides
 } from './storage';
 import { getLastReplanInfo } from './planningLogger';
+import { formatDateStringLocal } from './dateUtils';
 
 // ============= TYPES =============
 
@@ -94,7 +95,7 @@ export function getWeekRange(startDate: Date = new Date()): DayInfo[] {
     
     days.push({
       date,
-      dateStr: date.toISOString().split('T')[0],
+      dateStr: formatDateStringLocal(date),
       dayName: DAY_NAMES_EN[dayOfWeek],
       dayNameHe: DAY_NAMES_HE[dayOfWeek],
       isToday: date.getTime() === today.getTime(),
@@ -365,7 +366,7 @@ export function getCyclesByDayAndPrinter(): CyclesByDayAndPrinter {
   
   // Populate with cycles
   for (const cycle of cycles) {
-    const cycleDate = new Date(cycle.startTime).toISOString().split('T')[0];
+    const cycleDate = formatDateStringLocal(new Date(cycle.startTime));
     const cycleWithDetails = getCycleWithDetails(cycle);
     
     if (result[cycle.printerId] && result[cycle.printerId][cycleDate]) {
