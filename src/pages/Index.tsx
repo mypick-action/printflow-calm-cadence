@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext';
 import { OnboardingWizard, OnboardingData } from '@/components/onboarding/OnboardingWizard';
-import { BootstrapScreen } from '@/components/bootstrap/BootstrapScreen';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Dashboard } from '@/components/dashboard/Dashboard';
 import { ProjectsPage } from '@/components/projects/ProjectsPage';
@@ -16,51 +17,67 @@ import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { WeeklyPlanningPage } from '@/components/weekly/WeeklyPlanningPage';
 import { OperationalDashboard } from '@/components/weekly/OperationalDashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Construction } from 'lucide-react';
+import { Construction, Loader2 } from 'lucide-react';
+import { checkWorkspaceHasData } from '@/services/cloudStorage';
 import { 
-  isOnboardingComplete, 
-  completeOnboarding, 
   saveFactorySettings,
-  isBootstrapped,
-  bootstrapFresh,
-  bootstrapWithDemo,
+  completeOnboarding,
+  isOnboardingComplete,
 } from '@/services/storage';
 
 const PrintFlowApp: React.FC = () => {
+  const navigate = useNavigate();
+  const { user, loading: authLoading, workspaceId } = useAuth();
   const { language } = useLanguage();
-  const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
+  
+  const [checkingData, setCheckingData] = useState(true);
+  const [hasWorkspaceData, setHasWorkspaceData] = useState(false);
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [factoryData, setFactoryData] = useState<OnboardingData | null>(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
   const [endCyclePrinterId, setEndCyclePrinterId] = useState<string | undefined>(undefined);
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
-  
+
+  // Redirect to auth if not logged in
   useEffect(() => {
-    // Check bootstrap status first
-    const isBootstrapDone = isBootstrapped();
-    setBootstrapped(isBootstrapDone);
-    
-    if (isBootstrapDone && isOnboardingComplete()) {
-      setOnboardingDone(true);
+    if (!authLoading && !user) {
+      navigate('/auth');
     }
-  }, []);
+  }, [user, authLoading, navigate]);
 
-  const handleBootstrapFresh = () => {
-    bootstrapFresh();
-    setBootstrapped(true);
-    // Will show onboarding next
-  };
-
-  const handleBootstrapDemo = () => {
-    bootstrapWithDemo();
-    setBootstrapped(true);
-    // Will show onboarding next
-  };
+  // Check if workspace has data (to determine if onboarding is needed)
+  useEffect(() => {
+    const checkData = async () => {
+      if (!user || !workspaceId) {
+        setCheckingData(false);
+        return;
+      }
+      
+      try {
+        const hasData = await checkWorkspaceHasData();
+        setHasWorkspaceData(hasData);
+        
+        // Also check localStorage for legacy onboarding
+        const localOnboarding = isOnboardingComplete();
+        setOnboardingDone(hasData || localOnboarding);
+      } catch (error) {
+        console.error('Error checking workspace data:', error);
+      }
+      
+      setCheckingData(false);
+    };
+    
+    if (!authLoading && user) {
+      checkData();
+    }
+  }, [user, workspaceId, authLoading]);
   
   const handleOnboardingComplete = (data: OnboardingData) => {
     setFactoryData(data);
     setOnboardingDone(true);
+    
+    // Save to localStorage for now (will migrate to cloud later)
     saveFactorySettings(
       {
         printerCount: data.printerCount,
@@ -82,26 +99,24 @@ const PrintFlowApp: React.FC = () => {
     completeOnboarding();
   };
 
-  // Show loading while checking bootstrap status
-  if (bootstrapped === null) {
+  // Show loading while checking auth
+  if (authLoading || checkingData) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">Loading...</div>
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">טוען...</p>
+        </div>
       </div>
     );
   }
 
-  // Show bootstrap screen if not bootstrapped
-  if (!bootstrapped) {
-    return (
-      <BootstrapScreen 
-        onStartFresh={handleBootstrapFresh}
-        onLoadDemo={handleBootstrapDemo}
-      />
-    );
+  // If not logged in, will redirect (handled by useEffect)
+  if (!user) {
+    return null;
   }
   
-  // Show onboarding if not complete
+  // Show onboarding if workspace has no data
   if (!onboardingDone) {
     return <OnboardingWizard onComplete={handleOnboardingComplete} />;
   }
@@ -136,7 +151,7 @@ const PrintFlowApp: React.FC = () => {
             preSelectedPrinterId={endCyclePrinterId}
             onComplete={() => {
               setEndCyclePrinterId(undefined);
-              setDashboardRefreshKey(prev => prev + 1); // Force dashboard refresh
+              setDashboardRefreshKey(prev => prev + 1);
               setCurrentPage('dashboard');
             }}
           />
