@@ -275,9 +275,13 @@ export type Database = {
       }
       printers: {
         Row: {
+          ams_backup_mode: boolean | null
+          ams_multi_color: boolean | null
+          ams_slots: number | null
           can_start_new_cycles_after_hours: boolean
           created_at: string
           current_preset_id: string | null
+          has_ams: boolean
           id: string
           max_spool_weight: number | null
           model: string | null
@@ -289,9 +293,13 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          ams_backup_mode?: boolean | null
+          ams_multi_color?: boolean | null
+          ams_slots?: number | null
           can_start_new_cycles_after_hours?: boolean
           created_at?: string
           current_preset_id?: string | null
+          has_ams?: boolean
           id?: string
           max_spool_weight?: number | null
           model?: string | null
@@ -303,9 +311,13 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          ams_backup_mode?: boolean | null
+          ams_multi_color?: boolean | null
+          ams_slots?: number | null
           can_start_new_cycles_after_hours?: boolean
           created_at?: string
           current_preset_id?: string | null
+          has_ams?: boolean
           id?: string
           max_spool_weight?: number | null
           model?: string | null
