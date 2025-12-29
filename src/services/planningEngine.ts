@@ -35,6 +35,7 @@ import {
 } from './storage';
 import { normalizeColor } from './colorNormalization';
 import { getAvailableGramsByColor } from './materialAdapter';
+import { formatDateStringLocal } from './dateUtils';
 
 // ============= TYPES =============
 
@@ -177,9 +178,8 @@ const getDaysUntilDue = (dueDate: string, fromDate: Date): number => {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 };
 
-const formatDateString = (date: Date): string => {
-  return date.toISOString().split('T')[0];
-};
+// Use timezone-safe local date formatting
+const formatDateString = formatDateStringLocal;
 
 // DEPRECATED: Use getAvailableGramsByColor from materialAdapter instead
 // Kept for backward compatibility during migration
@@ -381,6 +381,18 @@ const scheduleCyclesForDay = (
   }
   
   const dateString = formatDateString(date);
+  const planningDateString = planningStartTime ? formatDateString(planningStartTime) : null;
+  
+  // Check if we're planning for the same day as planningStartTime
+  const isSameDay = Boolean(planningStartTime && planningDateString === dateString);
+  
+  dbgStart('SameDayCheck', {
+    dateISO: date.toISOString(),
+    planningISO: planningStartTime?.toISOString() ?? null,
+    dateString,
+    planningDateString,
+    isSameDay,
+  });
   
   dbgStart('Day init', {
     dateString,
@@ -392,8 +404,6 @@ const scheduleCyclesForDay = (
   // ============= SAFE FIX: Calculate effective start time =============
   // If planningStartTime is provided and it's today, use max(dayStart, planningStartTime)
   // This prevents scheduling cycles in the past when replanning mid-day
-  const isSameDay = planningStartTime && 
-    formatDateString(planningStartTime) === dateString;
   const effectiveStart = isSameDay && planningStartTime
     ? new Date(Math.max(dayStart.getTime(), planningStartTime.getTime()))
     : new Date(dayStart);
