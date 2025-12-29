@@ -18,7 +18,7 @@ import { WeeklyPlanningPage } from '@/components/weekly/WeeklyPlanningPage';
 import { OperationalDashboard } from '@/components/weekly/OperationalDashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Construction, Loader2 } from 'lucide-react';
-import { isOnboardingCompleteCloud, saveOnboardingToCloud } from '@/services/cloudStorage';
+import { isOnboardingCompleteCloud, saveOnboardingToCloud, getPrinters } from '@/services/cloudStorage';
 import { toast } from 'sonner';
 
 const PrintFlowApp: React.FC = () => {
@@ -28,7 +28,7 @@ const PrintFlowApp: React.FC = () => {
   
   const [checkingData, setCheckingData] = useState(true);
   const [onboardingDone, setOnboardingDone] = useState(false);
-  const [factoryData, setFactoryData] = useState<OnboardingData | null>(null);
+  const [printerNames, setPrinterNames] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
   const [endCyclePrinterId, setEndCyclePrinterId] = useState<string | undefined>(undefined);
@@ -41,17 +41,23 @@ const PrintFlowApp: React.FC = () => {
     }
   }, [user, authLoading, navigate]);
 
-  // Check if onboarding is complete (has printers in cloud)
+  // Check if onboarding is complete (has printers + factory_settings in cloud)
   useEffect(() => {
     const checkOnboarding = async () => {
-      if (!user || !workspaceId) {
+      if (!workspaceId) {
         setCheckingData(false);
         return;
       }
       
       try {
-        const isComplete = await isOnboardingCompleteCloud();
+        const isComplete = await isOnboardingCompleteCloud(workspaceId);
         setOnboardingDone(isComplete);
+        
+        // If onboarding complete, load printer names for dashboard
+        if (isComplete) {
+          const printers = await getPrinters(workspaceId);
+          setPrinterNames(printers.map(p => p.name));
+        }
       } catch (error) {
         console.error('Error checking onboarding status:', error);
       }
@@ -65,13 +71,16 @@ const PrintFlowApp: React.FC = () => {
   }, [user, workspaceId, authLoading]);
   
   const handleOnboardingComplete = async (data: OnboardingData) => {
-    setFactoryData(data);
+    if (!workspaceId) {
+      toast.error(language === 'he' ? 'שגיאה: לא נמצא workspace' : 'Error: No workspace found');
+      return;
+    }
     
     // Convert WeeklySchedule to plain object for cloud storage
     const weeklyScheduleObj = JSON.parse(JSON.stringify(data.weeklySchedule));
     
-    // Save to cloud
-    const success = await saveOnboardingToCloud({
+    // Save to cloud with workspaceId
+    const success = await saveOnboardingToCloud(workspaceId, {
       weeklySchedule: weeklyScheduleObj,
       afterHoursBehavior: data.afterHoursBehavior,
       transitionMinutes: 10,
@@ -86,6 +95,7 @@ const PrintFlowApp: React.FC = () => {
     
     if (success) {
       toast.success(language === 'he' ? 'ההגדרות נשמרו בהצלחה!' : 'Settings saved successfully!');
+      setPrinterNames(data.printerNames);
       setOnboardingDone(true);
     } else {
       toast.error(language === 'he' ? 'שגיאה בשמירת ההגדרות' : 'Error saving settings');
@@ -125,7 +135,7 @@ const PrintFlowApp: React.FC = () => {
         return (
           <Dashboard 
             key={dashboardRefreshKey}
-            printerNames={factoryData?.printerNames || []} 
+            printerNames={printerNames} 
             onReportIssue={() => setReportIssueOpen(true)}
             onEndCycle={handleEndCycle}
           />
