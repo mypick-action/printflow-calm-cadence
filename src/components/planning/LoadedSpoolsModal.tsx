@@ -361,11 +361,12 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
                       {language === 'he' ? `חריץ ${idx + 1}` : `Slot ${idx + 1}`}
                     </div>
                     <Select
-                      value={slot.spoolId || ''}
+                      value={slot.spoolId || '__empty__'}
                       onValueChange={(v) => {
-                        const spool = spools.find(s => s.id === v);
+                        const actualValue = v === '__empty__' ? undefined : v;
+                        const spool = actualValue ? spools.find(s => s.id === actualValue) : null;
                         updateAMSSlotState(printer.id, idx, { 
-                          spoolId: v || undefined, 
+                          spoolId: actualValue, 
                           color: spool?.color 
                         });
                       }}
@@ -374,7 +375,7 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
                         <SelectValue placeholder={language === 'he' ? 'בחר גליל' : 'Select spool'} />
                       </SelectTrigger>
                       <SelectContent className="bg-popover z-50">
-                        <SelectItem value="">
+                        <SelectItem value="__empty__">
                           {language === 'he' ? 'ריק' : 'Empty'}
                         </SelectItem>
                         {availableSpools.map(s => (
@@ -429,11 +430,12 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
               return (
                 <>
                   <Select
-                    value={state.spoolId || ''}
+                    value={state.spoolId || '__empty__'}
                     onValueChange={(v) => {
-                      const spool = spools.find(s => s.id === v);
+                      const actualValue = v === '__empty__' ? undefined : v;
+                      const spool = actualValue ? spools.find(s => s.id === actualValue) : null;
                       updatePrinterState(printer.id, { 
-                        spoolId: v || undefined, 
+                        spoolId: actualValue, 
                         color: spool?.color 
                       });
                     }}
@@ -442,7 +444,7 @@ export const LoadedSpoolsModal: React.FC<LoadedSpoolsModalProps> = ({
                       <SelectValue placeholder={language === 'he' ? 'בחר גליל' : 'Select spool'} />
                     </SelectTrigger>
                     <SelectContent className="bg-popover z-50">
-                      <SelectItem value="">
+                      <SelectItem value="__empty__">
                         {language === 'he' ? 'ריק / לא טעון' : 'Empty / Not loaded'}
                       </SelectItem>
                       {availableSpools.map(s => (
