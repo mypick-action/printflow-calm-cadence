@@ -85,6 +85,10 @@ export interface Printer {
   // Legacy field for backward compatibility
   amsMode?: 'backup_same_color' | 'multi_color';
   maxSpoolWeight?: number; // max spool size printer supports (1000, 2000, 5000g)
+  // Night operation capability
+  // If true + FULL_AUTOMATION: printer can START new cycles after hours (belt printer, auto plate swap)
+  // If false: printer can only CONTINUE running cycles after hours, not start new ones
+  canStartNewCyclesAfterHours?: boolean;
   // Loaded spools state (for non-AMS printers)
   // NOTE: In v2, mountedSpoolId is REQUIRED for "ready" state
   mountedSpoolId?: string | null; // Required for ready - must reference inventory spool
