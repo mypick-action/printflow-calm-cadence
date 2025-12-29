@@ -19,6 +19,7 @@ import { OperationalDashboard } from '@/components/weekly/OperationalDashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Construction, Loader2 } from 'lucide-react';
 import { isOnboardingCompleteCloud, saveOnboardingToCloud, getPrinters } from '@/services/cloudStorage';
+import { hydrateLocalFromCloud } from '@/services/cloudBridge';
 import { toast } from 'sonner';
 
 const PrintFlowApp: React.FC = () => {
@@ -53,8 +54,9 @@ const PrintFlowApp: React.FC = () => {
         const isComplete = await isOnboardingCompleteCloud(workspaceId);
         setOnboardingDone(isComplete);
         
-        // If onboarding complete, load printer names for dashboard
+        // If onboarding complete, hydrate localStorage from cloud and load printer names
         if (isComplete) {
+          await hydrateLocalFromCloud(workspaceId, { force: true });
           const printers = await getPrinters(workspaceId);
           setPrinterNames(printers.map(p => p.name));
         }
@@ -94,6 +96,9 @@ const PrintFlowApp: React.FC = () => {
     });
     
     if (success) {
+      // Hydrate localStorage from cloud so engines can work
+      await hydrateLocalFromCloud(workspaceId, { force: true });
+      
       toast.success(language === 'he' ? 'ההגדרות נשמרו בהצלחה!' : 'Settings saved successfully!');
       setPrinterNames(data.printerNames);
       setOnboardingDone(true);
