@@ -554,6 +554,89 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     }
   };
 
+  // Handle cancelled print - just log the waste and close the cycle
+  const handleCancelledSubmit = () => {
+    if (!activeCycle) return;
+
+    // Capture state before
+    const cyclesBefore = getPlannedCycles();
+    const projectBefore = getProject(activeCycle.projectId);
+
+    const logResult = logCycleWithMaterialConsumption(
+      {
+        printerId: selectedPrinter,
+        projectId: activeCycle.projectId,
+        plannedCycleId: activeCycle.id,
+        result: 'cancelled',
+        unitsCompleted: 0,
+        unitsScrap: 0,
+        gramsWasted: wastedGrams,
+      },
+      activeCycle.color,
+      activeCycle.gramsPerUnit,
+      selectedPrinter
+    );
+
+    if (!logResult.success) {
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: language === 'he' ? logResult.errorHe : logResult.error,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Capture state after
+    const cyclesAfter = getPlannedCycles();
+    const projectAfter = getProject(activeCycle.projectId);
+
+    // Log event
+    logEndCycleEvent({
+      ts: new Date().toISOString(),
+      cycleId: activeCycle.id,
+      printerId: selectedPrinter,
+      projectId: activeCycle.projectId,
+      decision: 'cancelled',
+      inputs: {
+        result: 'cancelled',
+        unitsCompleted: 0,
+        unitsScrap: 0,
+        unitsToRecover: 0,
+        gramsWasted: wastedGrams,
+        cycleStatusBefore: activeCycle.status,
+        plannedCyclesBefore: cyclesBefore.length,
+        projectProgressBefore: {
+          quantityGood: projectBefore?.quantityGood || 0,
+          quantityScrap: projectBefore?.quantityScrap || 0,
+          quantityTarget: projectBefore?.quantityTarget || 0,
+        },
+      },
+      outputs: {
+        cycleStatusAfter: 'cancelled',
+        plannedCyclesAfterImmediate: cyclesAfter.length,
+        projectProgressAfter: {
+          quantityGood: projectAfter?.quantityGood || 0,
+          quantityScrap: projectAfter?.quantityScrap || 0,
+          quantityTarget: projectAfter?.quantityTarget || 0,
+        },
+      },
+      replanTriggered: false,
+    });
+
+    toast({
+      title: language === 'he' ? 'ההדפסה בוטלה' : 'Print Cancelled',
+      description: language === 'he' 
+        ? `נרשמו ${wastedGrams}g חומר שבוזבז`
+        : `${wastedGrams}g of wasted material recorded`,
+    });
+
+    if (onComplete) {
+      onComplete();
+    } else {
+      handleReset();
+    }
+  };
+
   const handleReset = () => {
     setStep(1);
     setSelectedPrinter('');
