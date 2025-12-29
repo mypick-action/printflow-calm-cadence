@@ -414,11 +414,13 @@ const scheduleCyclesForDay = (
     effectiveStart: effectiveStart.toISOString(),
   });
   
-  // Find locked cycles (completed/in_progress) for this day
+  // Find locked cycles (completed/in_progress or manually locked) for this day
+  // These cycles are treated as "facts" - the engine plans around them
   const lockedCyclesForDay = existingCycles.filter(c => {
     const cycleDate = formatDateString(new Date(c.startTime));
     if (cycleDate !== dateString) return false;
-    return c.status === 'in_progress' || c.status === 'completed';
+    // Include completed, in_progress, OR manually locked cycles
+    return c.status === 'in_progress' || c.status === 'completed' || (c.locked && c.source === 'manual');
   });
   
   // Compute latest locked end per printer (busyUntil)
