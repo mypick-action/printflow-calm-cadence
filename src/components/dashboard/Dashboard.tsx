@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle, getProducts, getProjects } from '@/services/storage';
 import { StartPrintModal } from './StartPrintModal';
+import { ManualStartPrintModal } from './ManualStartPrintModal';
 import { toast } from '@/hooks/use-toast';
 import { 
   calculateTodayPlan, 
@@ -62,6 +63,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const [selectedCycleForStart, setSelectedCycleForStart] = useState<DashboardCycle | null>(null);
   const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null);
   const [expandedPrinters, setExpandedPrinters] = useState<Set<string>>(new Set());
+  const [manualStartModalOpen, setManualStartModalOpen] = useState(false);
 
   const refreshData = useCallback(() => {
     setIsLoading(true);
@@ -368,6 +370,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <Button 
+            variant="default" 
+            className="gap-2" 
+            onClick={() => setManualStartModalOpen(true)}
+          >
+            <Play className="w-4 h-4" />
+            {language === 'he' ? 'התחל הדפסה ידנית' : 'Manual Start'}
+          </Button>
           <RecalculateButton 
             onClick={() => setRecalculateModalOpen(true)} 
             showLastCalculated={true}
@@ -550,6 +560,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
           }}
         />
       )}
+
+      {/* Manual Start Print Modal */}
+      <ManualStartPrintModal
+        open={manualStartModalOpen}
+        onOpenChange={setManualStartModalOpen}
+        onComplete={refreshData}
+      />
     </div>
   );
 };
