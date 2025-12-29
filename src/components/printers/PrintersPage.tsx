@@ -45,11 +45,30 @@ import { format } from 'date-fns';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { cn } from '@/lib/utils';
 
+// Drag and drop
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  rectSortingStrategy,
+} from '@dnd-kit/sortable';
+import { SortablePrinterCard } from './SortablePrinterCard';
+
 // Cloud storage for persistence
 import { 
   getPrinters as getCloudPrinters,
   createPrinter as createCloudPrinter,
   updatePrinter as updateCloudPrinter,
+  updatePrintersOrder,
   DbPrinter,
 } from '@/services/cloudStorage';
 import { hydrateLocalFromCloud } from '@/services/cloudBridge';
@@ -542,6 +561,62 @@ export const PrintersPage: React.FC = () => {
     return reason ? labels[reason as keyof typeof labels] || reason : '';
   };
 
+  // Drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (!over || active.id === over.id || !workspaceId) return;
+    
+    const oldIndex = activePrinters.findIndex(p => p.id === active.id);
+    const newIndex = activePrinters.findIndex(p => p.id === over.id);
+    
+    if (oldIndex === -1 || newIndex === -1) return;
+    
+    // Reorder the array
+    const reordered = arrayMove(activePrinters, oldIndex, newIndex);
+    
+    // Update local state immediately for smooth UX
+    setPrinters(prev => {
+      const inactive = prev.filter(p => p.status !== 'active');
+      return [...reordered, ...inactive];
+    });
+    
+    // Save to cloud
+    const orderUpdates = reordered.map((p, idx) => ({
+      id: p.id,
+      display_order: idx + 1,
+    }));
+    
+    const success = await updatePrintersOrder(orderUpdates);
+    
+    if (success) {
+      // Sync localStorage
+      await hydrateLocalFromCloud(workspaceId, { force: true });
+      
+      toast({
+        title: language === 'he' ? 'הסדר עודכן' : 'Order updated',
+      });
+    } else {
+      // Revert on failure
+      refreshData();
+      toast({
+        title: language === 'he' ? 'שגיאה בעדכון הסדר' : 'Error updating order',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const activePrinters = printers.filter(p => p.status === 'active');
   const inactivePrinters = printers.filter(p => p.status !== 'active');
 
@@ -574,157 +649,34 @@ export const PrintersPage: React.FC = () => {
       {/* Load Recommendations Panel - Full details shown here */}
       <LoadRecommendationsPanel onRefresh={refreshData} showFullDetails={true} />
 
-      {/* Active Printers */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {activePrinters.map((printer) => {
-          const assignedSpools = getAssignedSpools(printer.id);
-          const loadedState = getLoadedSpoolDisplay(printer);
-          
-          return (
-            <Card key={printer.id} className="transition-all hover:shadow-md">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <PrinterIcon className="w-5 h-5 text-primary" />
-                    {printer.name}
-                  </CardTitle>
-                  <div className="flex items-center gap-1">
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-8 w-8 p-0"
-                      onClick={() => handleEditPrinter(printer)}
-                    >
-                      <Settings2 className="w-4 h-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-8 w-8 p-0 text-error hover:text-error"
-                      onClick={() => handleOpenDisableDialog(printer)}
-                      title={language === 'he' ? 'השבת מדפסת' : 'Disable printer'}
-                    >
-                      <PowerOff className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {/* Loaded Spool Section */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-muted-foreground">
-                      {language === 'he' ? 'גליל טעון' : 'Loaded Spool'}
-                    </span>
-                    {!printer.hasAMS && (
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        className="h-7 text-xs gap-1"
-                        onClick={() => handleOpenLoadSpoolDialog(printer)}
-                      >
-                        <Package className="w-3 h-3" />
-                        {loadedState ? (language === 'he' ? 'החלף' : 'Replace') : (language === 'he' ? 'טען' : 'Load')}
-                      </Button>
-                    )}
-                  </div>
-                  
-                  {printer.hasAMS ? (
-                    // AMS Slots Display
-                    <div className="grid grid-cols-2 gap-2">
-                      {Array.from({ length: printer.amsSlots || 4 }, (_, i) => {
-                        const slot = printer.amsSlotStates?.find(s => s.slotIndex === i);
-                        const slotSpool = slot?.spoolId ? spools.find(sp => sp.id === slot.spoolId) : null;
-                        const slotMaterial = slotSpool?.material;
-                        return (
-                          <div 
-                            key={i} 
-                            className={cn(
-                              "p-2 rounded-lg border text-center cursor-pointer transition-colors",
-                              slot?.color 
-                                ? "bg-primary/5 border-primary/30 hover:bg-primary/10" 
-                                : "bg-muted/30 border-dashed hover:bg-muted/50"
-                            )}
-                            onClick={() => handleOpenLoadSpoolDialog(printer, i)}
-                          >
-                            {slot?.color ? (
-                              <div className="flex flex-col items-center gap-1">
-                                <SpoolIcon color={getSpoolColor(slot.color)} size={24} />
-                                <span className="text-xs font-medium">
-                                  {slot.color} {slotMaterial ? `• ${slotMaterial}` : ''}
-                                </span>
-                                <Badge variant="outline" className="text-[10px] h-4">
-                                  {slot.spoolId ? '✓' : '⚠️'}
-                                </Badge>
-                              </div>
-                            ) : (
-                              <div className="py-2 text-xs text-muted-foreground">
-                                {language === 'he' ? `חריץ ${i + 1}` : `Slot ${i + 1}`}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    // Single spool display
-                    loadedState && typeof loadedState === 'object' && 'color' in loadedState ? (
-                      <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/30">
-                        <div className="flex items-center gap-3">
-                          <SpoolIcon color={getSpoolColor(loadedState.color)} size={32} />
-                          <div>
-                            <span className="font-medium">
-                              {loadedState.color} {printer.currentMaterial ? `• ${printer.currentMaterial}` : ''}
-                            </span>
-                            <div className="text-xs text-muted-foreground">
-                              {loadedState.spoolId 
-                                ? (language === 'he' ? 'גליל מהמלאי' : 'From inventory')
-                                : (language === 'he' ? 'צבע בלבד - בחר גליל' : 'Color only - select spool')}
-                            </div>
-                          </div>
-                        </div>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="text-muted-foreground hover:text-error"
-                          onClick={() => handleUnloadSpool(printer)}
-                        >
-                          ✕
-                        </Button>
-                      </div>
-                    ) : (
-                      <div 
-                        className="p-4 rounded-lg border border-dashed text-center text-muted-foreground cursor-pointer hover:bg-muted/30 transition-colors"
-                        onClick={() => handleOpenLoadSpoolDialog(printer)}
-                      >
-                        <Package className="w-6 h-6 mx-auto mb-1 opacity-50" />
-                        <span className="text-sm">{language === 'he' ? 'לחץ לטעינת גליל' : 'Click to load spool'}</span>
-                      </div>
-                    )
-                  )}
-                </div>
-                
-                {/* AMS Status Badge */}
-                <div className="flex items-center gap-2 pt-2 border-t">
-                  <Box className="w-4 h-4 text-muted-foreground" />
-                  {printer.hasAMS ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">AMS ({printer.amsSlots || 4})</span>
-                      {getAmsModeBadge(printer)}
-                    </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">
-                      {language === 'he' ? 'ללא AMS' : 'No AMS'}
-                    </span>
-                  )}
-                  <div className="flex-1" />
-                  {getStatusBadge(printer)}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+      {/* Active Printers - Sortable Grid */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={activePrinters.map(p => p.id)}
+          strategy={rectSortingStrategy}
+        >
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {activePrinters.map((printer) => (
+              <SortablePrinterCard
+                key={printer.id}
+                printer={printer}
+                spools={spools}
+                language={language}
+                onEdit={handleEditPrinter}
+                onDisable={handleOpenDisableDialog}
+                onLoadSpool={handleOpenLoadSpoolDialog}
+                onUnloadSpool={handleUnloadSpool}
+                getAmsModeBadge={getAmsModeBadge}
+                getStatusBadge={getStatusBadge}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
 
       {activePrinters.length === 0 && (
         <Card className="p-8 text-center">
