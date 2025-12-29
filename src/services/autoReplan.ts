@@ -13,7 +13,7 @@ const DEBOUNCE_MS = 1500; // 1.5 seconds debounce
 
 // State
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingReason: string = '';
+let pendingReasons = new Set<string>(); // Accumulate multiple reasons for dedupe
 let isReplanning = false;
 
 // Store the last replan timestamp
@@ -39,8 +39,8 @@ export const scheduleAutoReplan = (reason: string): void => {
     return;
   }
 
-  // Track the reason (use the most recent one)
-  pendingReason = reason;
+  // Accumulate reasons (dedupe multiple triggers during debounce window)
+  pendingReasons.add(reason);
 
   // Clear existing timer if any
   if (debounceTimer) {
@@ -52,7 +52,7 @@ export const scheduleAutoReplan = (reason: string): void => {
     executeAutoReplan();
   }, DEBOUNCE_MS);
 
-  console.log(`[AutoReplan] Scheduled replan in ${DEBOUNCE_MS}ms, reason: ${reason}`);
+  console.log(`[AutoReplan] Scheduled replan in ${DEBOUNCE_MS}ms, reason: ${reason}, accumulated: ${pendingReasons.size}`);
 };
 
 /**
@@ -67,10 +67,16 @@ const executeAutoReplan = async (): Promise<void> => {
 
   isReplanning = true;
   debounceTimer = null;
+  
+  // Capture and clear accumulated reasons
+  const reasons = Array.from(pendingReasons);
+  pendingReasons.clear();
+  const combinedReason = reasons.join(',');
+  
   const startTime = performance.now();
 
   try {
-    console.log(`[AutoReplan] Executing replan, reason: ${pendingReason}`);
+    console.log(`[AutoReplan] Executing replan, reasons: ${combinedReason}`);
 
     // Dynamic import to avoid circular dependencies - import directly from recalculator
     const { recalculatePlan } = await import('./planningRecalculator');
@@ -80,7 +86,7 @@ const executeAutoReplan = async (): Promise<void> => {
     
     // Log the replan result
     addPlanningLogEntry({
-      reason: pendingReason as any,
+      reason: combinedReason as any,
       success: result.success,
       cyclesCreated: result.cyclesModified,
       unitsPlanned: 0, // Will be extracted from summary if needed
@@ -136,7 +142,7 @@ const executeAutoReplan = async (): Promise<void> => {
     });
   } finally {
     isReplanning = false;
-    pendingReason = '';
+    // pendingReasons already cleared at start of execution
   }
 };
 
@@ -148,7 +154,7 @@ export const cancelPendingAutoReplan = (): void => {
   if (debounceTimer) {
     clearTimeout(debounceTimer);
     debounceTimer = null;
-    pendingReason = '';
+    pendingReasons.clear();
     console.log('[AutoReplan] Pending replan cancelled');
   }
 };

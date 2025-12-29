@@ -421,8 +421,9 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({ recommendation,
       });
     }
     
-    // Notify inventory system to trigger UI refresh
-    notifyInventoryChanged();
+    // Note: updatePrinter already dispatches 'printflow:printers-changed' event
+    // which triggers UI refresh - no need for additional notifyInventoryChanged() 
+    // that would cause duplicate replan triggers
     
     setLoadDialogOpen(false);
     setLoadChoice(null);

@@ -62,6 +62,30 @@ function preservePrinterNumbers(existing: Printer[] | null, next: Printer[]): Pr
   });
 }
 
+// Preserve runtime-only fields that are not stored in cloud (mounted colors, AMS state)
+// This prevents hydration from cloud from wiping local spool-loading state
+function preserveRuntimePrinterFields(existing: Printer[] | null, next: Printer[]): Printer[] {
+  if (!existing?.length) return next;
+
+  const byId = new Map(existing.filter(p => p?.id).map(p => [p.id, p]));
+  const byName = new Map(existing.filter(p => p?.name).map(p => [p.name, p]));
+
+  return next.map((p) => {
+    const old = (p.id && byId.get(p.id)) || (p.name && byName.get(p.name));
+    if (!old) return p;
+
+    return {
+      ...p,
+      // Preserve runtime-loaded state so "actions required" won't reappear after navigation
+      mountedColor: old.mountedColor ?? p.mountedColor,
+      currentColor: old.currentColor ?? p.currentColor,
+      currentMaterial: old.currentMaterial ?? p.currentMaterial,
+      mountedSpoolId: old.mountedSpoolId ?? p.mountedSpoolId,
+      amsSlotStates: old.amsSlotStates ?? p.amsSlotStates,
+    };
+  });
+}
+
 // Validate and normalize weeklySchedule to the format the engine expects
 function normalizeWeeklySchedule(schedule: unknown): WeeklySchedule {
   const defaultSchedule = getDefaultWeeklySchedule();
@@ -175,7 +199,9 @@ export async function hydrateLocalFromCloud(
   });
 
   // Preserve printerNumber from existing data
-  const printersFinal = preservePrinterNumbers(existingPrinters, mappedPrinters);
+  const printersWithNumbers = preservePrinterNumbers(existingPrinters, mappedPrinters);
+  // Preserve runtime fields (mountedColor, amsSlotStates, etc.) that aren't in cloud
+  const printersFinal = preserveRuntimePrinterFields(existingPrinters, printersWithNumbers);
 
   localStorage.setItem(KEYS.PRINTERS, JSON.stringify(printersFinal));
   console.log('[CloudBridge] Wrote printers to localStorage:', printersFinal.length);
