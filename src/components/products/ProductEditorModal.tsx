@@ -62,10 +62,12 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
     platePresets: [] as PlatePreset[],
   });
   
-  const [newPreset, setNewPreset] = useState<Partial<PlatePreset>>({
+  const [newPreset, setNewPreset] = useState<Partial<PlatePreset> & { cycleHoursInput: number; cycleMinutesInput: number }>({
     name: initialName || '',
     unitsPerPlate: 8,
     cycleHours: 2,
+    cycleHoursInput: 2,
+    cycleMinutesInput: 0,
     riskLevel: 'low',
     allowedForNightCycle: true,
     isRecommended: false,
@@ -100,13 +102,17 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
   }, [open, editingProduct, initialName]);
 
   const handleAddPreset = () => {
-    if (!newPreset.name || !newPreset.unitsPerPlate || !newPreset.cycleHours) return;
+    if (!newPreset.name || !newPreset.unitsPerPlate) return;
+    
+    // Calculate total hours from hours + minutes
+    const totalHours = (newPreset.cycleHoursInput || 0) + (newPreset.cycleMinutesInput || 0) / 60;
+    if (totalHours <= 0) return;
     
     const preset: PlatePreset = {
       id: generatePresetId(),
       name: newPreset.name,
       unitsPerPlate: newPreset.unitsPerPlate,
-      cycleHours: newPreset.cycleHours,
+      cycleHours: totalHours,
       riskLevel: newPreset.riskLevel as 'low' | 'medium' | 'high',
       allowedForNightCycle: newPreset.allowedForNightCycle ?? true,
       isRecommended: formData.platePresets.length === 0, // First preset is recommended by default
@@ -122,6 +128,8 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
       name: '',
       unitsPerPlate: 8,
       cycleHours: 2,
+      cycleHoursInput: 2,
+      cycleMinutesInput: 0,
       riskLevel: 'low',
       allowedForNightCycle: true,
       isRecommended: false,
@@ -307,7 +315,7 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
                     <TableRow>
                       <TableHead className="w-[120px]">{language === 'he' ? 'שם' : 'Name'}</TableHead>
                       <TableHead className="w-[80px]">{language === 'he' ? 'יחידות' : 'Units'}</TableHead>
-                      <TableHead className="w-[80px]">{language === 'he' ? 'שעות' : 'Hours'}</TableHead>
+                      <TableHead className="w-[80px]">{language === 'he' ? 'זמן (שעה:דק)' : 'Time (h:m)'}</TableHead>
                       <TableHead className="w-[100px]">{language === 'he' ? 'גרם/מחזור' : 'g/cycle'}</TableHead>
                       <TableHead className="w-[80px]">{language === 'he' ? 'סיכון' : 'Risk'}</TableHead>
                       <TableHead className="w-[60px]">{language === 'he' ? 'לילה' : 'Night'}</TableHead>
@@ -324,7 +332,9 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
                           </div>
                         </TableCell>
                         <TableCell>{preset.unitsPerPlate}</TableCell>
-                        <TableCell>{preset.cycleHours}h</TableCell>
+                        <TableCell>
+                          {Math.floor(preset.cycleHours)}:{String(Math.round((preset.cycleHours % 1) * 60)).padStart(2, '0')}
+                        </TableCell>
                         <TableCell className="text-muted-foreground">
                           {formData.gramsPerUnit * preset.unitsPerPlate}g
                         </TableCell>
@@ -395,17 +405,29 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">{language === 'he' ? 'שעות מחזור' : 'Cycle Hours'}</Label>
+                    <Label className="text-xs">{language === 'he' ? 'שעות' : 'Hours'}</Label>
                     <Input
                       type="number"
-                      min={0.5}
-                      step={0.5}
-                      value={newPreset.cycleHours}
-                      onChange={(e) => setNewPreset({ ...newPreset, cycleHours: parseFloat(e.target.value) || 0 })}
+                      min={0}
+                      max={23}
+                      value={newPreset.cycleHoursInput}
+                      onChange={(e) => setNewPreset({ ...newPreset, cycleHoursInput: parseInt(e.target.value) || 0 })}
                       className="h-9"
                     />
                   </div>
                   <div className="space-y-1">
+                    <Label className="text-xs">{language === 'he' ? 'דקות' : 'Minutes'}</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={59}
+                      step={5}
+                      value={newPreset.cycleMinutesInput}
+                      onChange={(e) => setNewPreset({ ...newPreset, cycleMinutesInput: parseInt(e.target.value) || 0 })}
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1 space-y-1">
                     <Label className="text-xs">{language === 'he' ? 'רמת סיכון' : 'Risk Level'}</Label>
                     <Select 
                       value={newPreset.riskLevel} 
@@ -415,11 +437,31 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="bg-background border shadow-lg">
-                        <SelectItem value="low">{language === 'he' ? 'נמוך' : 'Low'}</SelectItem>
-                        <SelectItem value="medium">{language === 'he' ? 'בינוני' : 'Medium'}</SelectItem>
-                        <SelectItem value="high">{language === 'he' ? 'גבוה' : 'High'}</SelectItem>
+                        <SelectItem value="low">
+                          <span className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-success" />
+                            {language === 'he' ? 'נמוך - מותר בלילה' : 'Low - Night allowed'}
+                          </span>
+                        </SelectItem>
+                        <SelectItem value="medium">
+                          <span className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-warning" />
+                            {language === 'he' ? 'בינוני - יופיע כאזהרה' : 'Medium - Shows warning'}
+                          </span>
+                        </SelectItem>
+                        <SelectItem value="high">
+                          <span className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-error" />
+                            {language === 'he' ? 'גבוה - לא מומלץ ללילה' : 'High - Not for night'}
+                          </span>
+                        </SelectItem>
                       </SelectContent>
                     </Select>
+                    <p className="text-[10px] text-muted-foreground">
+                      {language === 'he' 
+                        ? 'סיכון גבוה/בינוני מוגבל בלילה ומופיע עם אזהרה' 
+                        : 'Medium/High risk is restricted at night'}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
@@ -435,7 +477,7 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
                   <Button 
                     size="sm" 
                     onClick={handleAddPreset}
-                    disabled={!newPreset.name || !newPreset.unitsPerPlate || !newPreset.cycleHours}
+                    disabled={!newPreset.name || !newPreset.unitsPerPlate || ((newPreset.cycleHoursInput || 0) + (newPreset.cycleMinutesInput || 0)) <= 0}
                   >
                     <Plus className="w-4 h-4 mr-1" />
                     {language === 'he' ? 'הוסף' : 'Add'}
