@@ -196,7 +196,7 @@ export interface CycleLog {
   printerId: string;
   projectId: string;
   plannedCycleId?: string;
-  result: 'completed' | 'completed_with_scrap' | 'failed';
+  result: 'completed' | 'completed_with_scrap' | 'failed' | 'cancelled';
   unitsCompleted: number;
   unitsScrap: number;
   gramsWasted: number;

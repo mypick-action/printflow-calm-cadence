@@ -12,9 +12,9 @@ export interface EndCycleEventLogEntry {
   cycleId: string;
   printerId: string;
   projectId: string;
-  decision: 'complete_now' | 'defer_to_later' | 'merge_with_future' | 'ignore' | 'completed_successfully';
+  decision: 'complete_now' | 'defer_to_later' | 'merge_with_future' | 'ignore' | 'completed_successfully' | 'cancelled';
   inputs: {
-    result: 'completed' | 'completed_with_scrap' | 'failed';
+    result: 'completed' | 'completed_with_scrap' | 'failed' | 'cancelled';
     unitsCompleted: number;
     unitsScrap: number;
     unitsToRecover: number;
