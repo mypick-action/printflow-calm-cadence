@@ -41,7 +41,7 @@ interface DecisionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   analysis: DecisionAnalysis | null;
-  cycleResult: 'completed_with_scrap' | 'failed';
+  cycleResult: 'completed_with_scrap' | 'failed' | 'cancelled';
   onDecision: (decision: DecisionOption, mergeCycleId?: string) => void;
 }
 

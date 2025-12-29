@@ -48,7 +48,7 @@ import { DecisionModal } from './DecisionModal';
 import { RecoveryInputStep, RecoveryInputData } from './RecoveryInputStep';
 import { TestModePanel } from '@/components/dev/TestModePanel';
 
-type CycleResult = 'completed' | 'completed_with_scrap' | 'failed';
+type CycleResult = 'completed' | 'completed_with_scrap' | 'failed' | 'cancelled';
 type WasteMethod = 'quick' | 'estimate' | 'manual';
 
 interface CycleWithProject extends PlannedCycle {
@@ -75,6 +75,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
   const [wasteMethod, setWasteMethod] = useState<WasteMethod>('quick');
   const [wastedGrams, setWastedGrams] = useState(0);
   const [quickPickGrams, setQuickPickGrams] = useState<number | null>(null);
+  const [remainingGrams, setRemainingGrams] = useState<number | ''>(''); // For estimate method
   const [isConfirmed, setIsConfirmed] = useState(false);
   
   // NEW: Decision modal state
@@ -150,6 +151,9 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     setResult(resultValue);
     if (resultValue === 'completed') {
       handleSubmitWithResult('completed');
+    } else if (resultValue === 'cancelled') {
+      // For cancelled - go directly to material waste step, no decision modal later
+      setStep(3);
     } else {
       setStep(3);
     }
@@ -559,6 +563,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
     setWasteMethod('quick');
     setWastedGrams(0);
     setQuickPickGrams(null);
+    setRemainingGrams('');
     setIsConfirmed(false);
     setShowDecisionModal(false);
     setDecisionAnalysis(null);
@@ -594,6 +599,14 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
       description: language === 'he' ? 'המחזור לא הושלם' : 'Cycle did not complete',
       color: 'text-error',
       bgColor: 'bg-error/10 border-error/30 hover:bg-error/20',
+    },
+    {
+      value: 'cancelled' as CycleResult,
+      icon: RotateCcw,
+      label: language === 'he' ? 'ביטול הדפסה' : 'Print Cancelled',
+      description: language === 'he' ? 'ההדפסה בוטלה מכל סיבה' : 'Print was cancelled for any reason',
+      color: 'text-muted-foreground',
+      bgColor: 'bg-muted/50 border-border hover:bg-muted',
     },
   ];
 
@@ -880,7 +893,7 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
               </div>
             )}
 
-            {result === 'failed' && (
+            {(result === 'failed' || result === 'cancelled') && (
               <div className="space-y-6">
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">
@@ -921,29 +934,38 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
                       )}
                     </div>
 
-                    {/* Estimate */}
+                    {/* Estimate by remaining weight */}
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         <RadioGroupItem value="estimate" id="estimate" />
                         <Label htmlFor="estimate" className="font-medium cursor-pointer">
-                          {language === 'he' ? 'הערכה לפי משקל נותר' : 'Estimate from remaining weight'}
+                          {language === 'he' ? 'הערכה לפי כמה נשאר על הגליל' : 'Estimate by remaining spool weight'}
                         </Label>
                       </div>
                       {wasteMethod === 'estimate' && (
-                        <div className="ps-6">
+                        <div className="ps-6 space-y-2">
                           <Input
                             type="number"
-                            placeholder={language === 'he' ? 'משקל נותר בגליל (גרם)' : 'Remaining spool weight (grams)'}
+                            placeholder={language === 'he' ? 'כמה גרם נשאר על הגליל עכשיו?' : 'How many grams remain on spool now?'}
                             className="h-12"
+                            value={remainingGrams}
                             onChange={(e) => {
-                              // Simple estimation logic
                               const remaining = parseInt(e.target.value) || 0;
-                              setWastedGrams(Math.max(0, 1000 - remaining));
+                              setRemainingGrams(e.target.value === '' ? '' : remaining);
+                              // Get mounted spool's original weight
+                              const printer = printers.find(p => p.id === selectedPrinter);
+                              const spoolStartGrams = activeCycle?.spoolStartGrams || 1000;
+                              const calculated = Math.max(0, spoolStartGrams - remaining);
+                              setWastedGrams(calculated);
                             }}
                           />
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {language === 'he' ? `חומר שבוזבז: ${wastedGrams}g` : `Wasted material: ${wastedGrams}g`}
-                          </p>
+                          {remainingGrams !== '' && (
+                            <p className="text-sm text-muted-foreground">
+                              {language === 'he' 
+                                ? `חומר שבוזבז: ${wastedGrams}g (לפי התחלה של ${activeCycle?.spoolStartGrams || 1000}g)`
+                                : `Material wasted: ${wastedGrams}g (based on start of ${activeCycle?.spoolStartGrams || 1000}g)`}
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -972,12 +994,14 @@ export const EndCycleLog: React.FC<EndCycleLogProps> = ({ preSelectedPrinterId, 
                 </div>
 
                 <Button 
-                  onClick={handleProceedToRecoveryInput} 
+                  onClick={result === 'cancelled' ? handleCancelledSubmit : handleProceedToRecoveryInput} 
                   className="w-full h-14 text-lg gap-2"
                   disabled={wastedGrams === 0}
                 >
                   <ArrowRight className="w-5 h-5" />
-                  {language === 'he' ? 'המשך' : 'Continue'}
+                  {result === 'cancelled' 
+                    ? (language === 'he' ? 'סיים' : 'Finish')
+                    : (language === 'he' ? 'המשך' : 'Continue')}
                 </Button>
               </div>
             )}
