@@ -101,37 +101,32 @@ const executeAutoReplan = async (): Promise<void> => {
     saveSnapshotAfterPlan();
     setLastAutoReplanTime();
 
-    if (result.success) {
-      // Show non-intrusive success toast
+    // Determine toast based on actual data, not string matching
+    const isBlocked = result.cyclesModified === 0 && result.blockingIssuesCount > 0;
+    
+    if (result.cyclesModified > 0) {
+      // Cycles were created - this is success, even with warnings
       toast.success('התכנון עודכן אוטומטית', {
         description: 'Plan updated automatically',
         duration: 3000,
       });
       console.log(`[AutoReplan] Success: ${result.summary}`);
-    } else if (result.cyclesModified > 0) {
-      // Partial success - some cycles created but with issues
-      // Don't show blocking toast, just log it
-      console.log(`[AutoReplan] Partial: ${result.summary} (${result.cyclesModified} cycles created)`);
-    } else {
-      // True blocking - no cycles could be created
-      // Only show toast if there are actually projects to plan
-      const hasActiveProjects = result.summary.includes('No settings') || 
-                                result.summary.includes('No active printers') ||
-                                result.summary.includes('Planning failed');
-      
-      if (hasActiveProjects) {
-        toast.warning('התכנון נעצר – יש חסם', {
-          description: 'Planning blocked – constraints found',
-          duration: 5000,
-          action: {
-            label: 'פרטים',
-            onClick: () => {
-              window.location.hash = '#planning-conflicts';
-            },
+    } else if (isBlocked) {
+      // True blocking - no cycles created AND there are blocking issues
+      toast.warning('התכנון נעצר – יש חסם', {
+        description: 'Planning blocked – constraints found',
+        duration: 5000,
+        action: {
+          label: 'פרטים',
+          onClick: () => {
+            window.location.hash = '#planning-conflicts';
           },
-        });
-      }
+        },
+      });
       console.log(`[AutoReplan] Blocked: ${result.summary}`);
+    } else {
+      // No cycles but also no blocking issues (e.g., no active projects)
+      console.log(`[AutoReplan] No changes: ${result.summary}`);
     }
   } catch (error) {
     console.error('[AutoReplan] Error during replan:', error);
