@@ -15,11 +15,13 @@ import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, Play } from 'lucide-react';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { 
-  getColorInventoryItem, 
-  openNewSpool, 
-  setOpenTotalGrams,
-  adjustOpenTotalGrams,
+  getColorInventoryItem,
+  getPrinter,
+  loadSpoolOnPrinter,
+  startPrinterJob,
+  updatePlannedCycle,
 } from '@/services/storage';
+import { scheduleAutoReplan } from '@/services/autoReplan';
 
 interface StartPrintModalProps {
   open: boolean;
@@ -32,8 +34,10 @@ interface StartPrintModalProps {
     material: string;
     gramsPerCycle: number;
     units: number;
+    cycleHours?: number;
   };
-  sequenceGrams?: number; // Total grams for remaining sequence on this printer
+  printerId: string;
+  sequenceGrams?: number;
   onConfirm: () => void;
 }
 
@@ -43,6 +47,7 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
   open,
   onOpenChange,
   cycle,
+  printerId,
   sequenceGrams,
   onConfirm,
 }) => {
@@ -55,8 +60,18 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
     return getColorInventoryItem(cycle.color, cycle.material);
   }, [cycle.color, cycle.material, open]);
 
+  // Get current printer state
+  const printer = useMemo(() => {
+    return getPrinter(printerId);
+  }, [printerId, open]);
+
   const currentOpenGrams = inventoryItem?.openTotalGrams ?? 0;
   const closedCount = inventoryItem?.closedCount ?? 0;
+  const printerMountedColor = printer?.mountedColor;
+  const printerLoadedGrams = printer?.loadedGramsEstimate ?? 0;
+
+  // Check if printer already has the correct color loaded
+  const hasSameColorLoaded = printerMountedColor?.toLowerCase() === cycle.color.toLowerCase();
 
   // Calculate available grams based on selection
   const getNewSpoolGrams = (): number => {
@@ -71,40 +86,75 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
   const willHaveGrams = useMemo(() => {
     if (spoolType === 'open') {
       const inputGrams = parseInt(openSpoolGrams, 10);
+      // If printer has same color, use printer's loaded grams as base
+      if (hasSameColorLoaded) {
+        return isNaN(inputGrams) ? printerLoadedGrams : inputGrams;
+      }
       return isNaN(inputGrams) ? currentOpenGrams : inputGrams;
     } else {
-      // New spool: add to current open grams
-      return currentOpenGrams + getNewSpoolGrams();
+      // New spool
+      return getNewSpoolGrams();
     }
-  }, [spoolType, openSpoolGrams, currentOpenGrams]);
+  }, [spoolType, openSpoolGrams, currentOpenGrams, hasSameColorLoaded, printerLoadedGrams]);
 
   const gramsNeeded = cycle.gramsPerCycle;
   const hasEnoughMaterial = willHaveGrams >= gramsNeeded;
   const gramsMissing = gramsNeeded - willHaveGrams;
 
   const handleConfirm = () => {
-    // Update inventory based on selection
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const cycleHours = cycle.cycleHours || 2;
+    const endTime = new Date(now.getTime() + cycleHours * 60 * 60 * 1000);
+    const endTimeIso = endTime.toISOString();
+
+    // Determine grams estimate and source
+    let gramsEstimate: number;
+    let source: 'open' | 'closed';
+
     if (spoolType === 'open') {
       const inputGrams = parseInt(openSpoolGrams, 10);
-      if (!isNaN(inputGrams) && inputGrams !== currentOpenGrams) {
-        setOpenTotalGrams(cycle.color, cycle.material, inputGrams);
-      }
+      gramsEstimate = isNaN(inputGrams) 
+        ? (hasSameColorLoaded ? printerLoadedGrams : currentOpenGrams)
+        : inputGrams;
+      source = 'open';
     } else {
-      // Open new spool
-      const newSpoolGrams = getNewSpoolGrams();
-      if (closedCount > 0) {
-        openNewSpool(cycle.color, cycle.material, newSpoolGrams);
-      } else {
-        // No closed spools, just add the grams (assume user loaded a new spool they had)
-        adjustOpenTotalGrams(cycle.color, cycle.material, newSpoolGrams);
+      gramsEstimate = getNewSpoolGrams();
+      source = 'closed';
+    }
+
+    // Only load spool if printer doesn't have the same color or needs new spool
+    if (!hasSameColorLoaded || source === 'closed') {
+      const loaded = loadSpoolOnPrinter(printerId, cycle.color, gramsEstimate, source);
+      if (!loaded) {
+        console.warn('[StartPrintModal] Failed to load spool on printer');
+        // Continue anyway - the spool might already be loaded
       }
     }
+
+    // Start the printer job (mountState = 'in_use')
+    startPrinterJob(printerId);
+
+    // Update the planned cycle to in_progress
+    updatePlannedCycle(cycle.id, {
+      status: 'in_progress',
+      startTime: nowIso,
+      endTime: endTimeIso,
+    });
+
+    // Schedule replan
+    scheduleAutoReplan('cycle_started');
 
     onConfirm();
     onOpenChange(false);
   };
 
-  const canConfirm = hasEnoughMaterial || (spoolType === 'open' && openSpoolGrams === '');
+  const canConfirm = hasEnoughMaterial || (spoolType === 'open' && openSpoolGrams === '' && hasSameColorLoaded);
+
+  // Determine default placeholder for open spool input
+  const openSpoolPlaceholder = hasSameColorLoaded 
+    ? printerLoadedGrams.toString() 
+    : currentOpenGrams.toString();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -133,6 +183,33 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Current Printer State */}
+          {printerMountedColor && (
+            <div className={`p-3 rounded-lg border ${
+              hasSameColorLoaded 
+                ? 'bg-success/10 border-success/30' 
+                : 'bg-warning/10 border-warning/30'
+            }`}>
+              <div className="flex items-center gap-2">
+                {!hasSameColorLoaded && <AlertTriangle className="w-4 h-4 text-warning" />}
+                <span className="text-sm">
+                  {language === 'he' 
+                    ? `המדפסת מוזנת כרגע ב: ${printerMountedColor} (${printerLoadedGrams}g)` 
+                    : `Printer loaded with: ${printerMountedColor} (${printerLoadedGrams}g)`
+                  }
+                </span>
+              </div>
+              {!hasSameColorLoaded && (
+                <div className="text-xs text-muted-foreground mt-1">
+                  {language === 'he'
+                    ? `צריך להחליף ל-${cycle.color}`
+                    : `Need to change to ${cycle.color}`
+                  }
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Grams Required */}
           <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/20">
@@ -199,7 +276,7 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
                     {language === 'he' ? 'גליל פתוח' : 'Open spool'}
                   </span>
                   <span className="text-xs text-muted-foreground mx-2">
-                    ({language === 'he' ? 'עכשיו:' : 'current:'} {currentOpenGrams}g)
+                    ({language === 'he' ? 'מלאי:' : 'stock:'} {currentOpenGrams}g)
                   </span>
                 </Label>
               </div>
@@ -214,7 +291,7 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
                 <Input
                   id="grams"
                   type="number"
-                  placeholder={currentOpenGrams.toString()}
+                  placeholder={openSpoolPlaceholder}
                   value={openSpoolGrams}
                   onChange={(e) => setOpenSpoolGrams(e.target.value)}
                   className="text-lg"
@@ -259,7 +336,7 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
           </Button>
           <Button 
             onClick={handleConfirm}
-            disabled={!hasEnoughMaterial && spoolType === 'open' && openSpoolGrams !== ''}
+            disabled={!canConfirm}
             className="gap-2"
           >
             <Play className="w-4 h-4" />
