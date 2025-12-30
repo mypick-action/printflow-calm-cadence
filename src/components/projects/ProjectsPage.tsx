@@ -574,11 +574,21 @@ export const ProjectsPage: React.FC = () => {
     // Run immediate replan and get full result
     const result = runReplanNow('project_created');
     
+    // Debug log - show what came back from planning
+    console.log('[ProjectsPage] Replan result:', {
+      success: result.success,
+      cyclesModified: result.cyclesModified,
+      blockingIssues: result.blockingIssues,
+      warnings: result.warnings,
+    });
+    
     if (createdProject) {
       // Check for blocking issues (deadline_impossible, insufficient_material)
       const criticalIssues = result.blockingIssues.filter(i => 
         i.type === 'deadline_impossible' || i.type === 'insufficient_material'
       );
+      
+      console.log('[ProjectsPage] Critical issues found:', criticalIssues);
       
       if (criticalIssues.length > 0) {
         // Show warning modal
@@ -1419,6 +1429,21 @@ export const ProjectsPage: React.FC = () => {
         }}
         defaultProjectId={createdProject?.id}
       />
+
+      {/* Deadline Warning Modal */}
+      {planningIssues && (
+        <DeadlineWarningModal
+          open={deadlineWarningOpen}
+          onClose={() => {
+            setDeadlineWarningOpen(false);
+            setPlanningIssues(null);
+          }}
+          blockingIssues={planningIssues.blockingIssues}
+          warnings={planningIssues.warnings}
+          newProjectId={planningIssues.newProjectId}
+          newProjectName={planningIssues.newProjectName}
+        />
+      )}
     </div>
   );
 };
