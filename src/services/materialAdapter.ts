@@ -94,6 +94,9 @@ export const getReservedGramsByColor = (color: string, horizonHours?: number): n
   let reservedGrams = 0;
   
   for (const cycle of cycles) {
+    // Skip cancelled cycles - they don't reserve material
+    if (cycle.status === 'cancelled') continue;
+    
     // Get cycle color with fallback to project
     const cycleColorKey = getCycleColorKey(cycle);
     if (!cycleColorKey || cycleColorKey !== colorKey) continue;
