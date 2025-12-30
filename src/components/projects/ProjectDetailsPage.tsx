@@ -341,6 +341,12 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
           label: language === 'he' ? 'נכשל' : 'Failed',
           className: 'bg-error/10 text-error border-error/20',
         };
+      default:
+        return {
+          icon: Clock,
+          label: language === 'he' ? 'לא ידוע' : 'Unknown',
+          className: 'bg-muted text-muted-foreground border-muted-foreground/20',
+        };
     }
   };
 
