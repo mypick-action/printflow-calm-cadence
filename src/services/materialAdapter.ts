@@ -10,6 +10,7 @@ import {
   consumeFromColorInventory,
   Project,
   getProduct,
+  getProject,
   getPrinters,
   getPrinter,
   getPlannedCycles,
@@ -56,6 +57,22 @@ export const getOpenTotalGrams = (color: string, material: string = 'PLA'): numb
 };
 
 /**
+ * Get the effective color key for a cycle
+ * Falls back to project color if requiredColor is not set
+ */
+const getCycleColorKey = (cycle: { requiredColor?: string; projectId: string }): string => {
+  // 1) Prefer requiredColor if exists
+  if (cycle.requiredColor) return normalizeColor(cycle.requiredColor);
+
+  // 2) Fallback to project.color
+  const project = getProject(cycle.projectId);
+  if (project?.color) return normalizeColor(project.color);
+
+  // 3) Last resort: empty
+  return '';
+};
+
+/**
  * Get reserved grams by color based on CYCLES (not printer estimates!)
  * This is the correct source of truth for material reservation.
  * 
@@ -77,8 +94,9 @@ export const getReservedGramsByColor = (color: string, horizonHours?: number): n
   let reservedGrams = 0;
   
   for (const cycle of cycles) {
-    // Skip if not matching color
-    if (normalizeColor(cycle.requiredColor || '') !== colorKey) continue;
+    // Get cycle color with fallback to project
+    const cycleColorKey = getCycleColorKey(cycle);
+    if (!cycleColorKey || cycleColorKey !== colorKey) continue;
     
     // in_progress ALWAYS counts (regardless of time)
     if (cycle.status === 'in_progress') {
