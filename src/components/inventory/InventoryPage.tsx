@@ -70,14 +70,17 @@ export const InventoryPage: React.FC = () => {
   }, []);
 
   const refreshData = () => {
-    setInventory(getColorInventory());
+    const inv = getColorInventory();
+    setInventory(inv);
     const settings = getFactorySettings();
     // Hebrew predefined colors (same as ProjectsPage)
     const hebrewColors = ['שחור', 'לבן', 'אפור', 'אדום', 'כחול', 'ירוק', 'צהוב', 'כתום', 'סגול', 'ורוד', 'חום'];
-    // Combine predefined + settings colors
+    // Combine predefined + settings colors + inventory colors
     const settingsColors = settings?.colors || [];
-    const allColors = new Set([...hebrewColors, ...settingsColors]);
-    setAvailableColors(Array.from(allColors));
+    // Also include all colors from current inventory
+    const inventoryColors = inv.map(item => item.color);
+    const allColors = new Set([...hebrewColors, ...settingsColors, ...inventoryColors]);
+    setAvailableColors(Array.from(allColors).filter(c => c && c.trim()));
   };
 
   const getSelectedColor = () => {
@@ -197,8 +200,15 @@ export const InventoryPage: React.FC = () => {
   // Note: Opening new spools happens only via Load flow, not from inventory page
 
 
-  // Sort inventory by total grams descending
-  const sortedInventory = [...inventory].sort((a, b) => getTotalGrams(b) - getTotalGrams(a));
+  // Keep inventory order stable - sort by id (creation order) instead of total grams
+  const sortedInventory = [...inventory].sort((a, b) => a.id.localeCompare(b.id));
+
+  // Calculate summary by color + material
+  const inventorySummary = sortedInventory.map(item => ({
+    ...item,
+    totalGrams: getTotalGrams(item),
+    isLowStock: getTotalGrams(item) < 1000, // Less than 1kg = low stock
+  }));
 
   return (
     <div className="space-y-6">
@@ -218,6 +228,65 @@ export const InventoryPage: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {/* Summary Table */}
+      {inventory.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              {language === 'he' ? 'סיכום מלאי' : 'Inventory Summary'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-start py-2 px-2 font-medium text-muted-foreground">
+                      {language === 'he' ? 'צבע' : 'Color'}
+                    </th>
+                    <th className="text-start py-2 px-2 font-medium text-muted-foreground">
+                      {language === 'he' ? 'חומר' : 'Material'}
+                    </th>
+                    <th className="text-start py-2 px-2 font-medium text-muted-foreground">
+                      {language === 'he' ? 'סה"כ' : 'Total'}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inventorySummary.map(item => (
+                    <tr 
+                      key={item.id} 
+                      className={`border-b last:border-0 ${
+                        item.isLowStock 
+                          ? 'bg-yellow-100 dark:bg-yellow-900/30 animate-pulse' 
+                          : ''
+                      }`}
+                    >
+                      <td className="py-2 px-2">
+                        <div className="flex items-center gap-2">
+                          <SpoolIcon color={getSpoolColor(item.color)} size={16} />
+                          <span className={item.isLowStock ? 'font-semibold text-yellow-700 dark:text-yellow-300' : ''}>
+                            {item.color}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2 px-2">{item.material}</td>
+                      <td className={`py-2 px-2 font-medium ${
+                        item.isLowStock 
+                          ? 'text-yellow-700 dark:text-yellow-300 font-bold' 
+                          : ''
+                      }`}>
+                        {(item.totalGrams / 1000).toFixed(1)}kg
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Quick Add Spools */}
       <Card>
