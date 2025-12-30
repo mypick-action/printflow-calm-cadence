@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Popover,
   PopoverContent,
@@ -54,6 +56,9 @@ import {
 import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { RecalculateModal } from '@/components/planning/RecalculateModal';
+import { DeadlineWarningModal } from '@/components/projects/DeadlineWarningModal';
+import { runReplanNow } from '@/services/planningRecalculator';
+import { BlockingIssue, PlanningWarning } from '@/services/planningEngine';
 
 interface ProjectDetailsPageProps {
   projectId: string;
@@ -93,6 +98,16 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   const [recalculateOpen, setRecalculateOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [dueDatePopoverOpen, setDueDatePopoverOpen] = useState(false);
+  
+  // Quantity editing state
+  const [quantityPopoverOpen, setQuantityPopoverOpen] = useState(false);
+  const [newQuantity, setNewQuantity] = useState<string>('');
+  
+  // Warning modal state
+  const [planningIssues, setPlanningIssues] = useState<{
+    blockingIssues: BlockingIssue[];
+    warnings: PlanningWarning[];
+  } | null>(null);
 
   useEffect(() => {
     loadData();
@@ -120,6 +135,71 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
         title: language === 'he' ? 'תאריך יעד עודכן' : 'Due date updated',
         description: format(date, 'dd/MM/yyyy'),
       });
+    }
+  };
+
+  const handleQuantityChange = () => {
+    const qty = Number(newQuantity.trim());
+    if (!Number.isInteger(qty) || qty < 1 || !project) return;
+    
+    // Validation: cannot set below completed quantity
+    if (qty < project.quantityGood) {
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: language === 'he' 
+          ? 'לא ניתן להגדיר כמות יעד נמוכה מהכמות שכבר הושלמה' 
+          : 'Cannot set target below completed quantity',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    // Update project - triggers auto replan via storage.ts
+    const updated = updateProject(project.id, { quantityTarget: qty });
+    
+    if (updated) {
+      setProject(updated);
+      setQuantityPopoverOpen(false);
+      
+      // Run replan and check for issues (synchronous)
+      const result = runReplanNow('project_quantity_updated');
+      
+      // Check for blocking issues
+      const criticalIssues = result.blockingIssues.filter(i => 
+        i.type === 'deadline_impossible' || i.type === 'insufficient_material'
+      );
+      
+      // Check for deadline_risk warning
+      const hasDeadlineRisk = result.warnings.some(w => w.type === 'deadline_risk');
+      
+      if (criticalIssues.length > 0) {
+        // Show warning modal for blocking issues
+        setPlanningIssues({
+          blockingIssues: result.blockingIssues,
+          warnings: result.warnings,
+        });
+      } else if (hasDeadlineRisk) {
+        // Show toast for deadline risk (not blocking)
+        toast({
+          title: language === 'he' ? 'אזהרה' : 'Warning',
+          description: language === 'he' 
+            ? 'יש סיכון לדדליין - בדוק את התכנון' 
+            : 'Deadline at risk - check planning',
+          variant: 'destructive',
+        });
+      } else {
+        // Success toast
+        toast({
+          title: language === 'he' ? 'כמות יעד עודכנה' : 'Target quantity updated',
+          description: language === 'he' 
+            ? 'התכנון עודכן בהצלחה' 
+            : 'Planning updated successfully',
+        });
+      }
+      
+      // Refresh data after replan
+      loadData();
+      setRefreshKey(k => k + 1);
     }
   };
 
@@ -333,12 +413,37 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            {/* Total Quantity */}
+            {/* Total Quantity - Editable */}
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">
                 {language === 'he' ? 'כמות יעד' : 'Target Qty'}
               </p>
-              <p className="text-2xl font-bold">{project.quantityTarget}</p>
+              <Popover open={quantityPopoverOpen} onOpenChange={(open) => {
+                setQuantityPopoverOpen(open);
+                if (open && project) setNewQuantity(project.quantityTarget.toString());
+              }}>
+                <PopoverTrigger asChild>
+                  <button className="flex items-center gap-2 p-1.5 -m-1.5 rounded-lg hover:bg-muted transition-colors group cursor-pointer">
+                    <span className="text-2xl font-bold">{project.quantityTarget}</span>
+                    <Pencil className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-48" align="start">
+                  <div className="space-y-3">
+                    <Label>{language === 'he' ? 'כמות יעד חדשה' : 'New target quantity'}</Label>
+                    <Input
+                      type="number"
+                      min={project.quantityGood || 1}
+                      value={newQuantity}
+                      onChange={(e) => setNewQuantity(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleQuantityChange()}
+                    />
+                    <Button size="sm" onClick={handleQuantityChange} className="w-full">
+                      {language === 'he' ? 'עדכן' : 'Update'}
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
 
             {/* Produced */}
@@ -605,6 +710,18 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
         }}
         onRecalculated={handleRecalculateComplete}
       />
+
+      {/* Warning Modal for planning issues */}
+      {planningIssues && (
+        <DeadlineWarningModal
+          open={!!planningIssues}
+          onClose={() => setPlanningIssues(null)}
+          blockingIssues={planningIssues.blockingIssues}
+          warnings={planningIssues.warnings}
+          newProjectId={project?.id}
+          newProjectName={project?.name}
+        />
+      )}
     </div>
   );
 };
