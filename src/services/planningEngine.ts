@@ -31,6 +31,7 @@ import {
   getAvailableFilamentForPrinter,
   getGramsPerCycle,
   getColorInventory,
+  getColorInventoryItem,
   getTotalGrams,
 } from './storage';
 import { normalizeColor } from './colorNormalization';
@@ -537,18 +538,22 @@ const scheduleCyclesForDay = (
             continue;
           }
           
-          // For parallel scheduling, limit by physical spools OR virtual spools from ColorInventory
+          // For parallel scheduling, limit by REAL spool count (openSpoolCount + closedCount)
+          // NO virtual spool calculation - use actual physical spools
+          const colorItem = getColorInventoryItem(state.project.color, 'PLA');
+          const openSpoolCount = colorItem?.openSpoolCount || 0;
+          const closedSpoolCount = colorItem?.closedCount || 0;
+          
+          // Parallel capacity = existing open spools + closed spools we can open
+          const totalSpoolCount = openSpoolCount + closedSpoolCount;
+          
+          // Keep spools list for spool suggestions later
           const allSpools = getSpools();
           const availableSpoolsForColor = allSpools.filter(s => 
             normalizeColor(s.color) === colorKey && 
             s.state !== 'empty' &&
             s.gramsRemainingEst > 0
           );
-          
-          // Calculate virtual spool count from ColorInventory
-          // Each 1000g of material = 1 virtual spool for parallel limit
-          const virtualSpoolCount = Math.max(1, Math.ceil(availableMaterial / 1000));
-          const totalSpoolCount = Math.max(availableSpoolsForColor.length, virtualSpoolCount);
           
           // Get how many DIFFERENT printers are assigned to this color currently
           // Note: Same printer can do multiple sequential cycles with same color

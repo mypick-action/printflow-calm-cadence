@@ -285,18 +285,23 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
             {/* Grams input for open spool */}
             {spoolType === 'open' && (
               <div className="space-y-2 p-3 rounded-lg bg-muted/30 border">
-                <Label htmlFor="grams" className="text-sm">
-                  {language === 'he' ? 'כמה גרם יש על הגליל?' : 'How many grams on the spool?'}
+                <Label htmlFor="grams" className="text-sm font-medium">
+                  {language === 'he' ? 'כמה גרם יש על הגליל הזה עכשיו?' : 'How many grams on this spool now?'}
                 </Label>
                 <Input
                   id="grams"
                   type="number"
-                  placeholder={openSpoolPlaceholder}
+                  placeholder={hasSameColorLoaded ? printerLoadedGrams.toString() : ''}
                   value={openSpoolGrams}
                   onChange={(e) => setOpenSpoolGrams(e.target.value)}
                   className="text-lg"
                   min={0}
                 />
+                <p className="text-xs text-muted-foreground">
+                  {language === 'he' 
+                    ? 'הזן את כמות הגרמים הנוכחית על הגליל שאתה מזין למדפסת'
+                    : 'Enter the current grams on the spool you are loading'}
+                </p>
               </div>
             )}
           </div>

@@ -53,10 +53,11 @@ export const InventoryPage: React.FC = () => {
   const [quickAddSpoolSize, setQuickAddSpoolSize] = useState(1000);
   const [quickAddOpenGrams, setQuickAddOpenGrams] = useState(100);
   
-  // Edit dialog
+  // Edit dialog for open spools
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ColorInventoryItem | null>(null);
   const [editOpenGrams, setEditOpenGrams] = useState(0);
+  const [editOpenSpoolCount, setEditOpenSpoolCount] = useState(0);
   
   // Color rename dialog
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
@@ -166,12 +167,25 @@ export const InventoryPage: React.FC = () => {
   const handleOpenEditDialog = (item: ColorInventoryItem) => {
     setEditingItem(item);
     setEditOpenGrams(item.openTotalGrams);
+    setEditOpenSpoolCount(item.openSpoolCount || 0);
     setEditDialogOpen(true);
   };
 
-  const handleSaveOpenGrams = () => {
+  const handleSaveOpenSpools = () => {
     if (!editingItem) return;
-    setOpenTotalGrams(editingItem.color, editingItem.material, editOpenGrams);
+    // Update both openTotalGrams and openSpoolCount
+    const items = getColorInventory();
+    const index = items.findIndex(i => i.id === editingItem.id);
+    if (index >= 0) {
+      items[index] = {
+        ...items[index],
+        openTotalGrams: editOpenGrams,
+        openSpoolCount: editOpenSpoolCount,
+        updatedAt: new Date().toISOString(),
+      };
+      // Save to localStorage directly
+      localStorage.setItem('printflow_color_inventory', JSON.stringify(items));
+    }
     refreshData();
     setEditDialogOpen(false);
     setEditingItem(null);
@@ -561,18 +575,20 @@ export const InventoryPage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Open Spools Total */}
+                {/* Open Spools */}
                 <div className="flex items-center justify-between p-2 bg-background rounded border">
                   <div>
                     <div className="text-sm font-medium">
                       {language === 'he' ? 'פתוחים' : 'Open'}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'he' ? 'סה"כ גרמים' : 'Total grams'}
+                      {item.openSpoolCount || 0} {language === 'he' ? 'גלילים' : 'spools'} • {item.openTotalGrams}g
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">{item.openTotalGrams}g</span>
+                    <Badge variant="outline" className="font-medium">
+                      {item.openSpoolCount || 0}
+                    </Badge>
                     <Button 
                       variant="outline" 
                       size="icon" 
@@ -620,9 +636,31 @@ export const InventoryPage: React.FC = () => {
                 <SpoolIcon color={getSpoolColor(editingItem.color)} size={24} />
                 <span className="font-medium">{editingItem.color} {editingItem.material}</span>
               </div>
+              
+              {/* Open Spool Count - PRIMARY FIELD */}
+              <div className="space-y-2">
+                <Label className="font-medium">
+                  {language === 'he' ? 'כמה גלילים פתוחים יש?' : 'How many open spools?'}
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={editOpenSpoolCount}
+                  onChange={(e) => setEditOpenSpoolCount(parseInt(e.target.value) || 0)}
+                  placeholder="0"
+                  className="text-lg"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {language === 'he' 
+                    ? 'מספר הגלילים הפתוחים הפיזיים (על מדפסות + על המדף)'
+                    : 'Number of physical open spools (on printers + on shelf)'}
+                </p>
+              </div>
+
+              {/* Total Grams */}
               <div className="space-y-2">
                 <Label>
-                  {language === 'he' ? 'סה"כ גרמים בגלילים פתוחים' : 'Total grams in open spools'}
+                  {language === 'he' ? 'סה"כ גרמים על כל הפתוחים' : 'Total grams on all open spools'}
                 </Label>
                 <Input
                   type="number"
@@ -633,8 +671,8 @@ export const InventoryPage: React.FC = () => {
                 />
                 <p className="text-xs text-muted-foreground">
                   {language === 'he' 
-                    ? 'הזן את הסה"כ המשוער של כל הגלילים הפתוחים מצבע זה'
-                    : 'Enter the estimated total of all open spools of this color'}
+                    ? 'הערכה של סה"כ הגרמים על כל הגלילים הפתוחים'
+                    : 'Estimated total grams across all open spools'}
                 </p>
               </div>
             </div>
@@ -643,7 +681,7 @@ export const InventoryPage: React.FC = () => {
             <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
               {language === 'he' ? 'ביטול' : 'Cancel'}
             </Button>
-            <Button onClick={handleSaveOpenGrams}>
+            <Button onClick={handleSaveOpenSpools}>
               {language === 'he' ? 'שמור' : 'Save'}
             </Button>
           </DialogFooter>
