@@ -1,1 +1,4 @@
 project_id = "aqwisvmeiktbfgdhlotn"
+
+[functions.bambu-events]
+verify_jwt = false
