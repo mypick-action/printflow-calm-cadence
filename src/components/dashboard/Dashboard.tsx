@@ -25,10 +25,12 @@ import {
   ClipboardCheck,
   Play,
   ChevronDown,
+  Pencil,
 } from 'lucide-react';
 import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle, getProducts, getProjects, updatePrinter } from '@/services/storage';
 import { StartPrintModal } from './StartPrintModal';
 import { ManualStartPrintModal } from './ManualStartPrintModal';
+import { PrinterActionsModal } from './PrinterActionsModal';
 import { toast } from '@/hooks/use-toast';
 import { 
   calculateTodayPlan, 
@@ -64,6 +66,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null);
   const [expandedPrinters, setExpandedPrinters] = useState<Set<string>>(new Set());
   const [manualStartModalOpen, setManualStartModalOpen] = useState(false);
+  const [printerActionsModalOpen, setPrinterActionsModalOpen] = useState(false);
+  const [selectedPrinterForActions, setSelectedPrinterForActions] = useState<string | null>(null);
+
+  const openPrinterActionsModal = (printerId: string) => {
+    setSelectedPrinterForActions(printerId);
+    setPrinterActionsModalOpen(true);
+  };
 
   const refreshData = useCallback(() => {
     setIsLoading(true);
@@ -245,6 +254,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
               {plan.printer.name}
             </div>
             <div className="flex items-center gap-2">
+              {/* Pencil button for printer actions */}
+              <Button 
+                variant="ghost" 
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => openPrinterActionsModal(plan.printer.id)}
+              >
+                <Pencil className="w-4 h-4 text-muted-foreground" />
+              </Button>
               {plan.totalUnits > 0 && (
                 <Badge variant="secondary">
                   {plan.totalUnits} {language === 'he' ? 'יחידות' : 'units'}
@@ -576,6 +594,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
         onOpenChange={setManualStartModalOpen}
         onComplete={refreshData}
       />
+
+      {/* Printer Actions Modal */}
+      {selectedPrinterForActions && (
+        <PrinterActionsModal
+          open={printerActionsModalOpen}
+          onOpenChange={setPrinterActionsModalOpen}
+          printerId={selectedPrinterForActions}
+          onComplete={refreshData}
+        />
+      )}
     </div>
   );
 };

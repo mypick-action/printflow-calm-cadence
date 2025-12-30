@@ -95,8 +95,11 @@ import {
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { ProductEditorModal } from '@/components/products/ProductEditorModal';
 import { AssignmentChoiceModal } from './AssignmentChoiceModal';
+import { DeadlineWarningModal } from './DeadlineWarningModal';
 import { ManualStartPrintModal } from '@/components/dashboard/ManualStartPrintModal';
 import { scheduleAutoReplan } from '@/services/autoReplan';
+import { runReplanNow } from '@/services/planningRecalculator';
+import { BlockingIssue, PlanningWarning } from '@/services/planningEngine';
 import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
 import {
   AlertDialog,
@@ -211,6 +214,15 @@ export const ProjectsPage: React.FC = () => {
   const [assignmentChoiceOpen, setAssignmentChoiceOpen] = useState(false);
   const [createdProject, setCreatedProject] = useState<Project | null>(null);
   const [manualStartOpen, setManualStartOpen] = useState(false);
+  
+  // Deadline warning modal state
+  const [deadlineWarningOpen, setDeadlineWarningOpen] = useState(false);
+  const [planningIssues, setPlanningIssues] = useState<{
+    blockingIssues: BlockingIssue[];
+    warnings: PlanningWarning[];
+    newProjectId?: string;
+    newProjectName?: string;
+  } | null>(null);
   
   // Custom color state
   const [useCustomColor, setUseCustomColor] = useState(false);
@@ -559,19 +571,31 @@ export const ProjectsPage: React.FC = () => {
   };
 
   const handleAutomaticAssignment = () => {
-    // Trigger auto replan to schedule the project
-    scheduleAutoReplan('project_created');
+    // Run immediate replan and get full result
+    const result = runReplanNow('project_created');
     
     if (createdProject) {
-      // Validate and show detailed toast
-      const validationResult = validateProjectForPlanning(createdProject);
-      const summary = getValidationSummary(validationResult, language);
+      // Check for blocking issues (deadline_impossible, insufficient_material)
+      const criticalIssues = result.blockingIssues.filter(i => 
+        i.type === 'deadline_impossible' || i.type === 'insufficient_material'
+      );
       
-      toast({
-        title: summary.title,
-        description: summary.description,
-        variant: summary.variant,
-      });
+      if (criticalIssues.length > 0) {
+        // Show warning modal
+        setPlanningIssues({
+          blockingIssues: criticalIssues,
+          warnings: result.warnings,
+          newProjectId: createdProject.id,
+          newProjectName: createdProject.name,
+        });
+        setDeadlineWarningOpen(true);
+      } else {
+        // Success - show simple toast
+        toast({
+          title: language === 'he' ? 'פרויקט נוצר בהצלחה' : 'Project created',
+          description: result.summaryHe || result.summary,
+        });
+      }
     }
     
     setCreatedProject(null);
