@@ -79,6 +79,8 @@ import {
   saveFactorySettings,
   getCyclesForProject,
   PlannedCycle,
+  hasActivePrintForProject,
+  forceCompleteProject,
 } from '@/services/storage';
 import { validateProjectForPlanning, getValidationSummary } from '@/services/projectValidation';
 import { 
@@ -199,6 +201,12 @@ export const ProjectsPage: React.FC = () => {
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   
+  // Force complete state
+  const [forceCompleteDialogOpen, setForceCompleteDialogOpen] = useState(false);
+  const [projectToComplete, setProjectToComplete] = useState<Project | null>(null);
+  const [hasActivePrint, setHasActivePrint] = useState(false);
+  const [confirmNoActivePrint, setConfirmNoActivePrint] = useState(false);
+  
   // Assignment choice modal state
   const [assignmentChoiceOpen, setAssignmentChoiceOpen] = useState(false);
   const [createdProject, setCreatedProject] = useState<Project | null>(null);
@@ -264,6 +272,45 @@ export const ProjectsPage: React.FC = () => {
     }
     setDeleteDialogOpen(false);
     setProjectToDelete(null);
+  };
+
+  // Force complete handlers
+  const handleForceComplete = (project: Project) => {
+    const hasActive = hasActivePrintForProject(project.id);
+    setProjectToComplete(project);
+    setHasActivePrint(hasActive);
+    setConfirmNoActivePrint(false);
+    setForceCompleteDialogOpen(true);
+  };
+
+  const confirmForceComplete = () => {
+    if (!projectToComplete) return;
+    
+    const result = forceCompleteProject(
+      projectToComplete.id, 
+      hasActivePrint ? confirmNoActivePrint : true
+    );
+    
+    if (result.success) {
+      toast({
+        title: language === 'he' ? 'הפרויקט הסתיים' : 'Project Completed',
+        description: language === 'he' 
+          ? `${result.finalQuantity} יחידות הושלמו. ${result.cancelledCycles} מחזורים בוטלו.`
+          : `${result.finalQuantity} units completed. ${result.cancelledCycles} cycles cancelled.`,
+      });
+      refreshData();
+    } else if (result.error) {
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: result.error,
+        variant: 'destructive',
+      });
+    }
+    
+    setForceCompleteDialogOpen(false);
+    setProjectToComplete(null);
+    setHasActivePrint(false);
+    setConfirmNoActivePrint(false);
   };
 
   const refreshData = () => {
@@ -1144,6 +1191,13 @@ export const ProjectsPage: React.FC = () => {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="bg-background border shadow-lg">
+                          {/* Force Complete option - only for non-completed projects */}
+                          {project.status !== 'completed' && (
+                            <DropdownMenuItem onClick={() => handleForceComplete(project)}>
+                              <CheckCircle className="w-4 h-4 mr-2 text-success" />
+                              {language === 'he' ? 'סיים פרויקט' : 'Complete Project'}
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onClick={() => handleReportIssue(project.id)}>
                             <AlertTriangle className="w-4 h-4 mr-2 text-warning" />
                             {language === 'he' ? 'דווח על בעיה' : 'Report Issue'}
@@ -1214,6 +1268,89 @@ export const ProjectsPage: React.FC = () => {
             </AlertDialogCancel>
             <AlertDialogAction onClick={confirmDeleteProject} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               {language === 'he' ? 'מחק' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Force Complete Confirmation Dialog */}
+      <AlertDialog open={forceCompleteDialogOpen} onOpenChange={setForceCompleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {language === 'he' ? 'סיום פרויקט מוקדם' : 'Complete Project Early'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  {language === 'he' 
+                    ? `האם אתה בטוח שברצונך לסיים את "${projectToComplete?.name}"?` 
+                    : `Are you sure you want to complete "${projectToComplete?.name}"?`}
+                </p>
+                
+                {projectToComplete && (
+                  <div className="bg-muted p-3 rounded-lg space-y-1 text-sm">
+                    <p>
+                      <strong>{language === 'he' ? 'יעד:' : 'Target:'}</strong> {projectToComplete.quantityTarget}
+                    </p>
+                    <p>
+                      <strong>{language === 'he' ? 'בפועל:' : 'Actual:'}</strong> {projectToComplete.quantityGood}
+                    </p>
+                    {projectToComplete.quantityTarget > projectToComplete.quantityGood && (
+                      <p className="text-warning">
+                        {language === 'he' 
+                          ? `חסרות ${projectToComplete.quantityTarget - projectToComplete.quantityGood} יחידות`
+                          : `Missing ${projectToComplete.quantityTarget - projectToComplete.quantityGood} units`}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Warning if there's an active print */}
+                {hasActivePrint && (
+                  <div className="bg-destructive/10 border border-destructive p-3 rounded-lg">
+                    <div className="flex items-center gap-2 text-destructive font-medium mb-2">
+                      <AlertTriangle className="w-5 h-5" />
+                      {language === 'he' ? 'יש הדפסה פעילה!' : 'Active Print Running!'}
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {language === 'he' 
+                        ? 'יש מחזור שרץ כרגע על מדפסת. וודא שהמדפסת לא באמצע הדפסה לפני שממשיך.'
+                        : 'A cycle is currently in progress. Make sure the printer is not mid-print before continuing.'}
+                    </p>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <Checkbox 
+                        checked={confirmNoActivePrint}
+                        onCheckedChange={(checked) => setConfirmNoActivePrint(!!checked)}
+                      />
+                      <span className="text-sm">
+                        {language === 'he' 
+                          ? 'אני מאשר שאין הדפסה רצה כרגע'
+                          : 'I confirm no print is currently running'}
+                      </span>
+                    </label>
+                  </div>
+                )}
+
+                <p className="text-warning font-medium">
+                  {language === 'he' 
+                    ? 'כל ההדפסות המתוכננות יבוטלו והמדפסות יתפנו.'
+                    : 'All planned prints will be cancelled and printers freed.'}
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmForceComplete}
+              disabled={hasActivePrint && !confirmNoActivePrint}
+              className="bg-success text-success-foreground hover:bg-success/90"
+            >
+              <CheckCircle className="w-4 h-4 mr-2" />
+              {language === 'he' ? 'סיים פרויקט' : 'Complete Project'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

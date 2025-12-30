@@ -147,7 +147,10 @@ export interface PlannedCycle {
   endTime: string;
   shift: 'day' | 'end_of_day';
   suggestedSpoolId?: string;
-  status: 'planned' | 'in_progress' | 'completed' | 'failed';
+  status: 'planned' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+  // Cancellation fields (when status = 'cancelled')
+  cancelledAt?: string;
+  cancelReason?: string;
   // New fields for execution readiness
   readinessState: CycleReadinessState;
   readinessDetails?: string; // Human-readable explanation
@@ -2381,6 +2384,122 @@ export const getProjectsWithPlannedCycles = (): Project[] => {
   return projects.filter(p => 
     projectIdsWithCycles.has(p.id) && p.status !== 'completed'
   );
+};
+
+// ============= FORCE COMPLETE PROJECT =============
+
+/**
+ * Check if a project has any in_progress cycles
+ * Use this before opening force complete dialog
+ */
+export const hasActivePrintForProject = (projectId: string): boolean => {
+  return getPlannedCycles().some(c => c.projectId === projectId && c.status === 'in_progress');
+};
+
+/**
+ * Force complete a project early (even if not all units produced)
+ * - Updates project status to 'completed'
+ * - Cancels all future cycles (marked as 'cancelled', not deleted)
+ * - Releases printers that were reserved for cancelled cycles
+ * - Triggers replan to fill the gaps
+ */
+export const forceCompleteProject = (
+  projectId: string, 
+  confirmNoActivePrint: boolean = false
+): { 
+  success: boolean; 
+  cancelledCycles: number;
+  finalQuantity: number;
+  hasActivePrint: boolean;
+  error?: string;
+} => {
+  // 1. Get the project
+  const project = getProject(projectId);
+  if (!project) {
+    return { success: false, cancelledCycles: 0, finalQuantity: 0, hasActivePrint: false, error: 'project_not_found' };
+  }
+  
+  // 2. Check if there's an in_progress cycle (only check, don't modify)
+  const hasActive = hasActivePrintForProject(projectId);
+  
+  if (hasActive && !confirmNoActivePrint) {
+    // Don't proceed - return early so UI can show warning
+    return { 
+      success: false, 
+      cancelledCycles: 0, 
+      finalQuantity: project.quantityGood, 
+      hasActivePrint: true,
+      error: 'active_print_running' 
+    };
+  }
+  
+  // 3. Cancel future cycles (don't delete - mark as cancelled)
+  const cycles = getPlannedCycles();
+  const now = new Date().toISOString();
+  
+  const updated = cycles.map(c => {
+    const isThisProject = c.projectId === projectId;
+    const isCancellable = c.status === 'planned' || 
+                          c.readinessState === 'waiting_for_spool';
+    
+    if (isThisProject && isCancellable) {
+      return {
+        ...c,
+        status: 'cancelled' as const,
+        cancelledAt: now,
+        cancelReason: 'project_force_completed',
+      };
+    }
+    return c;
+  });
+  
+  const cancelledCount = updated.filter(c => 
+    c.projectId === projectId && 
+    c.status === 'cancelled' && 
+    c.cancelledAt === now
+  ).length;
+  
+  setItem(KEYS.PLANNED_CYCLES, updated);
+  
+  // 4. Release printers that were reserved ONLY for cancelled cycles
+  const printers = getPrinters();
+  const cancelledCyclesForProject = updated.filter(
+    c => c.projectId === projectId && c.status === 'cancelled' && c.cancelledAt === now
+  );
+  const affectedPrinterIds = new Set(cancelledCyclesForProject.map(c => c.printerId));
+  
+  for (const printerId of affectedPrinterIds) {
+    const printer = printers.find(p => p.id === printerId);
+    if (!printer) continue;
+    
+    // CRITICAL: Only release if printer is in 'reserved' state (NOT 'in_use')
+    if (printer.mountState !== 'reserved') continue;
+    
+    // Check if there are any remaining active cycles for this printer
+    const hasOtherActiveCycles = updated.some(c => 
+      c.printerId === printerId && 
+      c.status !== 'cancelled' && 
+      c.status !== 'completed' && 
+      c.status !== 'failed'
+    );
+    
+    if (!hasOtherActiveCycles) {
+      updatePrinter(printerId, { mountState: 'idle' });
+    }
+  }
+  
+  // 5. Update project to completed
+  updateProject(projectId, { status: 'completed' }, true); // skipAutoReplan = true
+  
+  // 6. Trigger replan to fill the gaps
+  scheduleAutoReplan('project_force_completed');
+  
+  return { 
+    success: true, 
+    cancelledCycles: cancelledCount,
+    finalQuantity: project.quantityGood,
+    hasActivePrint: false,
+  };
 };
 
 // ============= RESET ALL DATA =============
