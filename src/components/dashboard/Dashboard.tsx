@@ -27,7 +27,7 @@ import {
   ChevronDown,
   Pencil,
 } from 'lucide-react';
-import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle, getProducts, getProjects, updatePrinter } from '@/services/storage';
+import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle, getProducts, getProjects, updatePrinter, getPrinter } from '@/services/storage';
 import { StartPrintModal } from './StartPrintModal';
 import { ManualStartPrintModal } from './ManualStartPrintModal';
 import { PrinterActionsModal } from './PrinterActionsModal';
@@ -125,7 +125,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     const isPlanned = cycle.status === 'planned';
     
     const handleStartCycle = () => {
-      // Open the start print modal instead of directly starting
+      // Check if printer has material loaded
+      const printer = getPrinter(printerId);
+      const hasMaterialLoaded = printer?.mountedSpoolId || printer?.mountedColor;
+      
+      if (!hasMaterialLoaded) {
+        // Show warning toast directing to printers page
+        toast({
+          title: language === 'he' ? 'יש להזין חומר גלם' : 'Load material first',
+          description: language === 'he' 
+            ? 'יש לגשת לדף המדפסות ולהזין תחילה חומר גלם למדפסת'
+            : 'Go to the Printers page and load material on the printer first',
+          variant: 'destructive',
+        });
+        return;
+      }
+      
+      // Open the start print modal
       setSelectedCycleForStart(cycle);
       setSelectedPrinterId(printerId);
       setStartPrintModalOpen(true);
