@@ -1781,9 +1781,19 @@ export const finishPrinterJob = (printerId: string, gramsConsumed: number): void
   );
   
   if (index >= 0) {
+    const newOpenTotalGrams = Math.max(0, items[index].openTotalGrams - gramsConsumed);
+    let newOpenSpoolCount = items[index].openSpoolCount || 0;
+    
+    // If openTotalGrams drops below 50g, consider a spool empty and decrement count
+    if (newOpenTotalGrams < 50 && newOpenSpoolCount > 0) {
+      newOpenSpoolCount = Math.max(0, newOpenSpoolCount - 1);
+      console.log(`[finishPrinterJob] Spool emptied for ${color}, openSpoolCount now: ${newOpenSpoolCount}`);
+    }
+    
     items[index] = {
       ...items[index],
-      openTotalGrams: Math.max(0, items[index].openTotalGrams - gramsConsumed),
+      openTotalGrams: newOpenTotalGrams < 50 ? 0 : newOpenTotalGrams, // Zero out if below threshold
+      openSpoolCount: newOpenSpoolCount,
       updatedAt: new Date().toISOString(),
     };
     setItem(KEYS.COLOR_INVENTORY, items);
