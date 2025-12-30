@@ -77,7 +77,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onN
         fixed top-0 z-[60] h-full w-72 bg-sidebar border-e border-sidebar-border
         transition-transform duration-300 ease-in-out will-change-transform
         ${direction === 'rtl' ? 'right-0' : 'left-0'}
-        ${sidebarOpen ? 'translate-x-0' : direction === 'rtl' ? '-translate-x-full' : '-translate-x-full'}
+        ${sidebarOpen ? 'translate-x-0' : direction === 'rtl' ? 'translate-x-full' : '-translate-x-full'}
         lg:translate-x-0
       `}>
         <div className="flex flex-col h-full">
