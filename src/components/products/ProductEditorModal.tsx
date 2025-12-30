@@ -275,10 +275,11 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
               <Label>{language === 'he' ? 'גרמים ליחידה' : 'Grams per Unit'} *</Label>
               <Input
                 type="number"
-                min={1}
+                min={0.1}
+                step="0.1"
                 value={formData.gramsPerUnit}
                 onChange={(e) => {
-                  setFormData({ ...formData, gramsPerUnit: parseInt(e.target.value) || 0 });
+                  setFormData({ ...formData, gramsPerUnit: parseFloat(e.target.value) || 0 });
                   if (errors.gramsPerUnit) setErrors({ ...errors, gramsPerUnit: undefined });
                 }}
                 className={errors.gramsPerUnit ? 'border-error' : ''}
