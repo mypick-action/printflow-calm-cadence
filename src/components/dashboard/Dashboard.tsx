@@ -125,23 +125,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     const isPlanned = cycle.status === 'planned';
     
     const handleStartCycle = () => {
-      // Check if printer has material loaded
-      const printer = getPrinter(printerId);
-      const hasMaterialLoaded = printer?.mountedSpoolId || printer?.mountedColor;
-      
-      if (!hasMaterialLoaded) {
-        // Show warning toast directing to printers page
-        toast({
-          title: language === 'he' ? 'יש להזין חומר גלם' : 'Load material first',
-          description: language === 'he' 
-            ? 'יש לגשת לדף המדפסות ולהזין תחילה חומר גלם למדפסת'
-            : 'Go to the Printers page and load material on the printer first',
-          variant: 'destructive',
-        });
-        return;
-      }
-      
-      // Open the start print modal
+      // Open the start print modal - it will handle material loading
       setSelectedCycleForStart(cycle);
       setSelectedPrinterId(printerId);
       setStartPrintModalOpen(true);
@@ -562,7 +546,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
       <PlanningDebugPanel />
 
       {/* Start Print Modal */}
-      {selectedCycleForStart && (
+      {selectedCycleForStart && selectedPrinterId && (
         <StartPrintModal
           open={startPrintModalOpen}
           onOpenChange={(open) => {
@@ -580,19 +564,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
             material: selectedCycleForStart.material || 'PLA',
             gramsPerCycle: selectedCycleForStart.gramsNeeded,
             units: selectedCycleForStart.units,
+            cycleHours: selectedCycleForStart.cycleHours,
           }}
+          printerId={selectedPrinterId}
           onConfirm={() => {
-            // Mark cycle as in_progress after confirmation
-            updatePlannedCycle(selectedCycleForStart.id, { status: 'in_progress' });
-            
-            // Also update printer's mounted color to reflect the loaded spool
-            if (selectedPrinterId && selectedCycleForStart.color) {
-              updatePrinter(selectedPrinterId, {
-                mountedColor: selectedCycleForStart.color,
-                currentMaterial: selectedCycleForStart.material || 'PLA',
-              });
-            }
-            
+            // Modal handles: loadSpoolOnPrinter, startPrinterJob, updatePlannedCycle, scheduleAutoReplan
             toast({
               title: language === 'he' ? 'הדפסה התחילה' : 'Print Started',
               description: language === 'he' 
