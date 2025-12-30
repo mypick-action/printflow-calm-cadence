@@ -803,33 +803,136 @@ export const deleteProducts = (ids: string[]): number => {
 };
 
 export const deleteProjects = (ids: string[]): number => {
-  const projects = getProjects();
+  const projects = getProjectsLocal();
   const idsSet = new Set(ids);
   const filtered = projects.filter(p => !idsSet.has(p.id));
   const deletedCount = projects.length - filtered.length;
   if (deletedCount > 0) {
     setItem(KEYS.PROJECTS, filtered);
     scheduleAutoReplan('projects_deleted');
+    // Queue cloud deletes
+    ids.forEach(id => {
+      if (idsSet.has(id)) {
+        addToSyncQueue('delete', 'project', id, null);
+      }
+    });
   }
   return deletedCount;
 };
 
 // ============= PROJECTS =============
 
-export const getProjects = (): Project[] => {
+// Sync-related imports and state
+import * as cloudStorage from '@/services/cloudStorage';
+import { addToSyncQueue, getQueueStatus } from '@/services/syncQueue';
+import { toast } from 'sonner';
+
+// Get workspaceId from auth context - this will be set by the app
+let _workspaceIdGetter: (() => string | null) | null = null;
+
+export const setWorkspaceIdGetter = (getter: () => string | null): void => {
+  _workspaceIdGetter = getter;
+};
+
+const getWorkspaceId = (): string | null => {
+  return _workspaceIdGetter ? _workspaceIdGetter() : null;
+};
+
+// SYNC local projects to localStorage (always available, no async)
+export const getProjectsLocal = (): Project[] => {
   const projects = getItem<Project[]>(KEYS.PROJECTS, []);
-  // Don't auto-populate with demo data - respect bootstrap choice
   return projects;
 };
 
+// ASYNC: Read from cloud first, fallback to local
+export const getProjects = (): Project[] => {
+  // For now, return local projects synchronously
+  // Cloud sync happens in background via getProjectsFromCloud
+  return getProjectsLocal();
+};
+
+// Async version that tries cloud first
+export const getProjectsFromCloud = async (): Promise<Project[]> => {
+  const workspaceId = getWorkspaceId();
+  
+  if (!workspaceId) {
+    console.log('[Projects] No workspaceId, using local');
+    return getProjectsLocal();
+  }
+  
+  try {
+    const cloudProjects = await cloudStorage.getProjects(workspaceId);
+    
+    if (cloudProjects && cloudProjects.length > 0) {
+      // Map cloud format to local format
+      const localProjects: Project[] = cloudProjects.map(mapCloudProjectToLocal);
+      // Update local cache
+      setItem(KEYS.PROJECTS, localProjects);
+      console.log('[Projects] Loaded from cloud:', localProjects.length);
+      return localProjects;
+    }
+  } catch (e) {
+    console.warn('[Projects] Cloud unavailable, using local:', e);
+  }
+  
+  return getProjectsLocal();
+};
+
+// Map cloud project format to local format
+const mapCloudProjectToLocal = (p: cloudStorage.DbProject): Project => {
+  return {
+    id: p.id,
+    name: p.name,
+    productId: p.product_id ?? '',
+    productName: '', // Will be filled by component if needed
+    preferredPresetId: p.preset_id ?? undefined,
+    quantityTarget: p.quantity_target ?? 1,
+    quantityGood: p.quantity_completed ?? 0,
+    quantityScrap: p.quantity_failed ?? 0,
+    dueDate: p.deadline ?? '',
+    urgency: (p.priority === 'urgent' || p.priority === 'critical') 
+      ? p.priority as 'urgent' | 'critical' 
+      : 'normal',
+    urgencyManualOverride: false,
+    status: (p.status ?? 'pending') as Project['status'],
+    color: '', // Local-only field
+    createdAt: p.created_at ?? new Date().toISOString(),
+    parentProjectId: p.parent_project_id ?? undefined,
+    customCycleHours: p.custom_cycle_hours ?? undefined,
+    isRecoveryProject: p.is_recovery_project ?? false,
+  };
+};
+
+// Map local project to cloud format
+const mapLocalProjectToCloud = (p: Project): Omit<cloudStorage.DbProject, 'workspace_id' | 'created_at' | 'updated_at'> => {
+  return {
+    id: p.id,
+    name: p.name,
+    product_id: p.productId || null,
+    preset_id: p.preferredPresetId || null,
+    quantity_target: p.quantityTarget,
+    quantity_completed: p.quantityGood,
+    quantity_failed: p.quantityScrap,
+    status: p.status,
+    priority: p.urgency,
+    deadline: p.dueDate || null,
+    assigned_printer_id: null,
+    custom_cycle_hours: p.customCycleHours ?? null,
+    is_recovery_project: p.isRecoveryProject ?? false,
+    parent_project_id: p.parentProjectId || null,
+    notes: null,
+  };
+};
+
 export const getProject = (id: string): Project | undefined => {
-  return getProjects().find(p => p.id === id);
+  return getProjectsLocal().find(p => p.id === id);
 };
 
 export const getActiveProjects = (): Project[] => {
-  return getProjects().filter(p => p.status !== 'completed');
+  return getProjectsLocal().filter(p => p.status !== 'completed');
 };
 
+// CREATE: Save locally first, then try cloud
 export const createProject = (project: Omit<Project, 'id' | 'createdAt' | 'quantityGood' | 'quantityScrap'>): Project => {
   const newProject: Project = {
     ...project,
@@ -838,14 +941,38 @@ export const createProject = (project: Omit<Project, 'id' | 'createdAt' | 'quant
     quantityGood: 0,
     quantityScrap: 0,
   };
-  const projects = getProjects();
+  
+  // 1. Save locally first (always works)
+  const projects = getProjectsLocal();
   setItem(KEYS.PROJECTS, [...projects, newProject]);
   scheduleAutoReplan('project_created');
+  
+  // 2. Try to save to cloud (async, non-blocking)
+  const workspaceId = getWorkspaceId();
+  if (workspaceId) {
+    const cloudData = mapLocalProjectToCloud(newProject);
+    cloudStorage.createProjectWithId(workspaceId, cloudData)
+      .then(result => {
+        if (result) {
+          console.log('[Projects] Saved to cloud:', newProject.id);
+        } else {
+          // Cloud failed - add to sync queue
+          addToSyncQueue('create', 'project', newProject.id, cloudData);
+          toast.warning('נשמר מקומית. יסונכרן כשהחיבור יחזור.');
+        }
+      })
+      .catch(() => {
+        addToSyncQueue('create', 'project', newProject.id, cloudData);
+        toast.warning('נשמר מקומית. יסונכרן כשהחיבור יחזור.');
+      });
+  }
+  
   return newProject;
 };
 
+// UPDATE: Update locally first, then try cloud
 export const updateProject = (id: string, updates: Partial<Project>, skipAutoReplan: boolean = false): Project | undefined => {
-  const projects = getProjects();
+  const projects = getProjectsLocal();
   const index = projects.findIndex(p => p.id === id);
   if (index === -1) return undefined;
   
@@ -861,15 +988,50 @@ export const updateProject = (id: string, updates: Partial<Project>, skipAutoRep
     }
   }
   
+  // Try to update in cloud (async, non-blocking)
+  const workspaceId = getWorkspaceId();
+  if (workspaceId) {
+    const cloudUpdates = mapLocalProjectToCloud(projects[index]);
+    cloudStorage.updateProject(id, cloudUpdates)
+      .then(result => {
+        if (result) {
+          console.log('[Projects] Updated in cloud:', id);
+        } else {
+          addToSyncQueue('update', 'project', id, cloudUpdates);
+        }
+      })
+      .catch(() => {
+        addToSyncQueue('update', 'project', id, cloudUpdates);
+      });
+  }
+  
   return projects[index];
 };
 
+// DELETE: Delete locally first, then try cloud
 export const deleteProject = (id: string): boolean => {
-  const projects = getProjects();
+  const projects = getProjectsLocal();
   const filtered = projects.filter(p => p.id !== id);
   if (filtered.length === projects.length) return false;
   setItem(KEYS.PROJECTS, filtered);
   scheduleAutoReplan('project_deleted');
+  
+  // Try to delete from cloud (async, non-blocking)
+  const workspaceId = getWorkspaceId();
+  if (workspaceId) {
+    cloudStorage.deleteProject(id)
+      .then(result => {
+        if (result) {
+          console.log('[Projects] Deleted from cloud:', id);
+        } else {
+          addToSyncQueue('delete', 'project', id, null);
+        }
+      })
+      .catch(() => {
+        addToSyncQueue('delete', 'project', id, null);
+      });
+  }
+  
   return true;
 };
 

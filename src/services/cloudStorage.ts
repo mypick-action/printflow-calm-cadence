@@ -467,6 +467,31 @@ export const createProject = async (
   return data;
 };
 
+// Create project with specific ID (for local-first sync)
+// Uses upsert to handle both new creation and conflict resolution
+export const createProjectWithId = async (
+  workspaceId: string,
+  project: Omit<DbProject, 'workspace_id' | 'created_at' | 'updated_at'> & { id: string }
+): Promise<DbProject | null> => {
+  const { data, error } = await supabase
+    .from('projects')
+    .upsert({
+      ...project,
+      workspace_id: workspaceId,
+    }, {
+      onConflict: 'id',
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error creating project with ID:', error);
+    return null;
+  }
+  
+  return data;
+};
+
 export const updateProject = async (id: string, updates: Partial<DbProject>): Promise<DbProject | null> => {
   const { data, error } = await supabase
     .from('projects')

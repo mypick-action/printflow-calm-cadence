@@ -319,3 +319,74 @@ export async function getCloudLocalComparison(workspaceId: string): Promise<{
     lastHydratedAt: lastHydratedAt ? new Date(Number(lastHydratedAt)).toISOString() : null,
   };
 }
+
+/**
+ * Idempotent migration: Push local projects to cloud
+ * Safe to run multiple times - only uploads projects not already in cloud
+ */
+export async function migrateLocalProjectsToCloud(
+  workspaceId: string
+): Promise<{ migrated: number; skipped: number; errors: number }> {
+  if (!workspaceId) {
+    return { migrated: 0, skipped: 0, errors: 0 };
+  }
+
+  console.log('[CloudBridge] Starting project migration for workspace:', workspaceId);
+
+  // Get local projects
+  const localProjects = safeJsonParse<Project[]>(localStorage.getItem(KEYS.PROJECTS)) || [];
+  if (localProjects.length === 0) {
+    return { migrated: 0, skipped: 0, errors: 0 };
+  }
+
+  // Get cloud projects
+  const cloudProjects = await getProjects(workspaceId);
+  const cloudIds = new Set(cloudProjects.map(p => p.id));
+
+  // Find projects only in local
+  const toMigrate = localProjects.filter(p => !cloudIds.has(p.id));
+
+  let migrated = 0;
+  let errors = 0;
+
+  for (const project of toMigrate) {
+    try {
+      const { createProjectWithId } = await import('@/services/cloudStorage');
+      const cloudData = {
+        id: project.id,
+        name: project.name,
+        product_id: project.productId || null,
+        preset_id: project.preferredPresetId || null,
+        quantity_target: project.quantityTarget,
+        quantity_completed: project.quantityGood,
+        quantity_failed: project.quantityScrap,
+        status: project.status,
+        priority: project.urgency,
+        deadline: project.dueDate || null,
+        assigned_printer_id: null,
+        custom_cycle_hours: project.customCycleHours ?? null,
+        is_recovery_project: project.isRecoveryProject ?? false,
+        parent_project_id: project.parentProjectId || null,
+        notes: null,
+      };
+      
+      const result = await createProjectWithId(workspaceId, cloudData);
+      if (result) {
+        migrated++;
+      } else {
+        errors++;
+      }
+    } catch (e) {
+      console.error('[CloudBridge] Migration failed for project:', project.id, e);
+      errors++;
+    }
+  }
+
+  console.log('[CloudBridge] Migration complete:', { migrated, skipped: localProjects.length - toMigrate.length, errors });
+
+  return {
+    migrated,
+    skipped: localProjects.length - toMigrate.length,
+    errors,
+  };
+}
