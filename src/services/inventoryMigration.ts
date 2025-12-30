@@ -7,6 +7,7 @@ import {
   getPrinters,
   updatePrinter,
   getPrintersHoldingColor,
+  KEYS,
 } from './storage';
 import { normalizeColor } from './colorNormalization';
 
@@ -93,7 +94,7 @@ export const migrateInventoryData = (): {
   
   // Save updated inventory if any changes
   if (colorItemsUpdated > 0) {
-    localStorage.setItem('printflow_color_inventory', JSON.stringify(updatedItems));
+    localStorage.setItem(KEYS.COLOR_INVENTORY, JSON.stringify(updatedItems));
   }
 
   // Migrate Printers
