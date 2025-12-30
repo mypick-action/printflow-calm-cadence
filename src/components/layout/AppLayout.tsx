@@ -48,9 +48,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onN
   };
   
   return (
-    <div className="min-h-screen gradient-bg" dir={direction}>
+    <div className="min-h-screen gradient-bg overflow-x-hidden" dir={direction}>
       {/* Mobile header */}
-      <header className="lg:hidden sticky top-0 z-50 bg-card/95 backdrop-blur-sm border-b border-border px-4 py-3">
+      <header className={`
+        lg:hidden sticky top-0 z-40 bg-card/95 backdrop-blur-sm border-b border-border px-4 py-3 mobile-safe-top
+        transition-opacity duration-300
+        ${sidebarOpen ? 'pointer-events-none opacity-50' : ''}
+      `}>
         <div className="flex items-center justify-between">
           <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}>
             <Menu className="w-6 h-6" />
@@ -70,10 +74,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onN
       
       {/* Sidebar */}
       <aside className={`
-        fixed top-0 z-50 h-full w-72 bg-sidebar border-e border-sidebar-border
-        transition-transform duration-300 ease-in-out
+        fixed top-0 z-[60] h-full w-72 bg-sidebar border-e border-sidebar-border
+        transition-transform duration-300 ease-in-out will-change-transform
         ${direction === 'rtl' ? 'right-0' : 'left-0'}
-        ${sidebarOpen ? 'translate-x-0' : direction === 'rtl' ? 'translate-x-full' : '-translate-x-full'}
+        ${sidebarOpen ? 'translate-x-0' : direction === 'rtl' ? '-translate-x-full' : '-translate-x-full'}
         lg:translate-x-0
       `}>
         <div className="flex flex-col h-full">
@@ -113,29 +117,29 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, currentPage, onN
               const isActive = currentPage === item.id;
               
               return (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    onNavigate(item.id);
-                    setSidebarOpen(false);
-                  }}
-                  className={`
-                    w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200
-                    ${isActive 
-                      ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-soft' 
-                      : 'text-sidebar-foreground hover:bg-sidebar-accent'
-                    }
-                  `}
-                >
-                  <Icon className="w-5 h-5" />
-                  <span className="font-medium">{item.label}</span>
-                </button>
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      onNavigate(item.id);
+                      setSidebarOpen(false);
+                    }}
+                    className={`
+                      w-full flex items-center gap-3 px-4 py-4 rounded-xl transition-all duration-200 min-h-[48px]
+                      ${isActive 
+                        ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-soft' 
+                        : 'text-sidebar-foreground hover:bg-sidebar-accent'
+                      }
+                    `}
+                  >
+                    <Icon className="w-5 h-5 flex-shrink-0" />
+                    <span className="font-medium">{item.label}</span>
+                  </button>
               );
             })}
           </nav>
           
           {/* Footer with language switcher and logout */}
-          <div className="p-4 border-t border-sidebar-border space-y-3">
+          <div className="p-4 border-t border-sidebar-border space-y-3 mobile-safe-bottom">
             {/* Language switcher (desktop) */}
             <div className="hidden lg:block">
               <LanguageSwitcher />
