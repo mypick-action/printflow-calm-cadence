@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -101,6 +102,7 @@ import { scheduleAutoReplan } from '@/services/autoReplan';
 import { runReplanNow } from '@/services/planningRecalculator';
 import { BlockingIssue, PlanningWarning } from '@/services/planningEngine';
 import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
+import { migrateLocalProjectsToCloud } from '@/services/cloudBridge';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -190,6 +192,8 @@ const MaterialStatusPreview: React.FC<{
 
 export const ProjectsPage: React.FC = () => {
   const { language } = useLanguage();
+  const { workspaceId } = useAuth();
+  const migrationRan = useRef(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -346,6 +350,18 @@ export const ProjectsPage: React.FC = () => {
     const unsubscribe = subscribeToInventoryChanges(refreshData);
     return unsubscribe;
   }, []);
+
+  // Run idempotent migration of local projects to cloud (once per session)
+  useEffect(() => {
+    if (workspaceId && !migrationRan.current) {
+      migrationRan.current = true;
+      migrateLocalProjectsToCloud(workspaceId).then((result) => {
+        if (result.migrated > 0) {
+          console.log(`[ProjectsPage] Migrated ${result.migrated} projects to cloud`);
+        }
+      });
+    }
+  }, [workspaceId]);
 
   // Status configuration with Hebrew-first labels
   const statusConfig: Record<ProjectStatus, { 

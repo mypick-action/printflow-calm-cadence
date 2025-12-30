@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { setWorkspaceIdGetter } from '@/services/storage';
 
 interface Profile {
   id: string;
@@ -39,6 +40,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<Profile | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const workspaceIdRef = useRef<string | null>(null);
+
+  // Keep ref in sync with state for the getter
+  useEffect(() => {
+    workspaceIdRef.current = workspaceId;
+  }, [workspaceId]);
+
+  // Set up the workspaceId getter for storage layer (once on mount)
+  useEffect(() => {
+    setWorkspaceIdGetter(() => workspaceIdRef.current);
+  }, []);
 
   const fetchProfile = async (userId: string) => {
     try {
