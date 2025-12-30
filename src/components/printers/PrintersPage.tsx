@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Printer as PrinterIcon, Settings2, CircleDot, Box, Layers, Plus, AlertTriangle, Power, PowerOff, RefreshCw, Package, ArrowRight } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { LoadRecommendationsPanel } from '@/components/planning/LoadRecommendationsPanel';
+
 import { format } from 'date-fns';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { cn } from '@/lib/utils';
@@ -658,8 +658,6 @@ export const PrintersPage: React.FC = () => {
         </Button>
       </div>
 
-      {/* Load Recommendations Panel - Full details shown here */}
-      <LoadRecommendationsPanel onRefresh={refreshData} showFullDetails={true} />
 
       {/* Active Printers - Sortable Grid */}
       <DndContext

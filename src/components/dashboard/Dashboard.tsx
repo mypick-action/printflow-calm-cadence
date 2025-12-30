@@ -43,7 +43,7 @@ import { RecalculateButton } from '@/components/planning/RecalculateButton';
 import { RecalculateModal } from '@/components/planning/RecalculateModal';
 import { CapacityChangeBanner } from '@/components/planning/CapacityChangeBanner';
 import { LoadedSpoolsModal } from '@/components/planning/LoadedSpoolsModal';
-import { LoadRecommendationsPanel } from '@/components/planning/LoadRecommendationsPanel';
+
 import { PlanningDebugPanel } from './PlanningDebugPanel';
 import { format } from 'date-fns';
 
@@ -441,10 +441,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
         </Card>
       )}
 
-      {/* Load Recommendations - Indicator only, full details on Printers page */}
-      {todayPlan.isWorkday && todayPlan.totalCycles > 0 && (
-        <LoadRecommendationsPanel showFullDetails={false} />
-      )}
 
       {/* Attention items */}
       {hasAttentionItems && todayPlan.isWorkday && (

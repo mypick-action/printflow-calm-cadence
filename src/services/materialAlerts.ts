@@ -16,7 +16,7 @@ import { getAvailableGramsByColor, getMaterialNeedsByColor } from './materialAda
 
 export interface MaterialAlert {
   id: string;
-  type: 'low_material' | 'insufficient_for_jobs' | 'no_matching_spools' | 'printer_needs_spool';
+  type: 'low_material' | 'insufficient_for_jobs' | 'no_matching_spools';
   severity: 'info' | 'warning' | 'critical';
   title: string;
   titleHe: string;
@@ -47,7 +47,7 @@ export const generateMaterialAlerts = (): MaterialAlert[] => {
   alerts.push(...checkLowMaterialAlerts());
   alerts.push(...checkInsufficientForJobsAlerts());
   alerts.push(...checkNoMatchingSpoolsAlerts());
-  alerts.push(...checkPrintersNeedingSpoolAlerts());
+  // printer_needs_spool alerts removed - spool loading now happens at print start
   
   return alerts;
 };
@@ -169,56 +169,7 @@ const checkNoMatchingSpoolsAlerts = (): MaterialAlert[] => {
   
   return alerts;
 };
-
-/**
- * Check for printers that need spool selection (color without spoolId)
- */
-const checkPrintersNeedingSpoolAlerts = (): MaterialAlert[] => {
-  const printers = getPrinters().filter(p => p.status === 'active');
-  const alerts: MaterialAlert[] = [];
-  
-  for (const printer of printers) {
-    if (!printer.hasAMS) {
-      // Non-AMS: check if has color but no spoolId
-      if (printer.mountedColor && !printer.mountedSpoolId) {
-        alerts.push({
-          id: `needs_spool_${printer.id}`,
-          type: 'printer_needs_spool',
-          severity: 'warning',
-          title: `Select spool for ${printer.name}`,
-          titleHe: `בחר גליל ל${printer.name}`,
-          message: `Printer has ${printer.mountedColor} color set but no spool selected from inventory`,
-          messageHe: `למדפסת מוגדר צבע ${printer.mountedColor} אבל לא נבחר גליל מהמלאי`,
-          color: printer.mountedColor,
-          printerId: printer.id,
-          printerName: printer.name,
-        });
-      }
-    } else {
-      // AMS: check each slot
-      if (printer.amsSlotStates) {
-        for (const slot of printer.amsSlotStates) {
-          if (slot.color && !slot.spoolId) {
-            alerts.push({
-              id: `needs_spool_${printer.id}_slot_${slot.slotIndex}`,
-              type: 'printer_needs_spool',
-              severity: 'warning',
-              title: `Select spool for ${printer.name} Slot ${slot.slotIndex + 1}`,
-              titleHe: `בחר גליל ל${printer.name} חריץ ${slot.slotIndex + 1}`,
-              message: `AMS slot has ${slot.color} color set but no spool selected from inventory`,
-              messageHe: `לחריץ ה-AMS מוגדר צבע ${slot.color} אבל לא נבחר גליל מהמלאי`,
-              color: slot.color,
-              printerId: printer.id,
-              printerName: printer.name,
-            });
-          }
-        }
-      }
-    }
-  }
-  
-  return alerts;
-};
+// checkPrintersNeedingSpoolAlerts removed - spool loading now happens automatically at print start
 
 /**
  * Get critical alerts only
