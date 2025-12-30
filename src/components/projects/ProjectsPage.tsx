@@ -228,10 +228,10 @@ export const ProjectsPage: React.FC = () => {
   const [useCustomColor, setUseCustomColor] = useState(false);
   const [customColorName, setCustomColorName] = useState('');
   
-  // Filter state - Status filter (primary, default to in_progress only)
+  // Filter state - Status filter (primary, default to pending + in_progress)
   const [statusFilters, setStatusFilters] = useState<Record<ProjectStatus, boolean>>({
-    pending: false,
-    in_progress: true, // Default ON - "What are we working on now?"
+    pending: true, // Default ON - "ממתינים"
+    in_progress: true, // Default ON - "בתהליך"
     on_hold: false,
     completed: false,
   });
