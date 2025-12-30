@@ -10,7 +10,7 @@ import {
   savePlanningMeta,
   KEYS,
 } from './storage';
-import { generatePlan } from './planningEngine';
+import { generatePlan, BlockingIssue, PlanningWarning } from './planningEngine';
 import { addPlanningLogEntry } from './planningLogger';
 import { pdebug } from './planningDebug';
 
@@ -28,6 +28,9 @@ export interface RecalculateResult {
   summaryHe: string;
   blockingIssuesCount: number;
   warningsCount: number;
+  // Full issues for UI display
+  blockingIssues: BlockingIssue[];
+  warnings: PlanningWarning[];
 }
 
 export const recalculatePlan = (
@@ -50,6 +53,12 @@ export const recalculatePlan = (
       summaryHe: 'חסרות הגדרות או מדפסות',
       blockingIssuesCount: 1,
       warningsCount: 0,
+      blockingIssues: [{
+        type: 'no_printers',
+        message: 'חסרות הגדרות או מדפסות',
+        messageEn: 'No settings or printers available',
+      }],
+      warnings: [],
     };
     
     // Log this attempt
@@ -182,7 +191,18 @@ export const recalculatePlan = (
     summaryHe,
     blockingIssuesCount: planResult.blockingIssues.length,
     warningsCount: planResult.warnings.length,
+    blockingIssues: planResult.blockingIssues,
+    warnings: planResult.warnings,
   };
+};
+
+/**
+ * Run replan immediately and return the result with full issues.
+ * Unlike scheduleAutoReplan, this doesn't use debounce - for UI checks after project creation.
+ * @param reason - The reason for replanning (for logging)
+ */
+export const runReplanNow = (reason: string): RecalculateResult => {
+  return recalculatePlan('from_now', true, reason);
 };
 
 // Trigger planning recalculation
