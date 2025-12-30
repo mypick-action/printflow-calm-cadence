@@ -9,10 +9,16 @@ import {
   getTotalGrams,
   consumeFromColorInventory,
   Project,
-  Product,
   getProduct,
+  getPrinters,
+  getPrinter,
+  getPlannedCycles,
+  getFactorySettings,
+  getPrintersHoldingColor,
+  getShelfOpenSpoolsFree,
 } from './storage';
 import { normalizeColor } from './colorNormalization';
+import { parseISO, addHours } from 'date-fns';
 
 // ============= CORE FUNCTIONS =============
 
@@ -39,6 +45,220 @@ export const getAvailableGramsByColor = (color: string): number => {
     .filter(item => normalizeColor(item.color) === colorKey)
     .reduce((sum, item) => sum + getTotalGrams(item), 0);
 };
+
+/**
+ * Get open total grams for a color (not including closed spools)
+ */
+export const getOpenTotalGrams = (color: string, material: string = 'PLA'): number => {
+  const item = getColorInventoryItem(color, material);
+  if (!item) return 0;
+  return item.openTotalGrams;
+};
+
+/**
+ * Get reserved grams by color based on CYCLES (not printer estimates!)
+ * This is the correct source of truth for material reservation.
+ * 
+ * Rules:
+ * - in_progress cycles: ALWAYS count as reserved
+ * - planned cycles: count only if startTime is within horizonHours
+ * 
+ * @param color - The color to check
+ * @param horizonHours - Planning horizon (default from settings or 24h)
+ */
+export const getReservedGramsByColor = (color: string, horizonHours?: number): number => {
+  const settings = getFactorySettings();
+  const horizon = horizonHours ?? settings?.planningHorizonHours ?? 24;
+  const colorKey = normalizeColor(color);
+  const cycles = getPlannedCycles();
+  const now = new Date();
+  const horizonEnd = addHours(now, horizon);
+  
+  let reservedGrams = 0;
+  
+  for (const cycle of cycles) {
+    // Skip if not matching color
+    if (normalizeColor(cycle.requiredColor || '') !== colorKey) continue;
+    
+    // in_progress ALWAYS counts (regardless of time)
+    if (cycle.status === 'in_progress') {
+      reservedGrams += cycle.gramsPlanned || 0;
+      continue;
+    }
+    
+    // planned cycles only count if within horizon
+    if (cycle.status === 'planned') {
+      try {
+        const cycleStart = parseISO(cycle.startTime);
+        if (cycleStart >= now && cycleStart <= horizonEnd) {
+          reservedGrams += cycle.gramsPlanned || 0;
+        }
+      } catch {
+        // If can't parse time, don't count it
+      }
+    }
+  }
+  
+  return reservedGrams;
+};
+
+/**
+ * Get grams available for allocation (after reservations)
+ */
+export const getGramsAvailableForAllocation = (color: string, horizonHours?: number): number => {
+  const openGrams = getOpenTotalGrams(color);
+  const reserved = getReservedGramsByColor(color, horizonHours);
+  return Math.max(0, openGrams - reserved);
+};
+
+/**
+ * Check if a printer's spool is available for new jobs
+ * 
+ * Rules:
+ * - mountState 'reserved' or 'in_use' => NOT available
+ * - in_progress cycle on printer => NOT available (regardless of time)
+ * - planned cycle within horizon => NOT available
+ */
+export const isPrinterSpoolAvailable = (printerId: string, horizonHours?: number): boolean => {
+  const printer = getPrinter(printerId);
+  if (!printer || !printer.mountedColor) return false;
+  
+  const settings = getFactorySettings();
+  const horizon = horizonHours ?? settings?.planningHorizonHours ?? 24;
+  
+  // If mountState is reserved or in_use - NOT available
+  if (printer.mountState === 'reserved' || printer.mountState === 'in_use') {
+    return false;
+  }
+  
+  const cycles = getPlannedCycles().filter(c => c.printerId === printerId);
+  const now = new Date();
+  const horizonEnd = addHours(now, horizon);
+  
+  // in_progress cycles ALWAYS block (regardless of time)
+  const hasInProgress = cycles.some(c => c.status === 'in_progress');
+  if (hasInProgress) return false;
+  
+  // planned cycles only block if within horizon
+  const hasPlannedInHorizon = cycles.some(c => {
+    if (c.status !== 'planned') return false;
+    try {
+      const cycleStart = parseISO(c.startTime);
+      return cycleStart >= now && cycleStart <= horizonEnd;
+    } catch {
+      return false;
+    }
+  });
+  
+  return !hasPlannedInHorizon;
+};
+
+// ============= ALLOCATION RESULT TYPES =============
+
+export interface AllocationSuggestion {
+  type: 'use_idle_printer' | 'wait_for_spool' | 'order_material';
+  printerId?: string;
+  message: string;
+}
+
+export interface AllocationResult {
+  canAllocate: boolean;
+  source: 'mounted' | 'open_spool' | 'closed_spool' | 'none';
+  estimatedGrams?: number;
+  blockReason?: 'no_grams' | 'no_spool' | 'waiting_for_spool';
+  suggestions?: AllocationSuggestion[];
+}
+
+/**
+ * Check if material can be allocated for a job
+ * 
+ * Priority order:
+ * 1. Target printer already has this color and is available
+ * 2. Open spool available on shelf
+ * 3. Closed spool available to open
+ * 4. Grams exist but no physical spool available => waiting_for_spool
+ * 5. No grams => no_grams
+ */
+export const canAllocateMaterial = (
+  targetPrinterId: string,
+  color: string,
+  gramsNeeded: number,
+  horizonHours?: number
+): AllocationResult => {
+  const settings = getFactorySettings();
+  const horizon = horizonHours ?? settings?.planningHorizonHours ?? 24;
+  
+  const targetPrinter = getPrinter(targetPrinterId);
+  const gramsAvailable = getGramsAvailableForAllocation(color, horizon);
+  const shelfSpoolsFree = getShelfOpenSpoolsFree(color);
+  const item = getColorInventoryItem(color, 'PLA');
+  
+  // Check if enough grams exist at all
+  if (gramsAvailable < gramsNeeded) {
+    const shortfall = gramsNeeded - gramsAvailable;
+    return { 
+      canAllocate: false, 
+      source: 'none',
+      blockReason: 'no_grams',
+      suggestions: [{ 
+        type: 'order_material', 
+        message: `חסרים ${shortfall}g של ${color}` 
+      }]
+    };
+  }
+  
+  // Case 1: Target printer already has this color and is available
+  const colorKey = normalizeColor(color);
+  if (targetPrinter && 
+      normalizeColor(targetPrinter.mountedColor || '') === colorKey &&
+      isPrinterSpoolAvailable(targetPrinterId, horizon)) {
+    return { 
+      canAllocate: true, 
+      source: 'mounted',
+      estimatedGrams: targetPrinter.loadedGramsEstimate
+    };
+  }
+  
+  // Case 2: Need a spool from shelf - check if available
+  if (shelfSpoolsFree > 0) {
+    return { canAllocate: true, source: 'open_spool' };
+  }
+  
+  // Case 3: No open spools on shelf - check closed spools
+  if (item && item.closedCount > 0) {
+    return { canAllocate: true, source: 'closed_spool' };
+  }
+  
+  // Case 4: Grams exist but no physical spool available
+  // (all open spools are on printers, no closed spools)
+  const suggestions: AllocationSuggestion[] = [];
+  
+  // Suggest idle printers with this color
+  const { printerIds } = getPrintersHoldingColor(color);
+  const idlePrinters = printerIds.filter(id => isPrinterSpoolAvailable(id, horizon));
+  if (idlePrinters.length > 0) {
+    const idlePrinter = getPrinter(idlePrinters[0]);
+    suggestions.push({
+      type: 'use_idle_printer',
+      printerId: idlePrinters[0],
+      message: `מדפסת ${idlePrinter?.name} פנויה עם ${color}`
+    });
+  }
+  
+  suggestions.push({
+    type: 'wait_for_spool',
+    message: `יש גרמים אבל כל הגלילים תפוסים על מדפסות`
+  });
+  
+  return { 
+    canAllocate: false, 
+    source: 'none',
+    blockReason: 'waiting_for_spool',
+    suggestions 
+  };
+};
+
+// ============= PROJECT-LEVEL FUNCTIONS =============
 
 /**
  * Check material availability for a specific project
@@ -142,20 +362,34 @@ export interface ColorMaterialSummary {
   totalGrams: number;
   closedSpools: number;
   openGrams: number;
+  openSpoolCount: number;
+  shelfSpoolsFree: number;
+  reservedGrams: number;
+  availableForAllocation: number;
   isBelowReorderPoint: boolean;
 }
 
 export const getMaterialSummary = (): ColorMaterialSummary[] => {
   const inventory = getColorInventory();
   
-  return inventory.map(item => ({
-    color: item.color,
-    material: item.material,
-    totalGrams: getTotalGrams(item),
-    closedSpools: item.closedCount,
-    openGrams: item.openTotalGrams,
-    isBelowReorderPoint: getTotalGrams(item) < (item.reorderPointGrams || 0),
-  }));
+  return inventory.map(item => {
+    const shelfFree = getShelfOpenSpoolsFree(item.color, item.material);
+    const reserved = getReservedGramsByColor(item.color);
+    const availableForAllocation = Math.max(0, item.openTotalGrams - reserved);
+    
+    return {
+      color: item.color,
+      material: item.material,
+      totalGrams: getTotalGrams(item),
+      closedSpools: item.closedCount,
+      openGrams: item.openTotalGrams,
+      openSpoolCount: item.openSpoolCount || 0,
+      shelfSpoolsFree: shelfFree,
+      reservedGrams: reserved,
+      availableForAllocation,
+      isBelowReorderPoint: getTotalGrams(item) < (item.reorderPointGrams || 0),
+    };
+  });
 };
 
 /**
@@ -198,3 +432,6 @@ export const getMaterialNeedsByColor = (projects: Project[]): Map<string, { need
   
   return needs;
 };
+
+// Re-export helper functions from storage for convenience
+export { getPrintersHoldingColor, getShelfOpenSpoolsFree } from './storage';

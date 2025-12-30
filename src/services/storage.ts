@@ -96,6 +96,10 @@ export interface Printer {
   // mountedEstimate field REMOVED in v2 - use spool.gramsRemainingEst instead
   // AMS slots state (for AMS printers)
   amsSlotStates?: AMSSlotState[];
+  // Material tracking fields (v3)
+  mountState?: 'idle' | 'reserved' | 'in_use'; // Printer job state
+  loadedGramsEstimate?: number; // Display only - NOT source of truth for calculations
+  bambu_serial?: string; // For Bambu printer event matching
 }
 
 export interface Spool {
@@ -239,6 +243,8 @@ export interface FactorySettings {
   hasAMS: boolean; // simple flag from onboarding
   // Scheduling strategy: compress = finish ASAP, balance = spread load
   schedulingStrategy?: SchedulingStrategy;
+  // Planning horizon for material reservation (default 24 hours)
+  planningHorizonHours?: number;
 }
 
 export interface TemporaryScheduleOverride {
@@ -416,7 +422,8 @@ export interface ColorInventoryItem {
   material: string;        // e.g. "PLA"
   closedCount: number;     // number of sealed spools
   closedSpoolSizeGrams: number; // default 1000
-  openTotalGrams: number;  // total grams across all open spools (one number)
+  openTotalGrams: number;  // total grams across all open spools (shelf + printers)
+  openSpoolCount?: number; // WORLD count: total open spools (shelf + printers)
   reorderPointGrams?: number; // optional, default 2000
   updatedAt?: string;
 }
@@ -1606,6 +1613,190 @@ export const clearPrinterMountedState = (printerId: string): Printer | undefined
   return result;
 };
 
+// ============= MATERIAL LIFECYCLE FUNCTIONS (v3) =============
+// These functions implement the material tracking invariants:
+// - openTotalGrams = all grams in open spools (shelf + printers)
+// - openSpoolCount = all open spools in world (shelf + printers)
+// - Cycles are source of truth for reserved grams (NOT loadedGramsEstimate)
+
+/**
+ * Get printers holding a specific color (physical spool mounted)
+ */
+export const getPrintersHoldingColor = (color: string): { total: number; printerIds: string[] } => {
+  const colorKey = normalizeColor(color);
+  const printers = getPrinters().filter(p => 
+    p.status === 'active' && 
+    normalizeColor(p.mountedColor || '') === colorKey
+  );
+  return {
+    total: printers.length,
+    printerIds: printers.map(p => p.id),
+  };
+};
+
+/**
+ * Get number of open spools free on shelf (not on printers)
+ */
+export const getShelfOpenSpoolsFree = (color: string, material: string = 'PLA'): number => {
+  const item = getColorInventoryItem(color, material);
+  if (!item) return 0;
+  
+  const worldOpenSpools = item.openSpoolCount || 0;
+  const { total: printersHolding } = getPrintersHoldingColor(color);
+  
+  return Math.max(0, worldOpenSpools - printersHolding);
+};
+
+/**
+ * Load a spool onto a printer from shelf or closed inventory
+ * 
+ * Invariants:
+ * - load(open): does NOT change counts (spool moves location, stays in world)
+ * - load(closed): closedCount--, openSpoolCount++, openTotalGrams += gramsEstimate
+ * 
+ * @returns true if successful
+ */
+export const loadSpoolOnPrinter = (
+  printerId: string,
+  color: string,
+  gramsEstimate: number,
+  source: 'open' | 'closed'
+): boolean => {
+  const printer = getPrinter(printerId);
+  if (!printer) return false;
+  
+  const items = getColorInventory();
+  const colorKey = normalizeColor(color);
+  const index = items.findIndex(i => 
+    normalizeColor(i.color) === colorKey && 
+    i.material.toLowerCase() === 'pla'
+  );
+  
+  if (index < 0) return false;
+  const item = items[index];
+  
+  if (source === 'open') {
+    // Taking existing open spool from SHELF
+    // Check if there's a free spool on shelf
+    const shelfFree = getShelfOpenSpoolsFree(color, 'PLA');
+    if (shelfFree <= 0) {
+      console.warn(`[loadSpoolOnPrinter] No open spools on shelf for ${color}`);
+      return false;
+    }
+    // openSpoolCount stays the same (WORLD count unchanged)
+    // openTotalGrams stays the same (grams already counted)
+  } else if (source === 'closed') {
+    // Opening a closed spool - creating NEW open spool in world
+    if (item.closedCount <= 0) {
+      console.warn(`[loadSpoolOnPrinter] No closed spools for ${color}`);
+      return false;
+    }
+    // Update inventory: closed -> open
+    items[index] = {
+      ...items[index],
+      closedCount: items[index].closedCount - 1,
+      openSpoolCount: (items[index].openSpoolCount || 0) + 1,
+      openTotalGrams: items[index].openTotalGrams + gramsEstimate,
+      updatedAt: new Date().toISOString(),
+    };
+    setItem(KEYS.COLOR_INVENTORY, items);
+    notifyInventoryChanged();
+  }
+  
+  // Update printer state
+  updatePrinter(printerId, {
+    mountedColor: color,
+    loadedGramsEstimate: gramsEstimate,
+    mountState: 'idle', // Starts as idle until reserved/started
+    currentColor: color,
+  });
+  
+  console.log(`[loadSpoolOnPrinter] Loaded ${color} on printer ${printerId} from ${source}, estimate: ${gramsEstimate}g`);
+  return true;
+};
+
+/**
+ * Unload a spool from printer back to shelf
+ * 
+ * Invariant: does NOT change counts (spool moves location, stays in world)
+ */
+export const unloadSpoolFromPrinter = (printerId: string): boolean => {
+  const printer = getPrinter(printerId);
+  if (!printer || !printer.mountedColor) return false;
+  
+  const color = printer.mountedColor;
+  
+  // Just clear printer mount state - counts stay the same
+  updatePrinter(printerId, {
+    mountedColor: undefined,
+    loadedGramsEstimate: undefined,
+    mountState: undefined,
+    currentColor: undefined,
+  });
+  
+  console.log(`[unloadSpoolFromPrinter] Unloaded ${color} from printer ${printerId}`);
+  return true;
+};
+
+/**
+ * Mark printer as reserved for upcoming job (material allocated)
+ */
+export const reservePrinterMaterial = (printerId: string): void => {
+  updatePrinter(printerId, { mountState: 'reserved' });
+  console.log(`[reservePrinterMaterial] Printer ${printerId} reserved`);
+};
+
+/**
+ * Mark printer as in_use (job started)
+ */
+export const startPrinterJob = (printerId: string): void => {
+  updatePrinter(printerId, { mountState: 'in_use' });
+  console.log(`[startPrinterJob] Printer ${printerId} started`);
+};
+
+/**
+ * Finish printer job and deduct consumed material
+ * 
+ * Invariant: openTotalGrams -= gramsConsumed (actual consumption)
+ * The spool stays on the printer (idle state)
+ */
+export const finishPrinterJob = (printerId: string, gramsConsumed: number): void => {
+  const printer = getPrinter(printerId);
+  if (!printer || !printer.mountedColor) {
+    console.warn(`[finishPrinterJob] Printer ${printerId} has no mounted color`);
+    return;
+  }
+  
+  const color = printer.mountedColor;
+  
+  // Deduct actual consumption from global openTotalGrams
+  const items = getColorInventory();
+  const colorKey = normalizeColor(color);
+  const index = items.findIndex(i => 
+    normalizeColor(i.color) === colorKey && 
+    i.material.toLowerCase() === 'pla'
+  );
+  
+  if (index >= 0) {
+    items[index] = {
+      ...items[index],
+      openTotalGrams: Math.max(0, items[index].openTotalGrams - gramsConsumed),
+      updatedAt: new Date().toISOString(),
+    };
+    setItem(KEYS.COLOR_INVENTORY, items);
+    notifyInventoryChanged();
+  }
+  
+  // Update printer estimate and set to idle (spool stays mounted)
+  const remaining = Math.max(0, (printer.loadedGramsEstimate || 0) - gramsConsumed);
+  updatePrinter(printerId, {
+    mountState: 'idle',
+    loadedGramsEstimate: remaining,
+  });
+  
+  console.log(`[finishPrinterJob] Printer ${printerId} finished, consumed ${gramsConsumed}g of ${color}, remaining estimate: ${remaining}g`);
+};
+
 /**
  * Placeholder for consuming material after cycle (future integration)
  */
@@ -1617,6 +1808,7 @@ export const consumeMaterialAfterCycle = (
   // This will be implemented when we integrate with actual print data
   console.log(`[Future] Consume ${gramsUsed}g of ${color} from printer ${printerId}`);
 };
+
 
 // ============= BOOTSTRAP & RESET =============
 
