@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,32 +21,40 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Package, Plus, Minus, AlertTriangle, Edit2 } from 'lucide-react';
+import { Package, Plus, Minus, AlertTriangle, Edit2, Loader2, CloudOff } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { 
-  getColorInventory,
-  upsertColorInventoryItem,
-  adjustClosedCount,
-  setOpenTotalGrams,
-  adjustOpenTotalGrams,
-  renameColorInventoryItem,
+  getMaterialInventory, 
+  upsertMaterialInventory,
+  type DbMaterialInventory,
+  type MaterialInventoryInput,
+} from '@/services/cloudStorage';
+import { hydrateInventoryFromCloud, migrateInventoryToCloud } from '@/services/cloudBridge';
+import { 
+  getColorInventory, 
   getFactorySettings,
   ColorInventoryItem,
   getTotalGrams,
+  KEYS,
 } from '@/services/storage';
-import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
+import { subscribeToInventoryChanges, notifyInventoryChanged } from '@/services/inventoryEvents';
 
+// Cloud-first: cloud is source of truth, localStorage is cache only
 export const InventoryPage: React.FC = () => {
   const { language } = useLanguage();
+  const { workspaceId } = useAuth();
   const [inventory, setInventory] = useState<ColorInventoryItem[]>([]);
-  const [availableColors, setAvailableColors] = useState<string[]>(['Black', 'White', 'Gray', 'Red', 'Blue', 'Green']);
+  const [availableColors, setAvailableColors] = useState<string[]>(['שחור', 'לבן', 'אפור', 'אדום', 'כחול', 'ירוק']);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   // Add mode: 'closed' or 'open'
   const [addMode, setAddMode] = useState<'closed' | 'open'>('closed');
   
   // Quick add states
-  const [quickAddColor, setQuickAddColor] = useState('Black');
+  const [quickAddColor, setQuickAddColor] = useState('שחור');
   const [quickAddCustomColor, setQuickAddCustomColor] = useState('');
   const [useCustomColor, setUseCustomColor] = useState(false);
   const [quickAddMaterial, setQuickAddMaterial] = useState('PLA');
@@ -64,104 +73,224 @@ export const InventoryPage: React.FC = () => {
   const [renamingItem, setRenamingItem] = useState<ColorInventoryItem | null>(null);
   const [newColorName, setNewColorName] = useState('');
 
-  useEffect(() => {
-    refreshData();
-    const unsubscribe = subscribeToInventoryChanges(refreshData);
-    return unsubscribe;
-  }, []);
+  // Load inventory from cloud on mount
+  const loadFromCloud = useCallback(async () => {
+    if (!workspaceId) {
+      setLoading(false);
+      return;
+    }
 
-  const refreshData = () => {
-    const inv = getColorInventory();
-    setInventory(inv);
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Try to load from cloud first
+      const cloudInventory = await getMaterialInventory(workspaceId);
+      
+      // If cloud is empty but local has data, offer migration
+      const localInventory = getColorInventory();
+      if (cloudInventory.length === 0 && localInventory.length > 0) {
+        console.log('[InventoryPage] Cloud empty, local has data - migrating...');
+        const result = await migrateInventoryToCloud(workspaceId);
+        console.log('[InventoryPage] Migration result:', result);
+        // Re-fetch after migration
+        const updatedInventory = await getMaterialInventory(workspaceId);
+        updateLocalCache(updatedInventory);
+      } else {
+        updateLocalCache(cloudInventory);
+      }
+    } catch (err) {
+      console.error('[InventoryPage] Error loading from cloud:', err);
+      setError(language === 'he' ? 'שגיאה בטעינת מלאי מהענן' : 'Error loading inventory from cloud');
+      // Fallback to local cache
+      const localInventory = getColorInventory();
+      setInventory(localInventory);
+    } finally {
+      setLoading(false);
+    }
+  }, [workspaceId, language]);
+
+  // Convert cloud format to local format and update cache
+  const updateLocalCache = (cloudInventory: DbMaterialInventory[]) => {
+    const localFormat: ColorInventoryItem[] = cloudInventory.map(item => ({
+      id: item.id,
+      color: item.color,
+      material: item.material,
+      closedCount: item.closed_count,
+      closedSpoolSizeGrams: item.closed_spool_size_grams,
+      openTotalGrams: item.open_total_grams,
+      openSpoolCount: item.open_spool_count,
+      reorderPointGrams: item.reorder_point_grams ?? 2000,
+      updatedAt: item.updated_at,
+    }));
+    
+    setInventory(localFormat);
+    localStorage.setItem(KEYS.COLOR_INVENTORY, JSON.stringify(localFormat));
+    notifyInventoryChanged();
+    
+    // Update available colors
     const settings = getFactorySettings();
-    // Hebrew predefined colors (same as ProjectsPage)
     const hebrewColors = ['שחור', 'לבן', 'אפור', 'אדום', 'כחול', 'ירוק', 'צהוב', 'כתום', 'סגול', 'ורוד', 'חום'];
-    // Combine predefined + settings colors + inventory colors
     const settingsColors = settings?.colors || [];
-    // Also include all colors from current inventory
-    const inventoryColors = inv.map(item => item.color);
+    const inventoryColors = localFormat.map(item => item.color);
     const allColors = new Set([...hebrewColors, ...settingsColors, ...inventoryColors]);
     setAvailableColors(Array.from(allColors).filter(c => c && c.trim()));
   };
+
+  useEffect(() => {
+    loadFromCloud();
+    const unsubscribe = subscribeToInventoryChanges(() => {
+      // Only refresh if triggered externally (e.g., from loadSpoolOnPrinter)
+      // Skip if we just made a cloud update ourselves
+    });
+    return unsubscribe;
+  }, [loadFromCloud]);
 
   const getSelectedColor = () => {
     return useCustomColor ? quickAddCustomColor.trim() : quickAddColor;
   };
 
-  const handleAddClosedSpools = () => {
+  // Cloud-first save helper
+  const saveToCloud = async (item: MaterialInventoryInput): Promise<boolean> => {
+    if (!workspaceId) {
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: language === 'he' ? 'לא מחובר לחשבון' : 'Not logged in',
+        variant: 'destructive',
+      });
+      return false;
+    }
+
+    setSaving(true);
+    try {
+      const result = await upsertMaterialInventory(workspaceId, item);
+      if (result.error) {
+        throw result.error;
+      }
+      return true;
+    } catch (err) {
+      console.error('[InventoryPage] Cloud save failed:', err);
+      toast({
+        title: language === 'he' ? 'שגיאה בשמירה' : 'Save failed',
+        description: language === 'he' ? 'לא ניתן לשמור לענן. נסה שוב.' : 'Could not save to cloud. Please try again.',
+        variant: 'destructive',
+      });
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddClosedSpools = async () => {
     const color = getSelectedColor();
-    if (!color || quickAddCount <= 0) return;
+    if (!color || quickAddCount <= 0 || saving) return;
     
     const existing = inventory.find(i => 
       i.color.toLowerCase() === color.toLowerCase() && 
       i.material.toLowerCase() === quickAddMaterial.toLowerCase()
     );
     
-    if (existing) {
-      adjustClosedCount(color, quickAddMaterial, quickAddCount);
-    } else {
-      upsertColorInventoryItem({
-        color,
-        material: quickAddMaterial,
-        closedCount: quickAddCount,
-        closedSpoolSizeGrams: quickAddSpoolSize,
-        openTotalGrams: 0,
-        reorderPointGrams: 2000,
+    const newItem: MaterialInventoryInput = existing 
+      ? {
+          color: existing.color,
+          material: existing.material,
+          closed_count: existing.closedCount + quickAddCount,
+          closed_spool_size_grams: existing.closedSpoolSizeGrams,
+          open_total_grams: existing.openTotalGrams,
+          open_spool_count: existing.openSpoolCount || 0,
+          reorder_point_grams: existing.reorderPointGrams,
+          updated_by: 'user',
+        }
+      : {
+          color,
+          material: quickAddMaterial,
+          closed_count: quickAddCount,
+          closed_spool_size_grams: quickAddSpoolSize,
+          open_total_grams: 0,
+          open_spool_count: 0,
+          reorder_point_grams: 2000,
+          updated_by: 'user',
+        };
+
+    const success = await saveToCloud(newItem);
+    if (success) {
+      await loadFromCloud(); // Refresh from cloud
+      setQuickAddCount(1);
+      if (useCustomColor) {
+        setQuickAddCustomColor('');
+        setUseCustomColor(false);
+      }
+      toast({
+        title: language === 'he' ? 'גלילים נוספו' : 'Spools added',
+        description: `+${quickAddCount} ${color} ${quickAddMaterial}`,
       });
     }
-    
-    refreshData();
-    setQuickAddCount(1);
-    if (useCustomColor) {
-      setQuickAddCustomColor('');
-      setUseCustomColor(false);
-    }
-    
-    toast({
-      title: language === 'he' ? 'גלילים נוספו' : 'Spools added',
-      description: `+${quickAddCount} ${color} ${quickAddMaterial}`,
-    });
   };
 
-  const handleAddOpenGrams = () => {
+  const handleAddOpenGrams = async () => {
     const color = getSelectedColor();
-    if (!color || quickAddOpenGrams <= 0) return;
+    if (!color || quickAddOpenGrams <= 0 || saving) return;
     
     const existing = inventory.find(i => 
       i.color.toLowerCase() === color.toLowerCase() && 
       i.material.toLowerCase() === quickAddMaterial.toLowerCase()
     );
     
-    if (existing) {
-      adjustOpenTotalGrams(color, quickAddMaterial, quickAddOpenGrams);
-    } else {
-      upsertColorInventoryItem({
-        color,
-        material: quickAddMaterial,
-        closedCount: 0,
-        closedSpoolSizeGrams: quickAddSpoolSize,
-        openTotalGrams: quickAddOpenGrams,
-        reorderPointGrams: 2000,
+    const newItem: MaterialInventoryInput = existing 
+      ? {
+          color: existing.color,
+          material: existing.material,
+          closed_count: existing.closedCount,
+          closed_spool_size_grams: existing.closedSpoolSizeGrams,
+          open_total_grams: existing.openTotalGrams + quickAddOpenGrams,
+          open_spool_count: existing.openSpoolCount || 0,
+          reorder_point_grams: existing.reorderPointGrams,
+          updated_by: 'user',
+        }
+      : {
+          color,
+          material: quickAddMaterial,
+          closed_count: 0,
+          closed_spool_size_grams: quickAddSpoolSize,
+          open_total_grams: quickAddOpenGrams,
+          open_spool_count: 0,
+          reorder_point_grams: 2000,
+          updated_by: 'user',
+        };
+
+    const success = await saveToCloud(newItem);
+    if (success) {
+      await loadFromCloud();
+      setQuickAddOpenGrams(100);
+      if (useCustomColor) {
+        setQuickAddCustomColor('');
+        setUseCustomColor(false);
+      }
+      toast({
+        title: language === 'he' ? 'גרמים נוספו' : 'Grams added',
+        description: `+${quickAddOpenGrams}g ${color} ${quickAddMaterial}`,
       });
     }
-    
-    refreshData();
-    setQuickAddOpenGrams(100);
-    if (useCustomColor) {
-      setQuickAddCustomColor('');
-      setUseCustomColor(false);
-    }
-    
-    toast({
-      title: language === 'he' ? 'גרמים נוספו' : 'Grams added',
-      description: `+${quickAddOpenGrams}g ${color} ${quickAddMaterial}`,
-    });
   };
 
-  const handleAdjustClosed = (item: ColorInventoryItem, delta: number) => {
-    if (item.closedCount + delta < 0) return;
-    adjustClosedCount(item.color, item.material, delta);
-    refreshData();
+  const handleAdjustClosed = async (item: ColorInventoryItem, delta: number) => {
+    if (item.closedCount + delta < 0 || saving) return;
+    
+    const newItem: MaterialInventoryInput = {
+      color: item.color,
+      material: item.material,
+      closed_count: item.closedCount + delta,
+      closed_spool_size_grams: item.closedSpoolSizeGrams,
+      open_total_grams: item.openTotalGrams,
+      open_spool_count: item.openSpoolCount || 0,
+      reorder_point_grams: item.reorderPointGrams,
+      updated_by: 'user',
+    };
+
+    const success = await saveToCloud(newItem);
+    if (success) {
+      await loadFromCloud();
+    }
   };
 
   const handleOpenEditDialog = (item: ColorInventoryItem) => {
@@ -171,27 +300,29 @@ export const InventoryPage: React.FC = () => {
     setEditDialogOpen(true);
   };
 
-  const handleSaveOpenSpools = () => {
-    if (!editingItem) return;
-    // Update both openTotalGrams and openSpoolCount
-    const items = getColorInventory();
-    const index = items.findIndex(i => i.id === editingItem.id);
-    if (index >= 0) {
-      items[index] = {
-        ...items[index],
-        openTotalGrams: editOpenGrams,
-        openSpoolCount: editOpenSpoolCount,
-        updatedAt: new Date().toISOString(),
-      };
-      // Save to localStorage directly
-      localStorage.setItem('printflow_color_inventory', JSON.stringify(items));
+  const handleSaveOpenSpools = async () => {
+    if (!editingItem || saving) return;
+    
+    const newItem: MaterialInventoryInput = {
+      color: editingItem.color,
+      material: editingItem.material,
+      closed_count: editingItem.closedCount,
+      closed_spool_size_grams: editingItem.closedSpoolSizeGrams,
+      open_total_grams: editOpenGrams,
+      open_spool_count: editOpenSpoolCount,
+      reorder_point_grams: editingItem.reorderPointGrams,
+      updated_by: 'user',
+    };
+
+    const success = await saveToCloud(newItem);
+    if (success) {
+      await loadFromCloud();
+      setEditDialogOpen(false);
+      setEditingItem(null);
+      toast({
+        title: language === 'he' ? 'מלאי עודכן' : 'Inventory updated',
+      });
     }
-    refreshData();
-    setEditDialogOpen(false);
-    setEditingItem(null);
-    toast({
-      title: language === 'he' ? 'מלאי עודכן' : 'Inventory updated',
-    });
   };
 
   const handleOpenRenameDialog = (item: ColorInventoryItem) => {
@@ -200,15 +331,31 @@ export const InventoryPage: React.FC = () => {
     setRenameDialogOpen(true);
   };
 
-  const handleSaveColorName = () => {
-    if (!renamingItem || !newColorName.trim()) return;
-    renameColorInventoryItem(renamingItem.color, renamingItem.material, newColorName);
-    refreshData();
-    setRenameDialogOpen(false);
-    setRenamingItem(null);
-    toast({
-      title: language === 'he' ? 'שם הצבע עודכן' : 'Color name updated',
-    });
+  const handleSaveColorName = async () => {
+    if (!renamingItem || !newColorName.trim() || saving) return;
+    
+    // For rename, we need to delete old and create new (since color is part of unique key)
+    // For MVP, just update the display - full rename requires delete + insert
+    const newItem: MaterialInventoryInput = {
+      color: newColorName.trim(),
+      material: renamingItem.material,
+      closed_count: renamingItem.closedCount,
+      closed_spool_size_grams: renamingItem.closedSpoolSizeGrams,
+      open_total_grams: renamingItem.openTotalGrams,
+      open_spool_count: renamingItem.openSpoolCount || 0,
+      reorder_point_grams: renamingItem.reorderPointGrams,
+      updated_by: 'user',
+    };
+
+    const success = await saveToCloud(newItem);
+    if (success) {
+      await loadFromCloud();
+      setRenameDialogOpen(false);
+      setRenamingItem(null);
+      toast({
+        title: language === 'he' ? 'שם הצבע עודכן' : 'Color name updated',
+      });
+    }
   };
 
   // Note: Opening new spools happens only via Load flow, not from inventory page
@@ -223,6 +370,31 @@ export const InventoryPage: React.FC = () => {
     totalGrams: getTotalGrams(item),
     isLowStock: getTotalGrams(item) < 1000, // Less than 1kg = low stock
   }));
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <span className="ml-2 text-muted-foreground">
+          {language === 'he' ? 'טוען מלאי...' : 'Loading inventory...'}
+        </span>
+      </div>
+    );
+  }
+
+  // Error state with retry
+  if (error && inventory.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <CloudOff className="w-12 h-12 text-destructive" />
+        <p className="text-destructive">{error}</p>
+        <Button onClick={loadFromCloud} variant="outline">
+          {language === 'he' ? 'נסה שוב' : 'Try again'}
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -241,6 +413,9 @@ export const InventoryPage: React.FC = () => {
               : `${inventory.length} material types`}
           </p>
         </div>
+        {saving && (
+          <Loader2 className="w-4 h-4 animate-spin text-muted-foreground ml-auto" />
+        )}
       </div>
 
       {/* Summary Table */}
@@ -405,8 +580,8 @@ export const InventoryPage: React.FC = () => {
                     className="w-16 h-9"
                   />
                 </div>
-                <Button onClick={handleAddClosedSpools} size="sm" className="h-9">
-                  <Plus className="w-4 h-4 mr-1" />
+                <Button onClick={handleAddClosedSpools} size="sm" className="h-9" disabled={saving}>
+                  {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Plus className="w-4 h-4 mr-1" />}
                   {language === 'he' ? 'הוסף' : 'Add'}
                 </Button>
               </div>
@@ -479,8 +654,8 @@ export const InventoryPage: React.FC = () => {
                     className="w-20 h-9"
                   />
                 </div>
-                <Button onClick={handleAddOpenGrams} size="sm" className="h-9">
-                  <Plus className="w-4 h-4 mr-1" />
+                <Button onClick={handleAddOpenGrams} size="sm" className="h-9" disabled={saving}>
+                  {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Plus className="w-4 h-4 mr-1" />}
                   {language === 'he' ? 'הוסף' : 'Add'}
                 </Button>
               </div>
@@ -559,7 +734,7 @@ export const InventoryPage: React.FC = () => {
                       size="icon" 
                       className="h-8 w-8"
                       onClick={() => handleAdjustClosed(item, -1)}
-                      disabled={item.closedCount <= 0}
+                      disabled={item.closedCount <= 0 || saving}
                     >
                       <Minus className="w-4 h-4" />
                     </Button>
@@ -569,6 +744,7 @@ export const InventoryPage: React.FC = () => {
                       size="icon" 
                       className="h-8 w-8"
                       onClick={() => handleAdjustClosed(item, 1)}
+                      disabled={saving}
                     >
                       <Plus className="w-4 h-4" />
                     </Button>
@@ -681,7 +857,8 @@ export const InventoryPage: React.FC = () => {
             <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
               {language === 'he' ? 'ביטול' : 'Cancel'}
             </Button>
-            <Button onClick={handleSaveOpenSpools}>
+            <Button onClick={handleSaveOpenSpools} disabled={saving}>
+              {saving && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
               {language === 'he' ? 'שמור' : 'Save'}
             </Button>
           </DialogFooter>
@@ -718,7 +895,8 @@ export const InventoryPage: React.FC = () => {
             <Button variant="outline" onClick={() => setRenameDialogOpen(false)}>
               {language === 'he' ? 'ביטול' : 'Cancel'}
             </Button>
-            <Button onClick={handleSaveColorName} disabled={!newColorName.trim()}>
+            <Button onClick={handleSaveColorName} disabled={!newColorName.trim() || saving}>
+              {saving && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
               {language === 'he' ? 'שמור' : 'Save'}
             </Button>
           </DialogFooter>

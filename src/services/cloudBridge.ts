@@ -1,14 +1,24 @@
 // Cloud Bridge - One-way sync from Cloud (Supabase) to localStorage
 // Cloud = SSOT, localStorage = temporary cache for legacy engines
 
-import { getPrinters, getFactorySettings, getProjects, getPlannedCycles, upsertProjectByLegacyId, upsertPlannedCycleByLegacyId } from '@/services/cloudStorage';
-import type { UpsertProjectData, UpsertPlannedCycleData } from '@/services/cloudStorage';
 import { 
+  getPrinters, 
+  getFactorySettings, 
+  getProjects, 
+  getPlannedCycles, 
+  upsertProjectByLegacyId, 
+  upsertPlannedCycleByLegacyId,
+  getMaterialInventory,
+  upsertMaterialInventory,
+} from '@/services/cloudStorage';
+import type { UpsertProjectData, UpsertPlannedCycleData, MaterialInventoryInput } from '@/services/cloudStorage';
+import {
   KEYS, 
   Printer, 
   Project,
   PlannedCycle,
-  FactorySettings, 
+  FactorySettings,
+  ColorInventoryItem,
   WeeklySchedule, 
   DaySchedule,
   getDefaultWeeklySchedule 
@@ -516,4 +526,100 @@ export async function migrateAllLocalDataToCloud(
     projects: projectsResult,
     cycles: cyclesResult,
   };
+}
+
+/**
+ * Migrate local inventory (color_inventory) to cloud material_inventory table
+ * One-time migration: upserts by (workspace_id, color, material)
+ */
+export async function migrateInventoryToCloud(
+  workspaceId: string
+): Promise<{ created: number; updated: number; errors: number }> {
+  if (!workspaceId) {
+    return { created: 0, updated: 0, errors: 0 };
+  }
+
+  console.log('[CloudBridge] Starting inventory migration for workspace:', workspaceId);
+
+  // Get local inventory
+  const localInventory = safeJsonParse<ColorInventoryItem[]>(localStorage.getItem(KEYS.COLOR_INVENTORY)) || [];
+  if (localInventory.length === 0) {
+    console.log('[CloudBridge] No local inventory to migrate');
+    return { created: 0, updated: 0, errors: 0 };
+  }
+
+  let created = 0;
+  let updated = 0;
+  let errors = 0;
+
+  for (const item of localInventory) {
+    try {
+      const inventoryData: MaterialInventoryInput = {
+        color: item.color,
+        material: item.material || 'PLA',
+        closed_count: item.closedCount || 0,
+        closed_spool_size_grams: item.closedSpoolSizeGrams || 1000,
+        open_total_grams: item.openTotalGrams || 0,
+        open_spool_count: item.openSpoolCount || 0,
+        reorder_point_grams: item.reorderPointGrams ?? 2000,
+        updated_by: 'migration',
+      };
+
+      const result = await upsertMaterialInventory(workspaceId, inventoryData);
+
+      if (result.data) {
+        console.log(`[CloudBridge] Upserted inventory: ${item.color}/${item.material}`);
+        // We don't know if it was created or updated, count as updated for safety
+        updated++;
+      } else {
+        console.error(`[CloudBridge] Failed to upsert inventory: ${item.color}/${item.material}`);
+        errors++;
+      }
+    } catch (e) {
+      console.error(`[CloudBridge] Inventory migration error for ${item.color}/${item.material}:`, e);
+      errors++;
+    }
+  }
+
+  console.log('[CloudBridge] Inventory migration complete:', { created, updated, errors });
+  return { created, updated, errors };
+}
+
+/**
+ * Hydrate local inventory cache from cloud
+ * Cloud is source of truth - overwrites local cache
+ */
+export async function hydrateInventoryFromCloud(workspaceId: string): Promise<ColorInventoryItem[]> {
+  if (!workspaceId) {
+    return [];
+  }
+
+  console.log('[CloudBridge] Hydrating inventory from cloud for workspace:', workspaceId);
+
+  try {
+    const cloudInventory = await getMaterialInventory(workspaceId);
+    
+    // Map cloud format to local format
+    const localInventory: ColorInventoryItem[] = cloudInventory.map(item => ({
+      id: item.id,
+      color: item.color,
+      material: item.material,
+      closedCount: item.closed_count,
+      closedSpoolSizeGrams: item.closed_spool_size_grams,
+      openTotalGrams: item.open_total_grams,
+      openSpoolCount: item.open_spool_count,
+      reorderPointGrams: item.reorder_point_grams ?? 2000,
+      updatedAt: item.updated_at,
+    }));
+
+    // Update local cache
+    localStorage.setItem(KEYS.COLOR_INVENTORY, JSON.stringify(localInventory));
+    console.log('[CloudBridge] Hydrated inventory from cloud:', localInventory.length, 'items');
+
+    return localInventory;
+  } catch (error) {
+    console.error('[CloudBridge] Error hydrating inventory from cloud:', error);
+    // Return existing local data as fallback
+    return safeJsonParse<ColorInventoryItem[]>(localStorage.getItem(KEYS.COLOR_INVENTORY)) || [];
+  }
 }

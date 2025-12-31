@@ -896,3 +896,94 @@ export const isOnboardingCompleteCloud = async (workspaceId: string): Promise<bo
   
   return hasWorkHours || hasBehavior;
 };
+
+// ============= MATERIAL INVENTORY (Cloud-first) =============
+// Cloud is source of truth, localStorage is cache only
+
+export interface DbMaterialInventory {
+  id: string;
+  workspace_id: string;
+  color: string;
+  material: string;
+  closed_count: number;
+  closed_spool_size_grams: number;
+  open_total_grams: number;
+  open_spool_count: number;
+  reorder_point_grams: number | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MaterialInventoryInput {
+  color: string;
+  material: string;
+  closed_count: number;
+  closed_spool_size_grams: number;
+  open_total_grams: number;
+  open_spool_count: number;
+  reorder_point_grams?: number;
+  updated_by?: string;
+}
+
+// Get all material inventory for a workspace
+export const getMaterialInventory = async (workspaceId: string): Promise<DbMaterialInventory[]> => {
+  const { data, error } = await supabase
+    .from('material_inventory')
+    .select('*')
+    .eq('workspace_id', workspaceId)
+    .order('color', { ascending: true });
+  
+  if (error) {
+    console.error('[CloudStorage] Error fetching material inventory:', error);
+    throw error; // Throw to handle at caller level
+  }
+  
+  return (data || []) as DbMaterialInventory[];
+};
+
+// Upsert a material inventory item (by color + material)
+export const upsertMaterialInventory = async (
+  workspaceId: string,
+  item: MaterialInventoryInput
+): Promise<{ data: DbMaterialInventory | null; error: Error | null }> => {
+  const { data, error } = await supabase
+    .from('material_inventory')
+    .upsert({
+      workspace_id: workspaceId,
+      color: item.color,
+      material: item.material,
+      closed_count: item.closed_count,
+      closed_spool_size_grams: item.closed_spool_size_grams,
+      open_total_grams: item.open_total_grams,
+      open_spool_count: item.open_spool_count,
+      reorder_point_grams: item.reorder_point_grams ?? 2000,
+      updated_by: item.updated_by ?? null,
+    }, {
+      onConflict: 'workspace_id,color,material',
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('[CloudStorage] Error upserting material inventory:', error);
+    return { data: null, error: error as Error };
+  }
+  
+  return { data: data as DbMaterialInventory, error: null };
+};
+
+// Delete a material inventory item
+export const deleteMaterialInventory = async (id: string): Promise<boolean> => {
+  const { error } = await supabase
+    .from('material_inventory')
+    .delete()
+    .eq('id', id);
+  
+  if (error) {
+    console.error('[CloudStorage] Error deleting material inventory:', error);
+    return false;
+  }
+  
+  return true;
+};
