@@ -147,6 +147,7 @@ export interface HydrateOptions {
   includeProjects?: boolean;
   includePlannedCycles?: boolean;
   includeProducts?: boolean;
+  includeInventory?: boolean;
 }
 
 export interface HydrateResult {
@@ -432,6 +433,12 @@ export async function hydrateLocalFromCloud(
       localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(mappedProducts));
       console.log('[CloudBridge] Wrote products to localStorage:', mappedProducts.length);
     }
+  }
+
+  // Hydrate material inventory if requested
+  if (opts?.includeInventory) {
+    await hydrateInventoryFromCloud(workspaceId);
+    console.log('[CloudBridge] Hydrated material inventory from cloud');
   }
 
   markHydrated(workspaceId);
