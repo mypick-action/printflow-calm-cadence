@@ -9,10 +9,13 @@ import {
   getPlanningMeta,
   savePlanningMeta,
   KEYS,
+  getProjects,
 } from './storage';
 import { generatePlan, BlockingIssue, PlanningWarning } from './planningEngine';
 import { addPlanningLogEntry } from './planningLogger';
 import { pdebug } from './planningDebug';
+import { upsertPlannedCycleByLegacyId } from './cloudStorage';
+import { supabase } from '@/integrations/supabase/client';
 
 // Re-export the KEYS constant for internal use
 const setItem = <T>(key: string, value: T): void => {
@@ -144,8 +147,13 @@ export const recalculatePlan = (
   // Log before saving for debugging
   console.log(`[planningRecalculator] Saving ${newCycles.length} cycles to origin: ${window.location.origin}`);
 
-  // Save the updated cycles
+  // Save the updated cycles to localStorage
   setItem(KEYS.PLANNED_CYCLES, newCycles);
+
+  // Sync cycles to cloud (async, non-blocking)
+  syncCyclesToCloud(newCycles).catch(err => {
+    console.error('[planningRecalculator] Failed to sync cycles to cloud:', err);
+  });
 
   // Update planning meta
   savePlanningMeta({
@@ -216,3 +224,77 @@ export const triggerPlanningRecalculation = (reason: string): void => {
   });
   recalculatePlan('from_now', true, reason);
 };
+
+/**
+ * Sync planned cycles to cloud storage
+ * Maps local format to cloud format and upserts by legacy_id
+ */
+async function syncCyclesToCloud(cycles: PlannedCycle[]): Promise<void> {
+  // Get workspace ID from Supabase profile
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    console.log('[planningRecalculator] No user, skipping cloud sync');
+    return;
+  }
+  
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('current_workspace_id')
+    .eq('user_id', user.id)
+    .single();
+  
+  const workspaceId = profile?.current_workspace_id;
+  if (!workspaceId) {
+    console.log('[planningRecalculator] No workspace, skipping cloud sync');
+    return;
+  }
+  
+  // Get projects from localStorage to map projectId → UUID
+  const projectsRaw = localStorage.getItem(KEYS.PROJECTS);
+  const projects = projectsRaw ? JSON.parse(projectsRaw) : [];
+  const projectIdToUuid = new Map<string, string>();
+  for (const p of projects) {
+    if (p.cloudId) {
+      projectIdToUuid.set(p.id, p.cloudId);
+    }
+  }
+  
+  // Only sync 'planned' cycles (not completed/failed which should already be synced)
+  const plannedCycles = cycles.filter(c => c.status === 'planned');
+  console.log(`[planningRecalculator] Syncing ${plannedCycles.length} planned cycles to cloud`);
+  
+  let synced = 0;
+  let errors = 0;
+  
+  for (const cycle of plannedCycles) {
+    // Map local projectId to cloud UUID
+    const projectUuid = (cycle as any).projectUuid || projectIdToUuid.get(cycle.projectId) || cycle.projectId;
+    
+    // Skip if we don't have a valid UUID for the project
+    if (!projectUuid || projectUuid.length < 36) {
+      console.warn('[planningRecalculator] Skipping cycle with invalid project UUID:', cycle.projectId);
+      continue;
+    }
+    
+    const cycleData = {
+      project_id: projectUuid,
+      printer_id: cycle.printerId,
+      scheduled_date: cycle.startTime ? cycle.startTime.split('T')[0] : new Date().toISOString().split('T')[0],
+      start_time: cycle.startTime || null,
+      end_time: cycle.endTime || null,
+      units_planned: cycle.unitsPlanned,
+      status: 'scheduled' as const,
+      preset_id: null,
+      cycle_index: 0,
+    };
+    
+    const result = await upsertPlannedCycleByLegacyId(workspaceId, cycle.id, cycleData);
+    if (result.data) {
+      synced++;
+    } else {
+      errors++;
+    }
+  }
+  
+  console.log(`[planningRecalculator] Cloud sync complete: ${synced} synced, ${errors} errors`);
+}
