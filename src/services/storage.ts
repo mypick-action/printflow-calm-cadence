@@ -956,7 +956,7 @@ const mapCloudProjectToLocal = (p: cloudStorage.DbProject): Project => {
       : 'normal',
     urgencyManualOverride: false,
     status: (p.status ?? 'pending') as Project['status'],
-    color: '', // Local-only field
+    color: p.color || '',
     createdAt: p.created_at ?? new Date().toISOString(),
     parentProjectId: p.parent_project_id ?? undefined,
     customCycleHours: p.custom_cycle_hours ?? undefined,
