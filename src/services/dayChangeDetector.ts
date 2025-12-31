@@ -70,6 +70,8 @@ export async function checkAndHandleDayChange(workspaceId: string): Promise<DayC
     console.log('[DayChange] Lock acquired - running replan');
     
     // 3. Run replan
+    // NOTE: recalculatePlan is SYNCHRONOUS (returns RecalculateResult, not Promise)
+    // It internally fires syncCyclesToCloud async but doesn't await it
     const replanResult = recalculatePlan('from_now', true, 'new_day_detected');
     
     if (!replanResult.success) {

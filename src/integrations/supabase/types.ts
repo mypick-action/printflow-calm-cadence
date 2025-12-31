@@ -285,6 +285,7 @@ export type Database = {
           cycle_hours: number
           grams_per_unit: number
           id: string
+          legacy_id: string | null
           name: string
           product_id: string | null
           units_per_plate: number
@@ -297,6 +298,7 @@ export type Database = {
           cycle_hours?: number
           grams_per_unit?: number
           id?: string
+          legacy_id?: string | null
           name: string
           product_id?: string | null
           units_per_plate?: number
@@ -309,6 +311,7 @@ export type Database = {
           cycle_hours?: number
           grams_per_unit?: number
           id?: string
+          legacy_id?: string | null
           name?: string
           product_id?: string | null
           units_per_plate?: number
@@ -422,6 +425,7 @@ export type Database = {
           default_print_time_hours: number
           default_units_per_plate: number
           id: string
+          legacy_id: string | null
           material: string
           name: string
           notes: string | null
@@ -435,6 +439,7 @@ export type Database = {
           default_print_time_hours?: number
           default_units_per_plate?: number
           id?: string
+          legacy_id?: string | null
           material?: string
           name: string
           notes?: string | null
@@ -448,6 +453,7 @@ export type Database = {
           default_print_time_hours?: number
           default_units_per_plate?: number
           id?: string
+          legacy_id?: string | null
           material?: string
           name?: string
           notes?: string | null
@@ -696,7 +702,7 @@ export type Database = {
     }
     Functions: {
       confirm_day_change: {
-        Args: { p_date: string; p_workspace_id: string }
+        Args: { p_date?: string; p_workspace_id: string }
         Returns: boolean
       }
       get_user_workspace_id: { Args: never; Returns: string }
