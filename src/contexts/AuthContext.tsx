@@ -89,10 +89,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               
               // Run migration once on login (local → cloud)
               if (p?.current_workspace_id) {
-                import('@/services/cloudBridge').then(({ migrateLocalProjectsToCloud }) => {
-                  migrateLocalProjectsToCloud(p.current_workspace_id!).then((result) => {
-                    if (result.migrated > 0) {
-                      console.log(`[Auth] Migrated ${result.migrated} projects to cloud`);
+                import('@/services/cloudBridge').then(({ migrateAllLocalDataToCloud }) => {
+                  migrateAllLocalDataToCloud(p.current_workspace_id!).then((result) => {
+                    if (result.projects.created > 0 || result.projects.updated > 0) {
+                      console.log(`[Auth] Projects: created=${result.projects.created}, updated=${result.projects.updated}`);
+                    }
+                    if (result.cycles.created > 0 || result.cycles.updated > 0) {
+                      console.log(`[Auth] Cycles: created=${result.cycles.created}, updated=${result.cycles.updated}`);
                     }
                   });
                 });

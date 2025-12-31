@@ -73,6 +73,7 @@ export interface DbSpool {
 export interface DbProject {
   id: string;
   workspace_id: string;
+  legacy_id: string | null;
   name: string;
   product_id: string | null;
   preset_id: string | null;
@@ -94,6 +95,7 @@ export interface DbProject {
 export interface DbPlannedCycle {
   id: string;
   workspace_id: string;
+  legacy_id: string | null;
   project_id: string;
   printer_id: string;
   preset_id: string | null;
@@ -471,7 +473,7 @@ export const createProject = async (
 // Uses upsert to handle both new creation and conflict resolution
 export const createProjectWithId = async (
   workspaceId: string,
-  project: Omit<DbProject, 'workspace_id' | 'created_at' | 'updated_at'> & { id: string }
+  project: Omit<DbProject, 'workspace_id' | 'created_at' | 'updated_at' | 'legacy_id'> & { id: string }
 ): Promise<DbProject | null> => {
   const { data, error } = await supabase
     .from('projects')
@@ -490,6 +492,118 @@ export const createProjectWithId = async (
   }
   
   return data;
+};
+
+// Upsert project by legacy_id (for idempotent local migration)
+// Uses true upsert with onConflict to avoid race conditions
+export type UpsertProjectData = Omit<DbProject, 'id' | 'workspace_id' | 'legacy_id' | 'created_at' | 'updated_at'>;
+
+export const upsertProjectByLegacyId = async (
+  workspaceId: string,
+  legacyId: string,
+  project: UpsertProjectData
+): Promise<{ data: DbProject | null; created: boolean }> => {
+  // Use upsert with onConflict on the unique index (workspace_id, legacy_id)
+  const { data, error } = await supabase
+    .from('projects')
+    .upsert({
+      ...project,
+      id: crypto.randomUUID(),
+      workspace_id: workspaceId,
+      legacy_id: legacyId,
+    }, {
+      onConflict: 'workspace_id,legacy_id',
+      ignoreDuplicates: false, // Update on conflict
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    // Check if it's a unique constraint violation (race condition)
+    if (error.code === '23505') {
+      // Row exists, fetch and update it
+      const { data: existing } = await supabase
+        .from('projects')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .eq('legacy_id', legacyId)
+        .single();
+      
+      if (existing) {
+        const { data: updated, error: updateErr } = await supabase
+          .from('projects')
+          .update(project)
+          .eq('id', existing.id)
+          .select()
+          .single();
+        
+        if (updateErr) {
+          console.error('Error updating project by legacy_id:', updateErr);
+          return { data: null, created: false };
+        }
+        return { data: updated, created: false };
+      }
+    }
+    console.error('Error upserting project by legacy_id:', error);
+    return { data: null, created: false };
+  }
+  
+  // Determine if it was created or updated by checking if legacy_id was already set
+  // Since we always provide legacy_id, we can't easily tell - assume created for new UUID
+  return { data, created: true };
+};
+
+// Upsert planned cycle by legacy_id (for idempotent local migration)
+export type UpsertPlannedCycleData = Omit<DbPlannedCycle, 'id' | 'workspace_id' | 'legacy_id' | 'created_at' | 'updated_at'>;
+
+export const upsertPlannedCycleByLegacyId = async (
+  workspaceId: string,
+  legacyId: string,
+  cycle: UpsertPlannedCycleData
+): Promise<{ data: DbPlannedCycle | null; created: boolean }> => {
+  const { data, error } = await supabase
+    .from('planned_cycles')
+    .upsert({
+      ...cycle,
+      id: crypto.randomUUID(),
+      workspace_id: workspaceId,
+      legacy_id: legacyId,
+    }, {
+      onConflict: 'workspace_id,legacy_id',
+      ignoreDuplicates: false,
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    if (error.code === '23505') {
+      const { data: existing } = await supabase
+        .from('planned_cycles')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .eq('legacy_id', legacyId)
+        .single();
+      
+      if (existing) {
+        const { data: updated, error: updateErr } = await supabase
+          .from('planned_cycles')
+          .update(cycle)
+          .eq('id', existing.id)
+          .select()
+          .single();
+        
+        if (updateErr) {
+          console.error('Error updating planned cycle by legacy_id:', updateErr);
+          return { data: null, created: false };
+        }
+        return { data: updated, created: false };
+      }
+    }
+    console.error('Error upserting planned cycle by legacy_id:', error);
+    return { data: null, created: false };
+  }
+  
+  return { data, created: true };
 };
 
 export const updateProject = async (id: string, updates: Partial<DbProject>): Promise<DbProject | null> => {
