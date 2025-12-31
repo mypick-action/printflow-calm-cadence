@@ -89,6 +89,7 @@ export interface DbProject {
   parent_project_id: string | null;
   notes: string | null;
   color: string | null; // For display purposes - project material color
+  include_in_planning: boolean; // If false, project is excluded from planning engine
   created_at: string;
   updated_at: string;
 }

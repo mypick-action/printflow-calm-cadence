@@ -759,7 +759,9 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   
   const settings = getFactorySettings();
   const printers = getActivePrinters();
-  const projects = getActiveProjects();
+  const allProjects = getActiveProjects();
+  // Filter out projects that should not be included in planning
+  const projects = allProjects.filter(p => p.includeInPlanning !== false);
   const products = getProducts();
   const spools = getSpools();
   const existingCycles = getPlannedCycles();
