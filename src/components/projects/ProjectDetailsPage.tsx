@@ -35,6 +35,7 @@ import {
   Timer,
   AlertCircle,
   Pencil,
+  Palette,
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { toast } from '@/hooks/use-toast';
@@ -52,6 +53,7 @@ import {
   PlannedCycle,
   CycleLog,
   calculateDaysRemaining,
+  getColorInventory,
 } from '@/services/storage';
 import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
@@ -103,6 +105,10 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   const [quantityPopoverOpen, setQuantityPopoverOpen] = useState(false);
   const [newQuantity, setNewQuantity] = useState<string>('');
   
+  // Color editing state
+  const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
+  const [availableColors, setAvailableColors] = useState<string[]>([]);
+  
   // Warning modal state
   const [planningIssues, setPlanningIssues] = useState<{
     blockingIssues: BlockingIssue[];
@@ -111,6 +117,12 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
 
   useEffect(() => {
     loadData();
+    // Load available colors from inventory
+    const inventory = getColorInventory();
+    const colorsFromInventory = inventory.map(item => item.color);
+    const predefinedColors = ['שחור', 'לבן', 'אפור', 'אדום', 'כחול', 'ירוק', 'צהוב', 'כתום', 'סגול', 'ורוד', 'חום'];
+    const allColors = [...new Set([...predefinedColors, ...colorsFromInventory])];
+    setAvailableColors(allColors);
   }, [projectId, refreshKey]);
 
   const loadData = () => {
@@ -119,6 +131,42 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
     if (proj) {
       const prod = getProduct(proj.productId);
       setProduct(prod || null);
+    }
+  };
+
+  const handleColorChange = (newColor: string) => {
+    if (!project || newColor === project.color) return;
+    
+    const updated = updateProject(project.id, { color: newColor });
+    
+    if (updated) {
+      setProject(updated);
+      setColorPopoverOpen(false);
+      
+      // Run replan and check for issues
+      const result = runReplanNow('project_color_changed');
+      
+      // Check for blocking issues related to material
+      const criticalIssues = result.blockingIssues.filter(i => 
+        i.type === 'insufficient_material'
+      );
+      
+      if (criticalIssues.length > 0) {
+        setPlanningIssues({
+          blockingIssues: result.blockingIssues,
+          warnings: result.warnings,
+        });
+      } else {
+        toast({
+          title: language === 'he' ? 'צבע עודכן' : 'Color updated',
+          description: language === 'he' 
+            ? `הצבע שונה ל-${newColor}. התכנון עודכן.` 
+            : `Color changed to ${newColor}. Planning updated.`,
+        });
+      }
+      
+      loadData();
+      setRefreshKey(k => k + 1);
     }
   };
 
@@ -511,6 +559,50 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
                 }
               </p>
             </div>
+          </div>
+
+          {/* Color Section - Editable */}
+          <Separator />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Palette className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">
+                {language === 'he' ? 'צבע הדפסה' : 'Print Color'}
+              </span>
+            </div>
+            <Popover open={colorPopoverOpen} onOpenChange={setColorPopoverOpen}>
+              <PopoverTrigger asChild>
+                <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-muted transition-colors group cursor-pointer border border-border">
+                  <span className="font-medium">{project.color}</span>
+                  <Pencil className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64" align="end">
+                <div className="space-y-3">
+                  <Label>{language === 'he' ? 'בחר צבע חדש' : 'Select new color'}</Label>
+                  <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto">
+                    {availableColors.map((color) => (
+                      <button
+                        key={color}
+                        onClick={() => handleColorChange(color)}
+                        className={`px-2 py-1.5 text-sm rounded-md border transition-colors ${
+                          color === project.color 
+                            ? 'bg-primary text-primary-foreground border-primary' 
+                            : 'hover:bg-muted border-border'
+                        }`}
+                      >
+                        {color}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {language === 'he' 
+                      ? 'שינוי הצבע ישפיע על התכנון והחומרים הנדרשים' 
+                      : 'Changing color will affect planning and required materials'}
+                  </p>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
 
           {/* Progress Bar */}
