@@ -457,8 +457,14 @@ export const KEYS = {
 
 // ============= HELPERS =============
 
-const generateId = (): string => {
+// Generate legacy ID for backward compatibility (timestamp-based)
+const generateLegacyId = (): string => {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+};
+
+// Generate proper UUID for cloud storage
+const generateUUID = (): string => {
+  return crypto.randomUUID();
 };
 
 const getItem = <T>(key: string, defaultValue: T): T => {
@@ -756,7 +762,7 @@ export const getProduct = (id: string): Product | undefined => {
 };
 
 export const createProduct = (product: Omit<Product, 'id'>): Product => {
-  const newProduct = { ...product, id: generateId() };
+  const newProduct = { ...product, id: generateUUID() };
   const products = getProducts();
   setItem(KEYS.PRODUCTS, [...products, newProduct]);
   scheduleAutoReplan('product_created');
@@ -937,10 +943,15 @@ export const getActiveProjects = (): Project[] => {
 };
 
 // CREATE: Save locally first, then try cloud
+// FIXED: Use proper UUID for cloud compatibility
 export const createProject = (project: Omit<Project, 'id' | 'createdAt' | 'quantityGood' | 'quantityScrap'>): Project => {
+  // Generate proper UUID (not timestamp-based) for cloud compatibility
+  const projectId = generateUUID();
+  const legacyId = generateLegacyId(); // Keep for backward compatibility
+  
   const newProject: Project = {
     ...project,
-    id: generateId(),
+    id: projectId,
     createdAt: new Date().toISOString().split('T')[0],
     quantityGood: 0,
     quantityScrap: 0,
@@ -954,20 +965,24 @@ export const createProject = (project: Omit<Project, 'id' | 'createdAt' | 'quant
   // 2. Try to save to cloud (async, non-blocking)
   const workspaceId = getWorkspaceId();
   if (workspaceId) {
-    const cloudData = mapLocalProjectToCloud(newProject);
+    const cloudData = {
+      ...mapLocalProjectToCloud(newProject),
+      legacy_id: legacyId, // Store timestamp-based ID separately for migration
+    };
     cloudStorage.createProjectWithId(workspaceId, cloudData)
       .then(result => {
         if (result) {
           console.log('[Projects] Saved to cloud:', newProject.id);
         } else {
-          // Cloud failed - add to sync queue
+          // Cloud failed - show error toast
+          toast.error('שגיאה בשמירת הפרויקט לענן');
           addToSyncQueue('create', 'project', newProject.id, cloudData);
-          toast.warning('נשמר מקומית. יסונכרן כשהחיבור יחזור.');
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('[Projects] Cloud save error:', err);
+        toast.error('שגיאה בשמירת הפרויקט לענן');
         addToSyncQueue('create', 'project', newProject.id, cloudData);
-        toast.warning('נשמר מקומית. יסונכרן כשהחיבור יחזור.');
       });
   }
   
@@ -1068,7 +1083,7 @@ export const getPrinter = (id: string): Printer | undefined => {
 };
 
 export const createPrinter = (printer: Omit<Printer, 'id'>): Printer => {
-  const newPrinter: Printer = { ...printer, id: generateId() };
+  const newPrinter: Printer = { ...printer, id: generateUUID() };
   const printers = getPrinters();
   setItem(KEYS.PRINTERS, [...printers, newPrinter]);
   scheduleAutoReplan('printer_added');
@@ -1327,7 +1342,7 @@ export interface LogCycleWithRemakeResult {
 export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): LogCycleWithRemakeResult => {
   const newLog: CycleLog = {
     ...log,
-    id: generateId(),
+    id: generateUUID(),
     timestamp: new Date().toISOString(),
   };
   const logs = getCycleLogs();
@@ -1474,7 +1489,7 @@ export const getUnresolvedIssues = (): IssueReport[] => {
 export const createIssueReport = (report: Omit<IssueReport, 'id' | 'timestamp' | 'resolved'>): IssueReport => {
   const newReport: IssueReport = {
     ...report,
-    id: generateId(),
+    id: generateUUID(),
     timestamp: new Date().toISOString(),
     resolved: false,
   };
@@ -2066,7 +2081,7 @@ export const getSpools = (): Spool[] => {
 import { notifyInventoryChanged } from './inventoryEvents';
 
 export const createSpool = (spool: Omit<Spool, 'id'>): Spool => {
-  const newSpool = { ...spool, id: generateId() };
+  const newSpool = { ...spool, id: generateUUID() };
   const spools = getSpools();
   setItem(KEYS.SPOOLS, [...spools, newSpool]);
   scheduleAutoReplan('spool_added');
