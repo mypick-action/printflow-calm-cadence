@@ -71,6 +71,7 @@ import {
   getProducts, 
   createProject,
   deleteProject,
+  updateProject,
   Project, 
   Product,
   calculatePriorityFromDueDate,
@@ -83,6 +84,7 @@ import {
   hasActivePrintForProject,
   forceCompleteProject,
 } from '@/services/storage';
+import { Switch } from '@/components/ui/switch';
 import { validateProjectForPlanning, getValidationSummary } from '@/services/projectValidation';
 import { 
   getProjectMaterialStatus, 
@@ -254,6 +256,7 @@ export const ProjectsPage: React.FC = () => {
     dueDate: '',
     color: predefinedColors[0], // Default to first predefined color
     manualUrgency: null as ProjectPriority | null,
+    includeInPlanning: true, // Default: include in planning
   });
 
   // Get earliest planned print date for a project
@@ -547,6 +550,7 @@ export const ProjectsPage: React.FC = () => {
       urgencyManualOverride: newProject.manualUrgency !== null,
       status: 'pending',
       color: newProject.color,
+      includeInPlanning: newProject.includeInPlanning,
     });
     
     // refreshData() below will update projects from cloud
@@ -560,6 +564,7 @@ export const ProjectsPage: React.FC = () => {
       dueDate: '',
       color: predefinedColors[0], // Reset to first predefined color
       manualUrgency: null,
+      includeInPlanning: true,
     });
     setUseCustomColor(false);
     setCustomColorName('');
@@ -963,6 +968,25 @@ export const ProjectsPage: React.FC = () => {
                 />
               )}
               
+              {/* Include in Planning Toggle */}
+              <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                <div className="space-y-0.5">
+                  <Label htmlFor="includeInPlanning" className="text-sm font-medium">
+                    {language === 'he' ? 'שלב בלוח עבודה' : 'Include in Schedule'}
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    {language === 'he' 
+                      ? 'כאשר פעיל, הפרויקט יתוכנן אוטומטית' 
+                      : 'When enabled, project will be automatically scheduled'}
+                  </p>
+                </div>
+                <Switch
+                  id="includeInPlanning"
+                  checked={newProject.includeInPlanning}
+                  onCheckedChange={(checked) => setNewProject({ ...newProject, includeInPlanning: checked })}
+                />
+              </div>
+              
               <Button 
                 onClick={handleAddProject} 
                 className="w-full"
@@ -1148,6 +1172,7 @@ export const ProjectsPage: React.FC = () => {
                   <TableHead>{language === 'he' ? 'תאריך יעד' : 'Due Date'}</TableHead>
                   <TableHead>{language === 'he' ? 'מצב' : 'Status'}</TableHead>
                   <TableHead>{language === 'he' ? 'דחיפות' : 'Priority'}</TableHead>
+                  <TableHead>{language === 'he' ? 'בלוח עבודה' : 'In Schedule'}</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -1225,6 +1250,20 @@ export const ProjectsPage: React.FC = () => {
                     </TableCell>
                     <TableCell>{getStatusBadge(project.status)}</TableCell>
                     <TableCell>{getPriorityWithDays(project)}</TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Switch
+                        checked={project.includeInPlanning !== false}
+                        onCheckedChange={(checked) => {
+                          updateProject(project.id, { includeInPlanning: checked });
+                          refreshData();
+                          toast({
+                            title: checked 
+                              ? (language === 'he' ? 'הפרויקט שולב בלוח העבודה' : 'Project added to schedule')
+                              : (language === 'he' ? 'הפרויקט הוסר מלוח העבודה' : 'Project removed from schedule'),
+                          });
+                        }}
+                      />
+                    </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
