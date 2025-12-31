@@ -203,6 +203,18 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     return isToday && isActiveStatus;
   });
   
+  // DEBUG: Log cycle date distribution
+  if (plannedCycles.length > 0) {
+    const dateDistribution: Record<string, number> = {};
+    plannedCycles.forEach(c => {
+      const dateKey = c.startTime.split('T')[0];
+      dateDistribution[dateKey] = (dateDistribution[dateKey] || 0) + 1;
+    });
+    console.log('[DashboardCalculator] Cycle date distribution:', dateDistribution);
+    console.log('[DashboardCalculator] Target date:', format(targetDate, 'yyyy-MM-dd'));
+    console.log('[DashboardCalculator] Total cycles:', plannedCycles.length, '→ Today:', todayCycles.length);
+  }
+  
   // Build printer plans
   const printerPlans: PrinterDayPlan[] = printers.map(printer => {
     const printerCycles = todayCycles
