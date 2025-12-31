@@ -961,6 +961,7 @@ const mapCloudProjectToLocal = (p: cloudStorage.DbProject): Project => {
     parentProjectId: p.parent_project_id ?? undefined,
     customCycleHours: p.custom_cycle_hours ?? undefined,
     isRecoveryProject: p.is_recovery_project ?? false,
+    includeInPlanning: p.include_in_planning !== false,
   };
 };
 
