@@ -277,10 +277,11 @@ export const ProjectsPage: React.FC = () => {
     setDeleteDialogOpen(true);
   };
 
-  const confirmDeleteProject = () => {
+  const confirmDeleteProject = async () => {
     if (projectToDelete) {
       deleteProject(projectToDelete.id);
-      setProjects(getProjects());
+      const projectsData = await getProjects();
+      setProjects(projectsData);
       toast({
         title: language === 'he' ? 'הפרויקט נמחק' : 'Project deleted',
         description: projectToDelete.name,
@@ -329,8 +330,10 @@ export const ProjectsPage: React.FC = () => {
     setConfirmNoActivePrint(false);
   };
 
-  const refreshData = () => {
-    setProjects(getProjects());
+  const refreshData = async () => {
+    // Load projects from cloud (async, cloud-first)
+    const projectsData = await getProjects();
+    setProjects(projectsData);
     setProducts(getProducts());
     
     // Get colors from inventory and settings
@@ -557,7 +560,7 @@ export const ProjectsPage: React.FC = () => {
       color: newProject.color,
     });
     
-    setProjects(getProjects());
+    // refreshData() below will update projects from cloud
     setDialogOpen(false);
     setManualOverrideOpen(false);
     setNewProject({
@@ -714,10 +717,10 @@ export const ProjectsPage: React.FC = () => {
     return (
       <ProjectDetailsPage
         projectId={selectedProjectId}
-        onBack={() => {
+        onBack={async () => {
           setSelectedProjectId(null);
           // Refresh data when coming back from details
-          setProjects(getProjects());
+          await refreshData();
         }}
       />
     );

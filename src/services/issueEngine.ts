@@ -8,7 +8,7 @@ import {
   PlannedCycle,
   Product,
   FactorySettings,
-  getProjects,
+  getProjectsSync,
   getPrinters,
   getProducts,
   getFactorySettings,
@@ -378,7 +378,7 @@ const generateDelayProjectOption = (
 // ============= MAIN ANALYSIS FUNCTION =============
 
 export const analyzeIssue = (context: IssueContext): IssueAnalysis => {
-  const projects = getProjects();
+  const projects = getProjectsSync();
   const printers = getPrinters();
   const settings = getFactorySettings();
   
@@ -544,7 +544,7 @@ export const checkCanProceed = (
   projectId: string,
   printerId: string
 ): { canProceed: boolean; warnings: string[]; warningsEn: string[] } => {
-  const projects = getProjects();
+  const projects = getProjectsSync();
   const printers = getPrinters();
   const settings = getFactorySettings();
   

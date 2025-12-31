@@ -5,7 +5,7 @@
 import { 
   getFactorySettings,
   getActivePrinters,
-  getProjects,
+  getProjectsSync,
   getProducts,
   getPlannedCycles,
   getProduct,
@@ -98,7 +98,7 @@ const minutesToTime = (minutes: number): string => {
 export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResult => {
   const settings = getFactorySettings();
   const printers = getActivePrinters();
-  const allProjects = getProjects();
+  const allProjects = getProjectsSync();
   const allProducts = getProducts();
   const plannedCycles = getPlannedCycles();
   
@@ -337,7 +337,7 @@ export interface DashboardSummary {
 }
 
 export const getDashboardSummary = (): DashboardSummary => {
-  const projects = getProjects();
+  const projects = getProjectsSync();
   const printers = getActivePrinters();
   const todayPlan = calculateTodayPlan();
   

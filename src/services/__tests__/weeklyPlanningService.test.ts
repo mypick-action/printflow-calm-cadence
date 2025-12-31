@@ -9,7 +9,7 @@ import type { PlannedCycle, Project, FactorySettings, DaySchedule, Printer } fro
 // Mock the storage module before importing the service
 vi.mock('../storage', () => ({
   getFactorySettings: vi.fn(),
-  getProjects: vi.fn(),
+  getProjectsSync: vi.fn(),
   getPlannedCycles: vi.fn(),
   getPrinters: vi.fn(),
   getDayScheduleForDate: vi.fn(),
@@ -35,7 +35,7 @@ import {
 
 import {
   getFactorySettings,
-  getProjects,
+  getProjectsSync,
   getPlannedCycles,
   getPrinters,
   getDayScheduleForDate,
@@ -293,7 +293,7 @@ describe('computeProjectCoverage', () => {
       status: 'in_progress',
     });
     
-    vi.mocked(getProjects).mockReturnValue([project]);
+    vi.mocked(getProjectsSync).mockReturnValue([project]);
     vi.mocked(getPlannedCycles).mockReturnValue([
       createMockCycle({
         projectId: 'project-1',
@@ -319,7 +319,7 @@ describe('computeProjectCoverage', () => {
       status: 'in_progress',
     });
     
-    vi.mocked(getProjects).mockReturnValue([project]);
+    vi.mocked(getProjectsSync).mockReturnValue([project]);
     vi.mocked(getPlannedCycles).mockReturnValue([
       createMockCycle({
         projectId: 'project-1',
@@ -344,7 +344,7 @@ describe('computeProjectCoverage', () => {
       status: 'pending',
     });
     
-    vi.mocked(getProjects).mockReturnValue([project]);
+    vi.mocked(getProjectsSync).mockReturnValue([project]);
     vi.mocked(getPlannedCycles).mockReturnValue([]); // No cycles
     
     const coverage = computeProjectCoverage();
@@ -363,7 +363,7 @@ describe('computeProjectCoverage', () => {
       status: 'in_progress',
     });
     
-    vi.mocked(getProjects).mockReturnValue([project]);
+    vi.mocked(getProjectsSync).mockReturnValue([project]);
     vi.mocked(getPlannedCycles).mockReturnValue([
       createMockCycle({
         projectId: 'project-1',
@@ -389,7 +389,7 @@ describe('computeProjectCoverage', () => {
       status: 'pending',
     });
     
-    vi.mocked(getProjects).mockReturnValue([recoveryProject]);
+    vi.mocked(getProjectsSync).mockReturnValue([recoveryProject]);
     vi.mocked(getPlannedCycles).mockReturnValue([
       createMockCycle({
         projectId: 'recovery-1',
@@ -412,7 +412,7 @@ describe('computeProjectCoverage', () => {
       status: 'in_progress',
     });
     
-    vi.mocked(getProjects).mockReturnValue([project]);
+    vi.mocked(getProjectsSync).mockReturnValue([project]);
     vi.mocked(getPlannedCycles).mockReturnValue([
       createMockCycle({
         id: 'cycle-1',
@@ -448,7 +448,7 @@ describe('computeProjectCoverage', () => {
       status: 'pending',
     });
     
-    vi.mocked(getProjects).mockReturnValue([completedProject, activeProject]);
+    vi.mocked(getProjectsSync).mockReturnValue([completedProject, activeProject]);
     vi.mocked(getPlannedCycles).mockReturnValue([]);
     
     const coverage = computeProjectCoverage();
@@ -465,7 +465,7 @@ describe('getCyclesByDayAndPrinter', () => {
     vi.mocked(getFactorySettings).mockReturnValue(mockFactorySettings);
     vi.mocked(getDayScheduleForDate).mockReturnValue(mockWorkDaySchedule);
     vi.mocked(getTemporaryOverrides).mockReturnValue([]);
-    vi.mocked(getProjects).mockReturnValue([createMockProject()]);
+    vi.mocked(getProjectsSync).mockReturnValue([createMockProject()]);
   });
 
   afterEach(() => {
