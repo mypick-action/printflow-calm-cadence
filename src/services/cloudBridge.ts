@@ -1,11 +1,13 @@
 // Cloud Bridge - One-way sync from Cloud (Supabase) to localStorage
 // Cloud = SSOT, localStorage = temporary cache for legacy engines
 
-import { getPrinters, getFactorySettings, getProjects } from '@/services/cloudStorage';
+import { getPrinters, getFactorySettings, getProjects, getPlannedCycles, upsertProjectByLegacyId, upsertPlannedCycleByLegacyId } from '@/services/cloudStorage';
+import type { UpsertProjectData, UpsertPlannedCycleData } from '@/services/cloudStorage';
 import { 
   KEYS, 
   Printer, 
   Project,
+  PlannedCycle,
   FactorySettings, 
   WeeklySchedule, 
   DaySchedule,
@@ -321,14 +323,14 @@ export async function getCloudLocalComparison(workspaceId: string): Promise<{
 }
 
 /**
- * Idempotent migration: Push local projects to cloud
- * Safe to run multiple times - only uploads projects not already in cloud
+ * Idempotent migration: Push local projects to cloud using legacy_id
+ * Always upserts (creates or updates) - safe to run multiple times
  */
 export async function migrateLocalProjectsToCloud(
   workspaceId: string
-): Promise<{ migrated: number; skipped: number; errors: number }> {
+): Promise<{ created: number; updated: number; errors: number }> {
   if (!workspaceId) {
-    return { migrated: 0, skipped: 0, errors: 0 };
+    return { created: 0, updated: 0, errors: 0 };
   }
 
   console.log('[CloudBridge] Starting project migration for workspace:', workspaceId);
@@ -336,24 +338,19 @@ export async function migrateLocalProjectsToCloud(
   // Get local projects
   const localProjects = safeJsonParse<Project[]>(localStorage.getItem(KEYS.PROJECTS)) || [];
   if (localProjects.length === 0) {
-    return { migrated: 0, skipped: 0, errors: 0 };
+    console.log('[CloudBridge] No local projects to migrate');
+    return { created: 0, updated: 0, errors: 0 };
   }
 
-  // Get cloud projects
-  const cloudProjects = await getProjects(workspaceId);
-  const cloudIds = new Set(cloudProjects.map(p => p.id));
-
-  // Find projects only in local
-  const toMigrate = localProjects.filter(p => !cloudIds.has(p.id));
-
-  let migrated = 0;
+  let created = 0;
+  let updated = 0;
   let errors = 0;
 
-  for (const project of toMigrate) {
+  for (const project of localProjects) {
+    const legacyId = project.id;
+    
     try {
-      const { createProjectWithId } = await import('@/services/cloudStorage');
-      const cloudData = {
-        id: project.id,
+      const projectData: UpsertProjectData = {
         name: project.name,
         product_id: project.productId || null,
         preset_id: project.preferredPresetId || null,
@@ -370,23 +367,136 @@ export async function migrateLocalProjectsToCloud(
         notes: null,
       };
       
-      const result = await createProjectWithId(workspaceId, cloudData);
-      if (result) {
-        migrated++;
+      const result = await upsertProjectByLegacyId(workspaceId, legacyId, projectData);
+      
+      if (result.data) {
+        if (result.created) {
+          console.log(`[CloudBridge] Created project: legacy_id=${legacyId} -> uuid=${result.data.id}`);
+          created++;
+        } else {
+          console.log(`[CloudBridge] Updated project: legacy_id=${legacyId} -> uuid=${result.data.id}`);
+          updated++;
+        }
       } else {
+        console.error(`[CloudBridge] Failed to upsert project: legacy_id=${legacyId}`);
         errors++;
       }
     } catch (e) {
-      console.error('[CloudBridge] Migration failed for project:', project.id, e);
+      console.error(`[CloudBridge] Migration error for legacy_id=${legacyId}:`, e);
       errors++;
     }
   }
 
-  console.log('[CloudBridge] Migration complete:', { migrated, skipped: localProjects.length - toMigrate.length, errors });
+  console.log('[CloudBridge] Project migration complete:', { created, updated, errors });
+  return { created, updated, errors };
+}
 
+/**
+ * Idempotent migration: Push local planned cycles to cloud using legacy_id
+ * Always upserts (creates or updates) - safe to run multiple times
+ * IMPORTANT: Must be called AFTER migrateLocalProjectsToCloud to have project UUID mapping
+ */
+export async function migrateLocalCyclesToCloud(
+  workspaceId: string
+): Promise<{ created: number; updated: number; errors: number; skippedNoProject: number }> {
+  if (!workspaceId) {
+    return { created: 0, updated: 0, errors: 0, skippedNoProject: 0 };
+  }
+
+  console.log('[CloudBridge] Starting planned cycles migration for workspace:', workspaceId);
+
+  // Get local planned cycles
+  const localCycles = safeJsonParse<PlannedCycle[]>(localStorage.getItem(KEYS.PLANNED_CYCLES)) || [];
+  if (localCycles.length === 0) {
+    console.log('[CloudBridge] No local planned cycles to migrate');
+    return { created: 0, updated: 0, errors: 0, skippedNoProject: 0 };
+  }
+
+  // Get cloud projects to map legacy project IDs to UUIDs
+  const cloudProjects = await getProjects(workspaceId);
+  const projectLegacyToUuid = new Map<string, string>();
+  for (const p of cloudProjects) {
+    if (p.legacy_id) {
+      projectLegacyToUuid.set(p.legacy_id, p.id);
+    }
+  }
+
+  let created = 0;
+  let updated = 0;
+  let errors = 0;
+  let skippedNoProject = 0;
+
+  for (const cycle of localCycles) {
+    const legacyId = cycle.id;
+    const localProjectId = cycle.projectId;
+    
+    // Map local project ID to cloud UUID
+    const cloudProjectId = projectLegacyToUuid.get(localProjectId);
+    if (!cloudProjectId) {
+      console.warn(`[CloudBridge] Skipping cycle ${legacyId}: project ${localProjectId} not found in cloud`);
+      skippedNoProject++;
+      continue;
+    }
+    
+    try {
+      // Extract scheduled_date from startTime (local PlannedCycle has startTime as ISO string)
+      const scheduledDate = cycle.startTime ? cycle.startTime.split('T')[0] : new Date().toISOString().split('T')[0];
+      
+      const cycleData: UpsertPlannedCycleData = {
+        project_id: cloudProjectId,
+        printer_id: cycle.printerId,
+        preset_id: null, // Not stored in local PlannedCycle
+        scheduled_date: scheduledDate,
+        start_time: cycle.startTime || null,
+        end_time: cycle.endTime || null,
+        units_planned: cycle.unitsPlanned,
+        status: cycle.status === 'planned' ? 'scheduled' : cycle.status,
+        cycle_index: 0, // Not tracked in local PlannedCycle
+      };
+      
+      const result = await upsertPlannedCycleByLegacyId(workspaceId, legacyId, cycleData);
+      
+      if (result.data) {
+        if (result.created) {
+          console.log(`[CloudBridge] Created cycle: legacy_id=${legacyId} -> uuid=${result.data.id}`);
+          created++;
+        } else {
+          console.log(`[CloudBridge] Updated cycle: legacy_id=${legacyId} -> uuid=${result.data.id}`);
+          updated++;
+        }
+      } else {
+        console.error(`[CloudBridge] Failed to upsert cycle: legacy_id=${legacyId}`);
+        errors++;
+      }
+    } catch (e) {
+      console.error(`[CloudBridge] Cycle migration error for legacy_id=${legacyId}:`, e);
+      errors++;
+    }
+  }
+
+  console.log('[CloudBridge] Cycle migration complete:', { created, updated, errors, skippedNoProject });
+  return { created, updated, errors, skippedNoProject };
+}
+
+/**
+ * Full migration: Projects + Planned Cycles
+ * Runs both migrations in correct order
+ */
+export async function migrateAllLocalDataToCloud(
+  workspaceId: string
+): Promise<{
+  projects: { created: number; updated: number; errors: number };
+  cycles: { created: number; updated: number; errors: number; skippedNoProject: number };
+}> {
+  console.log('[CloudBridge] Starting full migration for workspace:', workspaceId);
+  
+  const projectsResult = await migrateLocalProjectsToCloud(workspaceId);
+  const cyclesResult = await migrateLocalCyclesToCloud(workspaceId);
+  
+  console.log('[CloudBridge] Full migration complete:', { projects: projectsResult, cycles: cyclesResult });
+  
   return {
-    migrated,
-    skipped: localProjects.length - toMigrate.length,
-    errors,
+    projects: projectsResult,
+    cycles: cyclesResult,
   };
 }

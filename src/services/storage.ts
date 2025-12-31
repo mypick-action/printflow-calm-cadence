@@ -907,7 +907,7 @@ const mapCloudProjectToLocal = (p: cloudStorage.DbProject): Project => {
 };
 
 // Map local project to cloud format
-const mapLocalProjectToCloud = (p: Project): Omit<cloudStorage.DbProject, 'workspace_id' | 'created_at' | 'updated_at'> => {
+const mapLocalProjectToCloud = (p: Project): Omit<cloudStorage.DbProject, 'workspace_id' | 'created_at' | 'updated_at' | 'legacy_id'> => {
   return {
     id: p.id,
     name: p.name,

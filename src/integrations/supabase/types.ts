@@ -148,6 +148,7 @@ export type Database = {
           cycle_index: number
           end_time: string | null
           id: string
+          legacy_id: string | null
           preset_id: string | null
           printer_id: string
           project_id: string
@@ -163,6 +164,7 @@ export type Database = {
           cycle_index?: number
           end_time?: string | null
           id?: string
+          legacy_id?: string | null
           preset_id?: string | null
           printer_id: string
           project_id: string
@@ -178,6 +180,7 @@ export type Database = {
           cycle_index?: number
           end_time?: string | null
           id?: string
+          legacy_id?: string | null
           preset_id?: string | null
           printer_id?: string
           project_id?: string
@@ -451,6 +454,7 @@ export type Database = {
           deadline: string | null
           id: string
           is_recovery_project: boolean
+          legacy_id: string | null
           name: string
           notes: string | null
           parent_project_id: string | null
@@ -471,6 +475,7 @@ export type Database = {
           deadline?: string | null
           id?: string
           is_recovery_project?: boolean
+          legacy_id?: string | null
           name: string
           notes?: string | null
           parent_project_id?: string | null
@@ -491,6 +496,7 @@ export type Database = {
           deadline?: string | null
           id?: string
           is_recovery_project?: boolean
+          legacy_id?: string | null
           name?: string
           notes?: string | null
           parent_project_id?: string | null
