@@ -311,6 +311,7 @@ export async function hydrateLocalFromCloud(
         parentProjectId: p.parent_project_id ?? undefined,
         customCycleHours: p.custom_cycle_hours ?? undefined,
         isRecoveryProject: p.is_recovery_project ?? false,
+        includeInPlanning: (p as any).include_in_planning !== false, // Default true
         // Store UUID for future sync reference
         cloudUuid: p.id,
       } as Project & { cloudUuid?: string });
@@ -534,6 +535,7 @@ export async function migrateLocalProjectsToCloud(
         parent_project_id: project.parentProjectId || null,
         notes: null,
         color: project.color || null, // Save project color to cloud
+        include_in_planning: project.includeInPlanning !== false, // Default true
       };
       
       const result = await upsertProjectByLegacyId(workspaceId, legacyId, projectData);

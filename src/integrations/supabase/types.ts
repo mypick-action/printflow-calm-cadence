@@ -507,6 +507,7 @@ export type Database = {
           custom_cycle_hours: number | null
           deadline: string | null
           id: string
+          include_in_planning: boolean
           is_recovery_project: boolean
           legacy_id: string | null
           name: string
@@ -529,6 +530,7 @@ export type Database = {
           custom_cycle_hours?: number | null
           deadline?: string | null
           id?: string
+          include_in_planning?: boolean
           is_recovery_project?: boolean
           legacy_id?: string | null
           name: string
@@ -551,6 +553,7 @@ export type Database = {
           custom_cycle_hours?: number | null
           deadline?: string | null
           id?: string
+          include_in_planning?: boolean
           is_recovery_project?: boolean
           legacy_id?: string | null
           name?: string
