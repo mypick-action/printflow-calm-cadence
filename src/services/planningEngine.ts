@@ -191,7 +191,7 @@ const getAvailableFilamentForColor = (color: string, spools: Spool[]): number =>
 
 // ============= PROJECT PRIORITIZATION =============
 
-const prioritizeProjects = (projects: Project[], products: Product[], fromDate: Date): ProjectPlanningState[] => {
+const prioritizeProjects = (projects: Project[], products: Product[], fromDate: Date, existingCycles: PlannedCycle[] = []): ProjectPlanningState[] => {
   const projectStates: ProjectPlanningState[] = [];
   
   for (const project of projects) {
@@ -208,7 +208,12 @@ const prioritizeProjects = (projects: Project[], products: Product[], fromDate: 
     
     if (!preset) continue;
     
-    const remainingUnits = project.quantityTarget - project.quantityGood;
+    // Calculate units already being produced in in_progress cycles
+    const inProgressUnits = existingCycles
+      .filter(c => c.projectId === project.id && c.status === 'in_progress')
+      .reduce((sum, c) => sum + c.unitsPlanned, 0);
+    
+    const remainingUnits = project.quantityTarget - project.quantityGood - inProgressUnits;
     if (remainingUnits <= 0) continue;
     
     const daysUntilDue = getDaysUntilDue(project.dueDate, fromDate);
@@ -769,7 +774,7 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   }
   
   // Prioritize projects
-  const projectStates = prioritizeProjects(projects, products, startDate);
+  const projectStates = prioritizeProjects(projects, products, startDate, existingCycles);
   
   if (projectStates.length === 0) {
     // No projects to schedule - return empty but successful plan
