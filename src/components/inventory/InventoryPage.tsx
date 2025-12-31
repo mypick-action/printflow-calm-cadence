@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Package, Plus, Minus, AlertTriangle, Edit2, Loader2, CloudOff } from 'lucide-react';
+import { Package, Plus, Minus, AlertTriangle, Edit2, Loader2, CloudOff, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { 
@@ -73,6 +73,10 @@ export const InventoryPage: React.FC = () => {
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renamingItem, setRenamingItem] = useState<ColorInventoryItem | null>(null);
   const [newColorName, setNewColorName] = useState('');
+  
+  // Delete confirmation dialog
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingItem, setDeletingItem] = useState<ColorInventoryItem | null>(null);
 
   // Load inventory from cloud on mount
   const loadFromCloud = useCallback(async () => {
@@ -387,6 +391,38 @@ export const InventoryPage: React.FC = () => {
       console.error('[InventoryPage] Error renaming color:', error);
       toast({
         title: language === 'he' ? 'שגיאה בשינוי שם הצבע' : 'Error renaming color',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Delete inventory item
+  const handleDeleteItem = async () => {
+    if (!deletingItem || saving) return;
+    
+    setSaving(true);
+    try {
+      const deleted = await deleteMaterialInventory(deletingItem.id);
+      
+      if (deleted) {
+        await loadFromCloud();
+        setDeleteDialogOpen(false);
+        setDeletingItem(null);
+        toast({
+          title: language === 'he' ? 'הצבע נמחק מהמלאי' : 'Color removed from inventory',
+        });
+      } else {
+        toast({
+          title: language === 'he' ? 'שגיאה במחיקה' : 'Error deleting',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('[InventoryPage] Error deleting item:', error);
+      toast({
+        title: language === 'he' ? 'שגיאה במחיקה' : 'Error deleting',
         variant: 'destructive',
       });
     } finally {
@@ -731,6 +767,17 @@ export const InventoryPage: React.FC = () => {
                         >
                           <Edit2 className="w-3 h-3" />
                         </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-6 w-6 text-destructive hover:text-destructive"
+                          onClick={() => {
+                            setDeletingItem(item);
+                            setDeleteDialogOpen(true);
+                          }}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
                       </div>
                       <p className="text-xs text-muted-foreground">{item.material}</p>
                     </div>
@@ -934,6 +981,40 @@ export const InventoryPage: React.FC = () => {
             <Button onClick={handleSaveColorName} disabled={!newColorName.trim() || saving}>
               {saving && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
               {language === 'he' ? 'שמור' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {language === 'he' ? 'מחיקת צבע מהמלאי' : 'Delete from Inventory'}
+            </DialogTitle>
+          </DialogHeader>
+          {deletingItem && (
+            <div className="py-4">
+              <div className="flex items-center gap-2 mb-4">
+                <SpoolIcon color={getSpoolColor(deletingItem.color)} size={24} />
+                <span className="font-medium">{deletingItem.color}</span>
+                <span className="text-muted-foreground">({deletingItem.material})</span>
+              </div>
+              <p className="text-muted-foreground">
+                {language === 'he' 
+                  ? `האם אתה בטוח שברצונך למחוק את הצבע הזה מהמלאי? יש ${(getTotalGrams(deletingItem) / 1000).toFixed(1)}kg במלאי.`
+                  : `Are you sure you want to delete this color from inventory? There are ${(getTotalGrams(deletingItem) / 1000).toFixed(1)}kg in stock.`}
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteItem} disabled={saving}>
+              {saving && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              {language === 'he' ? 'מחק' : 'Delete'}
             </Button>
           </DialogFooter>
         </DialogContent>
