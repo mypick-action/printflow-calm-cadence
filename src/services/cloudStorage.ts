@@ -207,6 +207,114 @@ export const deleteProduct = async (id: string): Promise<boolean> => {
   return true;
 };
 
+// Upsert product by legacy_id (for idempotent local migration)
+export type UpsertProductData = Omit<DbProduct, 'id' | 'workspace_id' | 'created_at' | 'updated_at'> & { legacy_id?: string };
+
+export const upsertProductByLegacyId = async (
+  workspaceId: string,
+  legacyId: string,
+  product: Omit<UpsertProductData, 'legacy_id'>
+): Promise<{ data: DbProduct | null; created: boolean }> => {
+  // First check if product already exists by legacy_id
+  const { data: existing } = await supabase
+    .from('products')
+    .select('*')
+    .eq('workspace_id', workspaceId)
+    .eq('legacy_id', legacyId)
+    .maybeSingle();
+  
+  if (existing) {
+    // UPDATE existing product
+    const { data: updated, error: updateErr } = await supabase
+      .from('products')
+      .update({
+        ...product,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id)
+      .select()
+      .single();
+    
+    if (updateErr) {
+      console.error('Error updating product by legacy_id:', updateErr);
+      return { data: null, created: false };
+    }
+    return { data: updated, created: false };
+  }
+  
+  // INSERT new product with legacy_id
+  const { data, error } = await supabase
+    .from('products')
+    .insert({
+      ...product,
+      workspace_id: workspaceId,
+      legacy_id: legacyId,
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error inserting product by legacy_id:', error);
+    return { data: null, created: false };
+  }
+  
+  return { data, created: true };
+};
+
+// Upsert plate preset by legacy_id (for idempotent local migration)
+export type UpsertPlatePresetData = Omit<DbPlatePreset, 'id' | 'workspace_id' | 'created_at' | 'updated_at'> & { legacy_id?: string };
+
+export const upsertPlatePresetByLegacyId = async (
+  workspaceId: string,
+  legacyId: string,
+  preset: Omit<UpsertPlatePresetData, 'legacy_id'>
+): Promise<{ data: DbPlatePreset | null; created: boolean }> => {
+  // First check if preset already exists by legacy_id
+  const { data: existing } = await supabase
+    .from('plate_presets')
+    .select('*')
+    .eq('workspace_id', workspaceId)
+    .eq('legacy_id', legacyId)
+    .maybeSingle();
+  
+  if (existing) {
+    // UPDATE existing preset
+    const { data: updated, error: updateErr } = await supabase
+      .from('plate_presets')
+      .update({
+        ...preset,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id)
+      .select()
+      .single();
+    
+    if (updateErr) {
+      console.error('Error updating preset by legacy_id:', updateErr);
+      return { data: null, created: false };
+    }
+    return { data: updated, created: false };
+  }
+  
+  // INSERT new preset with legacy_id
+  const { data, error } = await supabase
+    .from('plate_presets')
+    .insert({
+      ...preset,
+      workspace_id: workspaceId,
+      legacy_id: legacyId,
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error inserting preset by legacy_id:', error);
+    return { data: null, created: false };
+  }
+  
+  return { data, created: true };
+};
+
 // ============= PLATE PRESETS =============
 
 export const getPlatePresets = async (workspaceId: string, productId?: string): Promise<DbPlatePreset[]> => {

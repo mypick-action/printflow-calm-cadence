@@ -8,6 +8,8 @@ import {
   getPlannedCycles, 
   upsertProjectByLegacyId, 
   upsertPlannedCycleByLegacyId,
+  upsertProductByLegacyId,
+  upsertPlatePresetByLegacyId,
   getMaterialInventory,
   upsertMaterialInventory,
   getProducts as getCloudProducts,
@@ -685,13 +687,13 @@ export async function migrateLocalCyclesToCloud(
 
 /**
  * Migrate local Products + PlatePresets to Cloud
- * Uses upsert with name-based deduplication to prevent duplicates on re-import
+ * Uses upsert by legacy_id for idempotent re-import
  */
 export async function migrateLocalProductsToCloud(
   workspaceId: string
-): Promise<{ products: number; presets: number; errors: number }> {
+): Promise<{ products: number; presets: number; updated: number; errors: number }> {
   if (!workspaceId) {
-    return { products: 0, presets: 0, errors: 0 };
+    return { products: 0, presets: 0, updated: 0, errors: 0 };
   }
 
   console.log('[CloudBridge] Starting products migration for workspace:', workspaceId);
@@ -700,66 +702,54 @@ export async function migrateLocalProductsToCloud(
   const localProducts = safeJsonParse<LocalProduct[]>(localStorage.getItem(KEYS.PRODUCTS)) || [];
   if (localProducts.length === 0) {
     console.log('[CloudBridge] No local products to migrate');
-    return { products: 0, presets: 0, errors: 0 };
+    return { products: 0, presets: 0, updated: 0, errors: 0 };
   }
-
-  // Get existing cloud products to check for duplicates by name
-  const existingProducts = await getCloudProducts(workspaceId);
-  const existingByName = new Map(existingProducts.map(p => [p.name.toLowerCase(), p]));
 
   let products = 0;
   let presets = 0;
+  let updated = 0;
   let errors = 0;
 
   for (const product of localProducts) {
     try {
-      // Skip if already a UUID (cloud-created)
+      // Skip if already a UUID (cloud-created) - these came FROM cloud
       if (isUuid(product.id)) {
         console.log(`[CloudBridge] Skipping cloud-created product: ${product.name}`);
         continue;
       }
 
-      // Check for existing product by name (upsert logic)
-      const existingProduct = existingByName.get(product.name.toLowerCase());
-      let cloudProductId: string;
+      // Use legacy_id upsert (idempotent - safe to run multiple times)
+      const legacyId = product.id; // Local ID becomes legacy_id in cloud
+      
+      const result = await upsertProductByLegacyId(workspaceId, legacyId, {
+        name: product.name,
+        material: 'PLA', // Default
+        color: 'black', // Default
+        default_grams_per_unit: product.gramsPerUnit,
+        default_units_per_plate: product.platePresets[0]?.unitsPerPlate || 1,
+        default_print_time_hours: product.platePresets[0]?.cycleHours || 1,
+        notes: null,
+      });
 
-      if (existingProduct) {
-        console.log(`[CloudBridge] Product already exists: ${product.name}, skipping create`);
-        cloudProductId = existingProduct.id;
-      } else {
-        // Create product in Cloud
-        const cloudProduct = await createProduct(workspaceId, {
-          name: product.name,
-          material: 'PLA', // Default
-          color: 'black', // Default
-          default_grams_per_unit: product.gramsPerUnit,
-          default_units_per_plate: product.platePresets[0]?.unitsPerPlate || 1,
-          default_print_time_hours: product.platePresets[0]?.cycleHours || 1,
-          notes: null,
-        });
-
-        if (!cloudProduct) {
-          errors++;
-          continue;
-        }
-        cloudProductId = cloudProduct.id;
-        products++;
-        console.log(`[CloudBridge] Created product: ${product.name} -> ${cloudProductId}`);
+      if (!result.data) {
+        errors++;
+        continue;
       }
 
-      // Create plate presets for this product
-      // Get existing presets to avoid duplicates
-      const existingPresets = await getCloudPlatePresets(workspaceId, cloudProductId);
-      const existingPresetsByName = new Map(existingPresets.map(p => [p.name.toLowerCase(), p]));
+      const cloudProductId = result.data.id;
+      if (result.created) {
+        products++;
+        console.log(`[CloudBridge] Created product: ${product.name} (legacy_id=${legacyId}) -> ${cloudProductId}`);
+      } else {
+        updated++;
+        console.log(`[CloudBridge] Updated product: ${product.name} (legacy_id=${legacyId}) -> ${cloudProductId}`);
+      }
 
+      // Upsert plate presets with legacy_id
       for (const preset of product.platePresets) {
-        // Skip if preset already exists by name
-        if (existingPresetsByName.has(preset.name.toLowerCase())) {
-          console.log(`[CloudBridge] Preset already exists: ${preset.name}, skipping`);
-          continue;
-        }
-
-        const cloudPreset = await createPlatePreset(workspaceId, {
+        const presetLegacyId = preset.id; // Local preset ID becomes legacy_id
+        
+        const presetResult = await upsertPlatePresetByLegacyId(workspaceId, presetLegacyId, {
           product_id: cloudProductId,
           name: preset.name,
           units_per_plate: preset.unitsPerPlate,
@@ -768,8 +758,10 @@ export async function migrateLocalProductsToCloud(
           allowed_for_night_cycle: preset.allowedForNightCycle,
         });
 
-        if (cloudPreset) {
-          presets++;
+        if (presetResult.data) {
+          if (presetResult.created) {
+            presets++;
+          }
         } else {
           errors++;
         }
@@ -780,8 +772,8 @@ export async function migrateLocalProductsToCloud(
     }
   }
 
-  console.log('[CloudBridge] Products migration complete:', { products, presets, errors });
-  return { products, presets, errors };
+  console.log('[CloudBridge] Products migration complete:', { products, presets, updated, errors });
+  return { products, presets, updated, errors };
 }
 
 /**
@@ -861,7 +853,7 @@ export async function migrateLocalSpoolsToCloud(
 export interface FullMigrationReport {
   projects: { created: number; updated: number; errors: number };
   cycles: { created: number; updated: number; errors: number; skippedNoProject: number };
-  products: { products: number; presets: number; errors: number };
+  products: { products: number; presets: number; updated: number; errors: number };
   spools: { created: number; skipped: number; errors: number };
   inventory: { created: number; updated: number; errors: number };
   totalMigrated: number;
