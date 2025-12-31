@@ -504,53 +504,50 @@ export const upsertProjectByLegacyId = async (
   legacyId: string,
   project: UpsertProjectData
 ): Promise<{ data: DbProject | null; created: boolean }> => {
-  // Use upsert with onConflict on the unique index (workspace_id, legacy_id)
+  // FIXED: First check if project already exists - don't generate new ID for existing projects
+  const { data: existing } = await supabase
+    .from('projects')
+    .select('*')
+    .eq('workspace_id', workspaceId)
+    .eq('legacy_id', legacyId)
+    .maybeSingle();
+  
+  if (existing) {
+    // UPDATE existing project by its actual ID (don't replace ID!)
+    const { data: updated, error: updateErr } = await supabase
+      .from('projects')
+      .update({
+        ...project,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id)
+      .select()
+      .single();
+    
+    if (updateErr) {
+      console.error('Error updating project by legacy_id:', updateErr);
+      return { data: null, created: false };
+    }
+    return { data: updated, created: false };
+  }
+  
+  // INSERT new project with new UUID
   const { data, error } = await supabase
     .from('projects')
-    .upsert({
+    .insert({
       ...project,
       id: crypto.randomUUID(),
       workspace_id: workspaceId,
       legacy_id: legacyId,
-    }, {
-      onConflict: 'workspace_id,legacy_id',
-      ignoreDuplicates: false, // Update on conflict
     })
     .select()
     .single();
   
   if (error) {
-    // Check if it's a unique constraint violation (race condition)
-    if (error.code === '23505') {
-      // Row exists, fetch and update it
-      const { data: existing } = await supabase
-        .from('projects')
-        .select('*')
-        .eq('workspace_id', workspaceId)
-        .eq('legacy_id', legacyId)
-        .single();
-      
-      if (existing) {
-        const { data: updated, error: updateErr } = await supabase
-          .from('projects')
-          .update(project)
-          .eq('id', existing.id)
-          .select()
-          .single();
-        
-        if (updateErr) {
-          console.error('Error updating project by legacy_id:', updateErr);
-          return { data: null, created: false };
-        }
-        return { data: updated, created: false };
-      }
-    }
-    console.error('Error upserting project by legacy_id:', error);
+    console.error('Error inserting project by legacy_id:', error);
     return { data: null, created: false };
   }
   
-  // Determine if it was created or updated by checking if legacy_id was already set
-  // Since we always provide legacy_id, we can't easily tell - assume created for new UUID
   return { data, created: true };
 };
 
