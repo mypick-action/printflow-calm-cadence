@@ -48,6 +48,8 @@ export interface Project {
   // Recovery project fields
   customCycleHours?: number; // Override cycle hours (from Recovery Input estimatedPrintHours)
   isRecoveryProject?: boolean; // True if this is a recovery/remake project
+  // Planning inclusion
+  includeInPlanning?: boolean; // If false, project is excluded from planning engine (default: true)
 }
 
 export interface AMSModes {
