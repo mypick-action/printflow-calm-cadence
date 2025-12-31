@@ -93,18 +93,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     }
   }, []);
 
-  // Sync projects to cloud once when Dashboard loads (ensures color field is updated)
-  useEffect(() => {
-    if (workspaceId && !hasSyncedProjects) {
-      console.log('[Dashboard] Syncing local projects to cloud (color field)...');
-      migrateLocalProjectsToCloud(workspaceId).then(result => {
-        console.log('[Dashboard] Project sync result:', result);
-        setHasSyncedProjects(true);
-      }).catch(err => {
-        console.error('[Dashboard] Project sync error:', err);
-      });
-    }
-  }, [workspaceId, hasSyncedProjects]);
+  // NOTE: Auto-migration removed to prevent duplication snowball
+  // Migration should only run once during onboarding or via manual trigger in debug panel
 
   useEffect(() => {
     refreshData();

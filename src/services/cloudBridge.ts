@@ -33,6 +33,15 @@ const BRIDGE_KEYS = {
 
 type AnyObj = Record<string, unknown>;
 
+// Helper to detect if a string is a UUID (cloud ID) vs legacy timestamp-based ID
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function isUuid(s: string): boolean {
+  return UUID_REGEX.test(s);
+}
+export function isLegacyId(s: string): boolean {
+  return !isUuid(s);
+}
+
 function safeJsonParse<T>(raw: string | null): T | null {
   if (!raw) return null;
   try { 
