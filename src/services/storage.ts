@@ -455,6 +455,56 @@ export const KEYS = {
   MOUNTED_STATE_UNKNOWN: 'printflow_mounted_state_unknown',
 };
 
+// Keys to clear on hard reset - NOT including protected ones
+const HARD_RESET_KEYS = [
+  // Core data (will be re-hydrated from cloud)
+  'printflow_projects',
+  'printflow_planned_cycles',
+  'printflow_cycle_logs',
+  
+  // Planning state
+  'printflow_planning_meta',
+  'printflow_planning_log',
+  'printflow_last_plan_snapshot',
+  'printflow_last_auto_replan',
+  
+  // Sync/hydration state
+  'printflow_sync_queue',
+  'printflow_cloud_last_hydrated_at',
+  'printflow_cloud_last_hydrated_workspace',
+  
+  // Decision/event logs
+  'decision_log',
+  'end_cycle_event_log',
+];
+
+// PROTECTED keys - NOT included in hard reset:
+// 'printflow_products' - Protected until migration complete
+// 'printflow_printers' - Synced from cloud
+// 'printflow_factory_settings' - Synced from cloud
+// 'printflow_onboarding_complete' - User state
+// 'printflow_bootstrapped' - User state
+
+/**
+ * Hard reset local cache - clears all sync/planning data
+ * Preserves: products, printers, factory_settings, onboarding state
+ */
+export const hardResetLocalCache = (): void => {
+  console.log('[Storage] === HARD RESET START ===');
+  console.log('[Storage] Clearing', HARD_RESET_KEYS.length, 'localStorage keys...');
+  
+  HARD_RESET_KEYS.forEach(key => {
+    const existed = localStorage.getItem(key) !== null;
+    localStorage.removeItem(key);
+    if (existed) {
+      console.log('[Storage] Cleared:', key);
+    }
+  });
+  
+  console.log('[Storage] === HARD RESET COMPLETE ===');
+  console.log('[Storage] Protected keys preserved: products, printers, factory_settings, onboarding');
+};
+
 // ============= HELPERS =============
 
 // Generate legacy ID for backward compatibility (timestamp-based)

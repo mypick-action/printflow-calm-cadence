@@ -47,6 +47,7 @@ import { LoadedSpoolsModal } from '@/components/planning/LoadedSpoolsModal';
 // NOTE: migrateLocalProjectsToCloud import removed - migration should only run once during onboarding
 
 import { PlanningDebugPanel } from './PlanningDebugPanel';
+import { SyncDebugPanel } from './SyncDebugPanel';
 import { format } from 'date-fns';
 
 interface DashboardProps {
@@ -547,6 +548,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
 
       {/* Debug Panel */}
       <PlanningDebugPanel />
+      <SyncDebugPanel />
 
       {/* Start Print Modal */}
       {selectedCycleForStart && selectedPrinterId && (
