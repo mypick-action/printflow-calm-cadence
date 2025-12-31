@@ -258,36 +258,91 @@ export async function hydrateLocalFromCloud(
     const cloudProjects = await getProjects(workspaceId);
     const existingProjects = safeJsonParse<Project[]>(localStorage.getItem(KEYS.PROJECTS));
     
+    // Build lookup: UUID → legacy_id for cycle mapping
+    const projectUuidToLegacyId = new Map<string, string>();
+    for (const p of cloudProjects) {
+      if (p.legacy_id) {
+        projectUuidToLegacyId.set(p.id, p.legacy_id);
+      }
+    }
+    
     // Map projects: cloud format → localStorage format
+    // CRITICAL: Use legacy_id as local ID to maintain compatibility with UI
     const mappedProjects: Project[] = (cloudProjects || []).map((p: DbProject) => {
-      // Find existing project to preserve local-only fields
-      const existing = existingProjects?.find(ep => ep.id === p.id);
+      // Use legacy_id as local ID if available, otherwise use UUID
+      const localId = p.legacy_id || p.id;
+      
+      // Find existing project to preserve local-only fields (by legacy_id OR uuid)
+      const existing = existingProjects?.find(ep => ep.id === localId || ep.id === p.id);
       
       return {
-        id: p.id,
-        name: p.name,
-        productId: p.product_id ?? '',
-        productName: existing?.productName ?? (p.product_id ? '' : 'ללא מוצר'), // Show "No product" if null
-        preferredPresetId: p.preset_id ?? undefined,
+        id: localId, // Use legacy_id for local compatibility
+        name: p.name ?? existing?.name ?? '',
+        productId: p.product_id ?? existing?.productId ?? '',
+        productName: existing?.productName ?? (p.product_id ? '' : 'ללא מוצר'),
+        preferredPresetId: p.preset_id ?? existing?.preferredPresetId ?? undefined,
         quantityTarget: p.quantity_target ?? 1,
         quantityGood: p.quantity_completed ?? 0,
         quantityScrap: p.quantity_failed ?? 0,
-        dueDate: p.deadline ?? '',
+        dueDate: p.deadline ?? existing?.dueDate ?? '',
         urgency: (p.priority === 'urgent' || p.priority === 'critical') 
           ? p.priority as 'urgent' | 'critical' 
-          : 'normal',
-        urgencyManualOverride: false, // Not in cloud
+          : (existing?.urgency ?? 'normal'),
+        urgencyManualOverride: existing?.urgencyManualOverride ?? false,
         status: (p.status ?? 'pending') as 'pending' | 'in_progress' | 'completed' | 'on_hold',
-        color: p.color ?? existing?.color ?? '', // Cloud color or preserve local
-        createdAt: p.created_at ?? new Date().toISOString(),
-        parentProjectId: p.parent_project_id ?? undefined,
-        customCycleHours: p.custom_cycle_hours ?? undefined,
+        color: p.color ?? existing?.color ?? '', // Don't overwrite with null
+        createdAt: p.created_at ?? existing?.createdAt ?? new Date().toISOString(),
+        parentProjectId: p.parent_project_id ?? existing?.parentProjectId ?? undefined,
+        customCycleHours: p.custom_cycle_hours ?? existing?.customCycleHours ?? undefined,
         isRecoveryProject: p.is_recovery_project ?? false,
-      };
+        // Store UUID for future sync reference (optional field)
+        cloudUuid: p.id,
+      } as Project & { cloudUuid?: string };
     });
 
     localStorage.setItem(KEYS.PROJECTS, JSON.stringify(mappedProjects));
     console.log('[CloudBridge] Wrote projects to localStorage:', mappedProjects.length);
+    
+    // Also hydrate planned cycles if requested
+    if (opts?.includePlannedCycles) {
+      const cloudCycles = await getPlannedCycles(workspaceId);
+      const existingCycles = safeJsonParse<PlannedCycle[]>(localStorage.getItem(KEYS.PLANNED_CYCLES));
+      
+      // Map cycles: cloud format → localStorage format
+      // CRITICAL: Map project_id (UUID) → legacy_id for local compatibility
+      const mappedCycles: PlannedCycle[] = (cloudCycles || []).map((c) => {
+        // Map project UUID to legacy_id
+        const projectLegacyId = projectUuidToLegacyId.get(c.project_id) || c.project_id;
+        
+        // Find existing cycle to preserve local-only fields
+        const existing = existingCycles?.find(ec => ec.id === c.legacy_id || ec.id === c.id);
+        
+        return {
+          id: c.legacy_id || c.id, // Use legacy_id for local compatibility
+          projectId: projectLegacyId, // CRITICAL: Use legacy_id, not UUID
+          printerId: c.printer_id,
+          unitsPlanned: c.units_planned ?? 1,
+          gramsPlanned: existing?.gramsPlanned ?? 0,
+          plateType: existing?.plateType ?? 'full',
+          startTime: c.start_time ?? '',
+          endTime: c.end_time ?? '',
+          shift: existing?.shift ?? 'day',
+          status: (c.status === 'scheduled' ? 'planned' : c.status) as PlannedCycle['status'],
+          readinessState: existing?.readinessState ?? 'waiting_for_spool',
+          requiredColor: existing?.requiredColor,
+          requiredMaterial: existing?.requiredMaterial,
+          requiredGrams: existing?.requiredGrams,
+          source: existing?.source ?? 'auto',
+          locked: existing?.locked ?? false,
+          // Store UUIDs for future sync reference
+          projectUuid: c.project_id,
+          cycleUuid: c.id,
+        } as PlannedCycle & { projectUuid?: string; cycleUuid?: string };
+      });
+
+      localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
+      console.log('[CloudBridge] Wrote planned cycles to localStorage:', mappedCycles.length);
+    }
   }
 
   markHydrated(workspaceId);

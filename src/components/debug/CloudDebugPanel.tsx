@@ -37,7 +37,7 @@ export const CloudDebugPanel: React.FC = () => {
     setHydrating(true);
     setError(null);
     try {
-      await hydrateLocalFromCloud(workspaceId, { force: true, includeProjects: true });
+      await hydrateLocalFromCloud(workspaceId, { force: true, includeProjects: true, includePlannedCycles: true });
       await runComparison(); // Refresh data after hydration
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error');
