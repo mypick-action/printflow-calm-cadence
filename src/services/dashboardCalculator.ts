@@ -20,7 +20,7 @@ import {
   FactorySettings,
 } from './storage';
 import { format, addMinutes, parseISO } from 'date-fns';
-import { isSameLocalDay } from './dateUtils';
+import { isSameLocalDay, formatDateStringLocal } from './dateUtils';
 
 // ============= TYPES =============
 
@@ -224,7 +224,9 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     // Date distribution
     const dateDistribution: Record<string, number> = {};
     plannedCycles.forEach(c => {
-      const dateKey = c.startTime ? c.startTime.split('T')[0] : 'no-date';
+      const dateKey = c.startTime 
+        ? formatDateStringLocal(new Date(c.startTime)) 
+        : 'no-date';
       dateDistribution[dateKey] = (dateDistribution[dateKey] || 0) + 1;
     });
     console.log('[DashboardCalculator] Cycle date distribution:', dateDistribution);

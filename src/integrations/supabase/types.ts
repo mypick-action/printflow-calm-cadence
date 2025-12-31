@@ -107,6 +107,7 @@ export type Database = {
           created_at: string
           factory_name: string
           id: string
+          last_plan_day: string | null
           transition_minutes: number
           updated_at: string
           weekly_work_hours: Json
@@ -117,6 +118,7 @@ export type Database = {
           created_at?: string
           factory_name?: string
           id?: string
+          last_plan_day?: string | null
           transition_minutes?: number
           updated_at?: string
           weekly_work_hours?: Json
@@ -127,6 +129,7 @@ export type Database = {
           created_at?: string
           factory_name?: string
           id?: string
+          last_plan_day?: string | null
           transition_minutes?: number
           updated_at?: string
           weekly_work_hours?: Json
@@ -692,7 +695,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      confirm_day_change: {
+        Args: { p_date: string; p_workspace_id: string }
+        Returns: boolean
+      }
       get_user_workspace_id: { Args: never; Returns: string }
+      try_acquire_day_change_lock: {
+        Args: { p_today_date: string; p_workspace_id: string }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never

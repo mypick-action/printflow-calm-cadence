@@ -16,6 +16,7 @@ import { addPlanningLogEntry } from './planningLogger';
 import { pdebug } from './planningDebug';
 import { upsertPlannedCycleByLegacyId } from './cloudStorage';
 import { supabase } from '@/integrations/supabase/client';
+import { formatDateStringLocal } from './dateUtils';
 
 // Re-export the KEYS constant for internal use
 const setItem = <T>(key: string, value: T): void => {
@@ -279,7 +280,9 @@ async function syncCyclesToCloud(cycles: PlannedCycle[]): Promise<void> {
     const cycleData = {
       project_id: projectUuid,
       printer_id: cycle.printerId,
-      scheduled_date: cycle.startTime ? cycle.startTime.split('T')[0] : new Date().toISOString().split('T')[0],
+      scheduled_date: cycle.startTime 
+        ? formatDateStringLocal(new Date(cycle.startTime)) 
+        : formatDateStringLocal(new Date()),
       start_time: cycle.startTime || null,
       end_time: cycle.endTime || null,
       units_planned: cycle.unitsPlanned,
