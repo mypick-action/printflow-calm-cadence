@@ -10,8 +10,10 @@ import {
   upsertPlannedCycleByLegacyId,
   getMaterialInventory,
   upsertMaterialInventory,
+  getProducts as getCloudProducts,
+  getPlatePresets as getCloudPlatePresets,
 } from '@/services/cloudStorage';
-import type { UpsertProjectData, UpsertPlannedCycleData, MaterialInventoryInput } from '@/services/cloudStorage';
+import type { UpsertProjectData, UpsertPlannedCycleData, MaterialInventoryInput, DbProduct, DbPlatePreset } from '@/services/cloudStorage';
 import {
   KEYS, 
   Printer, 
@@ -21,9 +23,11 @@ import {
   ColorInventoryItem,
   WeeklySchedule, 
   DaySchedule,
-  getDefaultWeeklySchedule 
+  getDefaultWeeklySchedule,
+  Product as LocalProduct,
+  PlatePreset as LocalPlatePreset,
 } from '@/services/storage';
-import type { DbPrinter, DbFactorySettings, DbProject } from '@/services/cloudStorage';
+import type { DbPrinter, DbFactorySettings, DbProject as DbProjectType } from '@/services/cloudStorage';
 
 // Bridge-specific localStorage keys for tracking hydration
 const BRIDGE_KEYS = {
@@ -142,6 +146,7 @@ export interface HydrateOptions {
   force?: boolean;
   includeProjects?: boolean;
   includePlannedCycles?: boolean;
+  includeProducts?: boolean;
 }
 
 export interface HydrateResult {
@@ -276,16 +281,23 @@ export async function hydrateLocalFromCloud(
     }
     
     // Map projects: cloud format → localStorage format
-    // CRITICAL: Use legacy_id as local ID to maintain compatibility with UI
-    const mappedProjects: Project[] = (cloudProjects || []).map((p: DbProject) => {
-      // Use legacy_id as local ID if available, otherwise use UUID
-      const localId = p.legacy_id || p.id;
+    // CRITICAL: Only use legacy_id as local ID to prevent snowball effect
+    const mappedProjects: Project[] = [];
+    
+    for (const p of cloudProjects || []) {
+      // CRITICAL: Only hydrate projects with legacy_id to prevent UUID snowball
+      if (!p.legacy_id) {
+        console.warn('[CloudBridge] Skipping project without legacy_id:', p.id, p.name);
+        continue;
+      }
       
-      // Find existing project to preserve local-only fields (by legacy_id OR uuid)
-      const existing = existingProjects?.find(ep => ep.id === localId || ep.id === p.id);
+      const localId = p.legacy_id;
       
-      return {
-        id: localId, // Use legacy_id for local compatibility
+      // Find existing project to preserve local-only fields
+      const existing = existingProjects?.find(ep => ep.id === localId);
+      
+      mappedProjects.push({
+        id: localId, // ALWAYS use legacy_id
         name: p.name ?? existing?.name ?? '',
         productId: p.product_id ?? existing?.productId ?? '',
         productName: existing?.productName ?? (p.product_id ? '' : 'ללא מוצר'),
@@ -306,8 +318,8 @@ export async function hydrateLocalFromCloud(
         isRecoveryProject: p.is_recovery_project ?? false,
         // Store UUID for future sync reference (optional field)
         cloudUuid: p.id,
-      } as Project & { cloudUuid?: string };
-    });
+      } as Project & { cloudUuid?: string });
+    }
 
     localStorage.setItem(KEYS.PROJECTS, JSON.stringify(mappedProjects));
     console.log('[CloudBridge] Wrote projects to localStorage:', mappedProjects.length);
@@ -352,6 +364,56 @@ export async function hydrateLocalFromCloud(
       localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
       console.log('[CloudBridge] Wrote planned cycles to localStorage:', mappedCycles.length);
     }
+  }
+
+  // Optional: Hydrate products
+  if (opts?.includeProducts) {
+    const cloudProducts = await getCloudProducts(workspaceId);
+    const cloudPresets = await getCloudPlatePresets(workspaceId);
+    
+    // Build preset lookup by product_id
+    const presetsByProductId = new Map<string, DbPlatePreset[]>();
+    for (const preset of cloudPresets) {
+      if (preset.product_id) {
+        const existing = presetsByProductId.get(preset.product_id) || [];
+        existing.push(preset);
+        presetsByProductId.set(preset.product_id, existing);
+      }
+    }
+    
+    // Map cloud products + presets to local Product format
+    const mappedProducts: LocalProduct[] = cloudProducts.map((cp: DbProduct) => {
+      const productPresets = presetsByProductId.get(cp.id) || [];
+      
+      return {
+        id: cp.id, // Products don't have legacy_id, use UUID directly
+        name: cp.name,
+        gramsPerUnit: cp.default_grams_per_unit,
+        platePresets: productPresets.length > 0 
+          ? productPresets.map((preset, index) => ({
+              id: preset.id,
+              name: preset.name,
+              unitsPerPlate: preset.units_per_plate,
+              cycleHours: preset.cycle_hours,
+              riskLevel: 'low' as const,
+              allowedForNightCycle: preset.allowed_for_night_cycle,
+              isRecommended: index === 0, // First preset is recommended
+            }))
+          : [{
+              // Default preset if none exist
+              id: `preset-${cp.id}-default`,
+              name: 'Default',
+              unitsPerPlate: cp.default_units_per_plate,
+              cycleHours: cp.default_print_time_hours,
+              riskLevel: 'low' as const,
+              allowedForNightCycle: true,
+              isRecommended: true,
+            }],
+      };
+    });
+    
+    localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(mappedProducts));
+    console.log('[CloudBridge] Wrote products to localStorage:', mappedProducts.length);
   }
 
   markHydrated(workspaceId);
@@ -424,6 +486,13 @@ export async function migrateLocalProjectsToCloud(
 
   for (const project of localProjects) {
     const legacyId = project.id;
+    
+    // CRITICAL: Only migrate projects with legacy IDs (not UUIDs)
+    // This prevents the snowball effect where UUIDs become legacy_ids
+    if (isUuid(legacyId)) {
+      console.log('[CloudBridge] Skipping UUID project (cloud-first):', legacyId);
+      continue;
+    }
     
     // Track projects with local IDs that can't be mapped to cloud UUIDs
     if (project.productId) nullProductCount++;
