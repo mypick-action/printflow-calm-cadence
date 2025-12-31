@@ -27,6 +27,7 @@ import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { 
   getMaterialInventory, 
   upsertMaterialInventory,
+  deleteMaterialInventory,
   type DbMaterialInventory,
   type MaterialInventoryInput,
 } from '@/services/cloudStorage';
@@ -339,27 +340,57 @@ export const InventoryPage: React.FC = () => {
   const handleSaveColorName = async () => {
     if (!renamingItem || !newColorName.trim() || saving) return;
     
-    // For rename, we need to delete old and create new (since color is part of unique key)
-    // For MVP, just update the display - full rename requires delete + insert
-    const newItem: MaterialInventoryInput = {
-      color: newColorName.trim(),
-      material: renamingItem.material,
-      closed_count: renamingItem.closedCount,
-      closed_spool_size_grams: renamingItem.closedSpoolSizeGrams,
-      open_total_grams: renamingItem.openTotalGrams,
-      open_spool_count: renamingItem.openSpoolCount || 0,
-      reorder_point_grams: renamingItem.reorderPointGrams,
-      updated_by: 'user',
-    };
-
-    const success = await saveToCloud(newItem);
-    if (success) {
-      await loadFromCloud();
+    const trimmedNewColor = newColorName.trim();
+    
+    // If color name didn't change, just close dialog
+    if (trimmedNewColor === renamingItem.color) {
       setRenameDialogOpen(false);
       setRenamingItem(null);
+      return;
+    }
+    
+    setSaving(true);
+    
+    try {
+      // Since color is part of unique key, we need to: create new -> delete old
+      const newItem: MaterialInventoryInput = {
+        color: trimmedNewColor,
+        material: renamingItem.material,
+        closed_count: renamingItem.closedCount,
+        closed_spool_size_grams: renamingItem.closedSpoolSizeGrams,
+        open_total_grams: renamingItem.openTotalGrams,
+        open_spool_count: renamingItem.openSpoolCount || 0,
+        reorder_point_grams: renamingItem.reorderPointGrams,
+        updated_by: 'user',
+      };
+
+      // Step 1: Create new record with new color name
+      const success = await saveToCloud(newItem);
+      
+      if (success) {
+        // Step 2: Delete old record
+        const deleted = await deleteMaterialInventory(renamingItem.id);
+        
+        if (!deleted) {
+          console.error('[InventoryPage] Failed to delete old color record:', renamingItem.id);
+          // Still show success since new record was created
+        }
+        
+        await loadFromCloud();
+        setRenameDialogOpen(false);
+        setRenamingItem(null);
+        toast({
+          title: language === 'he' ? 'שם הצבע עודכן' : 'Color name updated',
+        });
+      }
+    } catch (error) {
+      console.error('[InventoryPage] Error renaming color:', error);
       toast({
-        title: language === 'he' ? 'שם הצבע עודכן' : 'Color name updated',
+        title: language === 'he' ? 'שגיאה בשינוי שם הצבע' : 'Error renaming color',
+        variant: 'destructive',
       });
+    } finally {
+      setSaving(false);
     }
   };
 
