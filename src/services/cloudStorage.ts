@@ -88,6 +88,7 @@ export interface DbProject {
   is_recovery_project: boolean;
   parent_project_id: string | null;
   notes: string | null;
+  color: string | null; // For display purposes - project material color
   created_at: string;
   updated_at: string;
 }

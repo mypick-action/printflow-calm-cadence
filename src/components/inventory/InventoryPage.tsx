@@ -75,8 +75,11 @@ export const InventoryPage: React.FC = () => {
 
   // Load inventory from cloud on mount
   const loadFromCloud = useCallback(async () => {
+    console.log('[InventoryPage] loadFromCloud called, workspaceId:', workspaceId);
+    
     if (!workspaceId) {
-      setLoading(false);
+      console.log('[InventoryPage] No workspaceId yet, waiting...');
+      // Don't set loading=false yet, keep waiting for auth
       return;
     }
 
@@ -85,7 +88,9 @@ export const InventoryPage: React.FC = () => {
 
     try {
       // Try to load from cloud first
+      console.log('[InventoryPage] Fetching inventory for workspace:', workspaceId);
       const cloudInventory = await getMaterialInventory(workspaceId);
+      console.log('[InventoryPage] Cloud inventory result:', cloudInventory.length, 'items');
       
       // If cloud is empty but local has data, offer migration
       const localInventory = getColorInventory();

@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,6 +44,7 @@ import { RecalculateButton } from '@/components/planning/RecalculateButton';
 import { RecalculateModal } from '@/components/planning/RecalculateModal';
 import { CapacityChangeBanner } from '@/components/planning/CapacityChangeBanner';
 import { LoadedSpoolsModal } from '@/components/planning/LoadedSpoolsModal';
+import { migrateLocalProjectsToCloud } from '@/services/cloudBridge';
 
 import { PlanningDebugPanel } from './PlanningDebugPanel';
 import { format } from 'date-fns';
@@ -55,6 +57,7 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle }) => {
   const { language } = useLanguage();
+  const { workspaceId } = useAuth();
   const [recalculateModalOpen, setRecalculateModalOpen] = useState(false);
   const [loadedSpoolsModalOpen, setLoadedSpoolsModalOpen] = useState(false);
   const [planningMeta, setPlanningMeta] = useState(getPlanningMeta());
@@ -68,6 +71,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const [manualStartModalOpen, setManualStartModalOpen] = useState(false);
   const [printerActionsModalOpen, setPrinterActionsModalOpen] = useState(false);
   const [selectedPrinterForActions, setSelectedPrinterForActions] = useState<string | null>(null);
+  const [hasSyncedProjects, setHasSyncedProjects] = useState(false);
 
   const openPrinterActionsModal = (printerId: string) => {
     setSelectedPrinterForActions(printerId);
@@ -88,6 +92,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
       setLoadedSpoolsModalOpen(true);
     }
   }, []);
+
+  // Sync projects to cloud once when Dashboard loads (ensures color field is updated)
+  useEffect(() => {
+    if (workspaceId && !hasSyncedProjects) {
+      console.log('[Dashboard] Syncing local projects to cloud (color field)...');
+      migrateLocalProjectsToCloud(workspaceId).then(result => {
+        console.log('[Dashboard] Project sync result:', result);
+        setHasSyncedProjects(true);
+      }).catch(err => {
+        console.error('[Dashboard] Project sync error:', err);
+      });
+    }
+  }, [workspaceId, hasSyncedProjects]);
 
   useEffect(() => {
     refreshData();

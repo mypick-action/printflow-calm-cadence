@@ -278,7 +278,7 @@ export async function hydrateLocalFromCloud(
           : 'normal',
         urgencyManualOverride: false, // Not in cloud
         status: (p.status ?? 'pending') as 'pending' | 'in_progress' | 'completed' | 'on_hold',
-        color: existing?.color ?? '', // Not in cloud, preserve or empty
+        color: p.color ?? existing?.color ?? '', // Cloud color or preserve local
         createdAt: p.created_at ?? new Date().toISOString(),
         parentProjectId: p.parent_project_id ?? undefined,
         customCycleHours: p.custom_cycle_hours ?? undefined,
@@ -383,6 +383,7 @@ export async function migrateLocalProjectsToCloud(
         is_recovery_project: project.isRecoveryProject ?? false,
         parent_project_id: project.parentProjectId || null,
         notes: null,
+        color: project.color || null, // Save project color to cloud
       };
       
       const result = await upsertProjectByLegacyId(workspaceId, legacyId, projectData);
