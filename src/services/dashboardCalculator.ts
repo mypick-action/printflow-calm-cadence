@@ -216,7 +216,7 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
         id: cycle.id,
         projectId: cycle.projectId,
         projectName: project?.name || 'Unknown',
-        productName: product?.name || 'Unknown',
+        productName: product?.name || project?.productName || 'ללא מוצר',
         productId: project?.productId || '',
         printerId: cycle.printerId,
         printerName: printer.name,
