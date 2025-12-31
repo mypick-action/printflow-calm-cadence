@@ -1253,9 +1253,17 @@ export const ProjectsPage: React.FC = () => {
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <Switch
                         checked={project.includeInPlanning !== false}
-                        onCheckedChange={(checked) => {
-                          updateProject(project.id, { includeInPlanning: checked });
-                          refreshData();
+                        onCheckedChange={async (checked) => {
+                          // Optimistic update - update local state immediately for instant UI feedback
+                          setProjects(prev => prev.map(p => 
+                            p.id === project.id 
+                              ? { ...p, includeInPlanning: checked } 
+                              : p
+                          ));
+                          
+                          // Then persist to cloud
+                          await updateProject(project.id, { includeInPlanning: checked });
+                          
                           toast({
                             title: checked 
                               ? (language === 'he' ? 'הפרויקט שולב בלוח העבודה' : 'Project added to schedule')
