@@ -194,19 +194,32 @@ const getAvailableFilamentForColor = (color: string, spools: Spool[]): number =>
 const prioritizeProjects = (projects: Project[], products: Product[], fromDate: Date, existingCycles: PlannedCycle[] = []): ProjectPlanningState[] => {
   const projectStates: ProjectPlanningState[] = [];
   
+  // Get first available product as fallback for projects without product
+  const defaultProduct = products[0];
+  const defaultPreset: PlatePreset | undefined = defaultProduct?.platePresets?.[0];
+  
   for (const project of projects) {
     // Skip completed projects
     if (project.status === 'completed') continue;
     
-    const product = products.find(p => p.id === project.productId);
-    if (!product) continue;
+    // Try to find product, use default if not found (migration scenario)
+    let product = products.find(p => p.id === project.productId);
+    let preset: PlatePreset | undefined;
     
-    // Get the preferred or recommended preset
-    const preset = project.preferredPresetId 
-      ? product.platePresets.find(p => p.id === project.preferredPresetId)
-      : product.platePresets.find(p => p.isRecommended) || product.platePresets[0];
+    if (product) {
+      // Get the preferred or recommended preset
+      preset = project.preferredPresetId 
+        ? product.platePresets.find(p => p.id === project.preferredPresetId)
+        : product.platePresets.find(p => p.isRecommended) || product.platePresets[0];
+    } else if (defaultProduct && defaultPreset) {
+      // Fallback: Use default product and preset for projects without product mapping
+      // This allows migrated projects to still be planned
+      console.log(`[Planning] Project "${project.name}" has no product, using default`);
+      product = defaultProduct;
+      preset = defaultPreset;
+    }
     
-    if (!preset) continue;
+    if (!product || !preset) continue;
     
     // Calculate units already being produced in in_progress cycles
     const inProgressUnits = existingCycles

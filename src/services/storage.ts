@@ -887,7 +887,7 @@ const mapCloudProjectToLocal = (p: cloudStorage.DbProject): Project => {
     id: p.id,
     name: p.name,
     productId: p.product_id ?? '',
-    productName: '', // Will be filled by component if needed
+    productName: p.product_id ? '' : 'ללא מוצר', // If no product_id, show "No product" in Hebrew
     preferredPresetId: p.preset_id ?? undefined,
     quantityTarget: p.quantity_target ?? 1,
     quantityGood: p.quantity_completed ?? 0,

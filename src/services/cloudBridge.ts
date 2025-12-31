@@ -257,7 +257,7 @@ export async function hydrateLocalFromCloud(
         id: p.id,
         name: p.name,
         productId: p.product_id ?? '',
-        productName: existing?.productName ?? '', // Not in cloud, preserve or empty
+        productName: existing?.productName ?? (p.product_id ? '' : 'ללא מוצר'), // Show "No product" if null
         preferredPresetId: p.preset_id ?? undefined,
         quantityTarget: p.quantity_target ?? 1,
         quantityGood: p.quantity_completed ?? 0,
@@ -328,9 +328,9 @@ export async function getCloudLocalComparison(workspaceId: string): Promise<{
  */
 export async function migrateLocalProjectsToCloud(
   workspaceId: string
-): Promise<{ created: number; updated: number; errors: number }> {
+): Promise<{ created: number; updated: number; errors: number; nullProductCount: number; nullPresetCount: number }> {
   if (!workspaceId) {
-    return { created: 0, updated: 0, errors: 0 };
+    return { created: 0, updated: 0, errors: 0, nullProductCount: 0, nullPresetCount: 0 };
   }
 
   console.log('[CloudBridge] Starting project migration for workspace:', workspaceId);
@@ -339,21 +339,29 @@ export async function migrateLocalProjectsToCloud(
   const localProjects = safeJsonParse<Project[]>(localStorage.getItem(KEYS.PROJECTS)) || [];
   if (localProjects.length === 0) {
     console.log('[CloudBridge] No local projects to migrate');
-    return { created: 0, updated: 0, errors: 0 };
+    return { created: 0, updated: 0, errors: 0, nullProductCount: 0, nullPresetCount: 0 };
   }
 
   let created = 0;
   let updated = 0;
   let errors = 0;
+  let nullProductCount = 0;
+  let nullPresetCount = 0;
 
   for (const project of localProjects) {
     const legacyId = project.id;
     
+    // Track projects with local IDs that can't be mapped to cloud UUIDs
+    if (project.productId) nullProductCount++;
+    if (project.preferredPresetId) nullPresetCount++;
+    
     try {
+      // Note: product_id and preset_id are set to null because local IDs are not UUIDs
+      // Phase 2: Add legacy_id to products/plate_presets tables for full mapping
       const projectData: UpsertProjectData = {
         name: project.name,
-        product_id: project.productId || null,
-        preset_id: project.preferredPresetId || null,
+        product_id: null,  // Local product IDs are not UUIDs - requires Phase 2 mapping
+        preset_id: null,   // Local preset IDs are not UUIDs - requires Phase 2 mapping
         quantity_target: project.quantityTarget,
         quantity_completed: project.quantityGood,
         quantity_failed: project.quantityScrap,
@@ -387,8 +395,17 @@ export async function migrateLocalProjectsToCloud(
     }
   }
 
-  console.log('[CloudBridge] Project migration complete:', { created, updated, errors });
-  return { created, updated, errors };
+  console.log('[CloudBridge] Project migration complete:', { 
+    created, 
+    updated, 
+    errors,
+    nullProductCount,
+    nullPresetCount,
+    note: nullProductCount > 0 || nullPresetCount > 0 
+      ? `⚠️ ${nullProductCount} projects had product_id set to null, ${nullPresetCount} had preset_id set to null (local IDs are not UUIDs)`
+      : 'All projects migrated without product/preset data'
+  });
+  return { created, updated, errors, nullProductCount, nullPresetCount };
 }
 
 /**
