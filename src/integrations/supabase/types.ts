@@ -142,6 +142,59 @@ export type Database = {
           },
         ]
       }
+      material_inventory: {
+        Row: {
+          closed_count: number
+          closed_spool_size_grams: number
+          color: string
+          created_at: string
+          id: string
+          material: string
+          open_spool_count: number
+          open_total_grams: number
+          reorder_point_grams: number | null
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string
+        }
+        Insert: {
+          closed_count?: number
+          closed_spool_size_grams?: number
+          color: string
+          created_at?: string
+          id?: string
+          material?: string
+          open_spool_count?: number
+          open_total_grams?: number
+          reorder_point_grams?: number | null
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id: string
+        }
+        Update: {
+          closed_count?: number
+          closed_spool_size_grams?: number
+          color?: string
+          created_at?: string
+          id?: string
+          material?: string
+          open_spool_count?: number
+          open_total_grams?: number
+          reorder_point_grams?: number | null
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "material_inventory_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       planned_cycles: {
         Row: {
           created_at: string
