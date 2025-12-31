@@ -28,7 +28,7 @@ import {
   ChevronDown,
   Pencil,
 } from 'lucide-react';
-import { getPlanningMeta, needsLoadedSpoolsSetup, updatePlannedCycle, getProducts, getProjects, updatePrinter, getPrinter } from '@/services/storage';
+import { getPlanningMeta, updatePlannedCycle, getProducts, getProjects, updatePrinter, getPrinter } from '@/services/storage';
 import { StartPrintModal } from './StartPrintModal';
 import { ManualStartPrintModal } from './ManualStartPrintModal';
 import { PrinterActionsModal } from './PrinterActionsModal';
@@ -43,7 +43,7 @@ import {
 import { RecalculateButton } from '@/components/planning/RecalculateButton';
 import { RecalculateModal } from '@/components/planning/RecalculateModal';
 import { CapacityChangeBanner } from '@/components/planning/CapacityChangeBanner';
-import { LoadedSpoolsModal } from '@/components/planning/LoadedSpoolsModal';
+// LoadedSpoolsModal removed - spool loading happens at print start, not during planning
 // NOTE: migrateLocalProjectsToCloud import removed - migration should only run once during onboarding
 
 import { PlanningDebugPanel } from './PlanningDebugPanel';
@@ -60,7 +60,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const { language } = useLanguage();
   const { workspaceId } = useAuth();
   const [recalculateModalOpen, setRecalculateModalOpen] = useState(false);
-  const [loadedSpoolsModalOpen, setLoadedSpoolsModalOpen] = useState(false);
+  // loadedSpoolsModalOpen state removed - no longer needed
   const [planningMeta, setPlanningMeta] = useState(getPlanningMeta());
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [todayPlan, setTodayPlan] = useState<TodayPlanResult | null>(null);
@@ -88,10 +88,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     setBannerDismissed(false);
     setIsLoading(false);
     
-    // Check if loaded spools setup is needed
-    if (needsLoadedSpoolsSetup()) {
-      setLoadedSpoolsModalOpen(true);
-    }
+    // NOTE: LoadedSpoolsModal removed from planning flow
+    // Spool loading is now handled at print start (StartPrintModal)
   }, []);
 
   // NOTE: Auto-migration removed to prevent duplication snowball
@@ -369,12 +367,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
         onRecalculated={refreshData}
       />
 
-      {/* Loaded Spools Modal */}
-      <LoadedSpoolsModal
-        open={loadedSpoolsModalOpen}
-        onOpenChange={setLoadedSpoolsModalOpen}
-        onComplete={refreshData}
-      />
+      {/* LoadedSpoolsModal removed - spool info shown at print start */}
 
       {/* Header with greeting */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
