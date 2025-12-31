@@ -12,8 +12,14 @@ import {
   upsertMaterialInventory,
   getProducts as getCloudProducts,
   getPlatePresets as getCloudPlatePresets,
+  createProduct,
+  createPlatePreset,
+  createSpool,
+  getSpools,
 } from '@/services/cloudStorage';
-import type { UpsertProjectData, UpsertPlannedCycleData, MaterialInventoryInput, DbProduct, DbPlatePreset } from '@/services/cloudStorage';
+import type { UpsertProjectData, UpsertPlannedCycleData, MaterialInventoryInput, DbProduct, DbPlatePreset, DbSpool } from '@/services/cloudStorage';
+import { supabase } from '@/integrations/supabase/client';
+import { formatDateStringLocal } from '@/services/dateUtils';
 import {
   KEYS, 
   Printer, 
@@ -26,6 +32,7 @@ import {
   getDefaultWeeklySchedule,
   Product as LocalProduct,
   PlatePreset as LocalPlatePreset,
+  Spool as LocalSpool,
 } from '@/services/storage';
 import type { DbPrinter, DbFactorySettings, DbProject as DbProjectType } from '@/services/cloudStorage';
 
@@ -635,8 +642,10 @@ export async function migrateLocalCyclesToCloud(
     }
     
     try {
-      // Extract scheduled_date from startTime (local PlannedCycle has startTime as ISO string)
-      const scheduledDate = cycle.startTime ? cycle.startTime.split('T')[0] : new Date().toISOString().split('T')[0];
+      // Extract scheduled_date from startTime using LOCAL time (not UTC)
+      const scheduledDate = cycle.startTime 
+        ? formatDateStringLocal(new Date(cycle.startTime)) 
+        : formatDateStringLocal(new Date());
       
       const cycleData: UpsertPlannedCycleData = {
         project_id: cloudProjectId,
@@ -675,26 +684,243 @@ export async function migrateLocalCyclesToCloud(
 }
 
 /**
- * Full migration: Projects + Planned Cycles
- * Runs both migrations in correct order
+ * Migrate local Products + PlatePresets to Cloud
+ * Uses upsert with name-based deduplication to prevent duplicates on re-import
+ */
+export async function migrateLocalProductsToCloud(
+  workspaceId: string
+): Promise<{ products: number; presets: number; errors: number }> {
+  if (!workspaceId) {
+    return { products: 0, presets: 0, errors: 0 };
+  }
+
+  console.log('[CloudBridge] Starting products migration for workspace:', workspaceId);
+
+  // Get local products from localStorage
+  const localProducts = safeJsonParse<LocalProduct[]>(localStorage.getItem(KEYS.PRODUCTS)) || [];
+  if (localProducts.length === 0) {
+    console.log('[CloudBridge] No local products to migrate');
+    return { products: 0, presets: 0, errors: 0 };
+  }
+
+  // Get existing cloud products to check for duplicates by name
+  const existingProducts = await getCloudProducts(workspaceId);
+  const existingByName = new Map(existingProducts.map(p => [p.name.toLowerCase(), p]));
+
+  let products = 0;
+  let presets = 0;
+  let errors = 0;
+
+  for (const product of localProducts) {
+    try {
+      // Skip if already a UUID (cloud-created)
+      if (isUuid(product.id)) {
+        console.log(`[CloudBridge] Skipping cloud-created product: ${product.name}`);
+        continue;
+      }
+
+      // Check for existing product by name (upsert logic)
+      const existingProduct = existingByName.get(product.name.toLowerCase());
+      let cloudProductId: string;
+
+      if (existingProduct) {
+        console.log(`[CloudBridge] Product already exists: ${product.name}, skipping create`);
+        cloudProductId = existingProduct.id;
+      } else {
+        // Create product in Cloud
+        const cloudProduct = await createProduct(workspaceId, {
+          name: product.name,
+          material: 'PLA', // Default
+          color: 'black', // Default
+          default_grams_per_unit: product.gramsPerUnit,
+          default_units_per_plate: product.platePresets[0]?.unitsPerPlate || 1,
+          default_print_time_hours: product.platePresets[0]?.cycleHours || 1,
+          notes: null,
+        });
+
+        if (!cloudProduct) {
+          errors++;
+          continue;
+        }
+        cloudProductId = cloudProduct.id;
+        products++;
+        console.log(`[CloudBridge] Created product: ${product.name} -> ${cloudProductId}`);
+      }
+
+      // Create plate presets for this product
+      // Get existing presets to avoid duplicates
+      const existingPresets = await getCloudPlatePresets(workspaceId, cloudProductId);
+      const existingPresetsByName = new Map(existingPresets.map(p => [p.name.toLowerCase(), p]));
+
+      for (const preset of product.platePresets) {
+        // Skip if preset already exists by name
+        if (existingPresetsByName.has(preset.name.toLowerCase())) {
+          console.log(`[CloudBridge] Preset already exists: ${preset.name}, skipping`);
+          continue;
+        }
+
+        const cloudPreset = await createPlatePreset(workspaceId, {
+          product_id: cloudProductId,
+          name: preset.name,
+          units_per_plate: preset.unitsPerPlate,
+          cycle_hours: preset.cycleHours,
+          grams_per_unit: product.gramsPerUnit,
+          allowed_for_night_cycle: preset.allowedForNightCycle,
+        });
+
+        if (cloudPreset) {
+          presets++;
+        } else {
+          errors++;
+        }
+      }
+    } catch (e) {
+      console.error(`[CloudBridge] Product migration error for ${product.name}:`, e);
+      errors++;
+    }
+  }
+
+  console.log('[CloudBridge] Products migration complete:', { products, presets, errors });
+  return { products, presets, errors };
+}
+
+/**
+ * Migrate local Spools to Cloud
+ * Uses upsert with color+material deduplication
+ */
+export async function migrateLocalSpoolsToCloud(
+  workspaceId: string
+): Promise<{ created: number; skipped: number; errors: number }> {
+  if (!workspaceId) {
+    return { created: 0, skipped: 0, errors: 0 };
+  }
+
+  console.log('[CloudBridge] Starting spools migration for workspace:', workspaceId);
+
+  // Get local spools from localStorage
+  const localSpools = safeJsonParse<LocalSpool[]>(localStorage.getItem(KEYS.SPOOLS)) || [];
+  if (localSpools.length === 0) {
+    console.log('[CloudBridge] No local spools to migrate');
+    return { created: 0, skipped: 0, errors: 0 };
+  }
+
+  // Get existing cloud spools to avoid duplicates
+  const existingSpools = await getSpools(workspaceId);
+  const existingByColorMaterial = new Set(
+    existingSpools.map(s => `${s.color.toLowerCase()}|${s.material.toLowerCase()}`)
+  );
+
+  let created = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const spool of localSpools) {
+    try {
+      // Skip if already a UUID (cloud-created)
+      if (isUuid(spool.id)) {
+        skipped++;
+        continue;
+      }
+
+      // Check for existing spool by color+material
+      const key = `${spool.color.toLowerCase()}|${spool.material.toLowerCase()}`;
+      if (existingByColorMaterial.has(key)) {
+        console.log(`[CloudBridge] Spool already exists: ${spool.color}/${spool.material}, skipping`);
+        skipped++;
+        continue;
+      }
+
+      const cloudSpool = await createSpool(workspaceId, {
+        color: spool.color,
+        material: spool.material,
+        weight_grams: spool.packageSize,
+        remaining_grams: spool.gramsRemainingEst,
+        status: spool.state === 'empty' ? 'empty' : 'available',
+        color_hex: null,
+        cost_per_kg: null,
+        supplier: null,
+        notes: null,
+      });
+
+      if (cloudSpool) {
+        created++;
+        existingByColorMaterial.add(key); // Prevent duplicates in same batch
+      } else {
+        errors++;
+      }
+    } catch (e) {
+      console.error(`[CloudBridge] Spool migration error for ${spool.color}/${spool.material}:`, e);
+      errors++;
+    }
+  }
+
+  console.log('[CloudBridge] Spools migration complete:', { created, skipped, errors });
+  return { created, skipped, errors };
+}
+
+export interface FullMigrationReport {
+  projects: { created: number; updated: number; errors: number };
+  cycles: { created: number; updated: number; errors: number; skippedNoProject: number };
+  products: { products: number; presets: number; errors: number };
+  spools: { created: number; skipped: number; errors: number };
+  inventory: { created: number; updated: number; errors: number };
+  totalMigrated: number;
+  totalErrors: number;
+}
+
+/**
+ * Full migration: All entities from localStorage to Cloud
+ * Runs migrations in correct order (products first, then projects, then cycles)
+ * Returns comprehensive report with counts
  */
 export async function migrateAllLocalDataToCloud(
   workspaceId: string
-): Promise<{
-  projects: { created: number; updated: number; errors: number };
-  cycles: { created: number; updated: number; errors: number; skippedNoProject: number };
-}> {
-  console.log('[CloudBridge] Starting full migration for workspace:', workspaceId);
+): Promise<FullMigrationReport> {
+  console.log('[CloudBridge] Starting FULL migration for workspace:', workspaceId);
   
+  // 1. Products + Presets (must be first - projects may reference them)
+  const productsResult = await migrateLocalProductsToCloud(workspaceId);
+  
+  // 2. Spools
+  const spoolsResult = await migrateLocalSpoolsToCloud(workspaceId);
+  
+  // 3. Projects
   const projectsResult = await migrateLocalProjectsToCloud(workspaceId);
+  
+  // 4. Cycles (after projects - references project UUIDs)
   const cyclesResult = await migrateLocalCyclesToCloud(workspaceId);
   
-  console.log('[CloudBridge] Full migration complete:', { projects: projectsResult, cycles: cyclesResult });
+  // 5. Inventory (material_inventory table)
+  const inventoryResult = await migrateInventoryToCloud(workspaceId);
   
-  return {
+  const totalMigrated = 
+    productsResult.products + 
+    productsResult.presets +
+    spoolsResult.created +
+    projectsResult.created + 
+    cyclesResult.created + 
+    inventoryResult.updated;
+    
+  const totalErrors =
+    productsResult.errors +
+    spoolsResult.errors +
+    projectsResult.errors +
+    cyclesResult.errors +
+    inventoryResult.errors;
+
+  const report: FullMigrationReport = {
+    products: productsResult,
+    spools: spoolsResult,
     projects: projectsResult,
     cycles: cyclesResult,
+    inventory: inventoryResult,
+    totalMigrated,
+    totalErrors,
   };
+  
+  console.log('[CloudBridge] FULL migration complete:', report);
+  
+  return report;
 }
 
 /**
