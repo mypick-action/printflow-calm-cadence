@@ -102,7 +102,7 @@ import { scheduleAutoReplan } from '@/services/autoReplan';
 import { runReplanNow } from '@/services/planningRecalculator';
 import { BlockingIssue, PlanningWarning } from '@/services/planningEngine';
 import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
-import { migrateLocalProjectsToCloud } from '@/services/cloudBridge';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -193,7 +193,7 @@ const MaterialStatusPreview: React.FC<{
 export const ProjectsPage: React.FC = () => {
   const { language } = useLanguage();
   const { workspaceId } = useAuth();
-  const migrationRan = useRef(false);
+  
   const [projects, setProjects] = useState<Project[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -354,17 +354,6 @@ export const ProjectsPage: React.FC = () => {
     return unsubscribe;
   }, []);
 
-  // Run idempotent migration of local projects to cloud (once per session)
-  useEffect(() => {
-    if (workspaceId && !migrationRan.current) {
-      migrationRan.current = true;
-      migrateLocalProjectsToCloud(workspaceId).then((result) => {
-        if (result.migrated > 0) {
-          console.log(`[ProjectsPage] Migrated ${result.migrated} projects to cloud`);
-        }
-      });
-    }
-  }, [workspaceId]);
 
   // Status configuration with Hebrew-first labels
   const statusConfig: Record<ProjectStatus, { 
