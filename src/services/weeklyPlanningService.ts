@@ -5,7 +5,7 @@
 
 import { 
   getPlannedCycles, 
-  getProjects, 
+  getProjectsSync, 
   getFactorySettings, 
   getPrinters,
   PlannedCycle, 
@@ -189,7 +189,7 @@ export function crossesDeadline(cycle: PlannedCycle, project: Project | undefine
  * Get cycle with all details for display
  */
 export function getCycleWithDetails(cycle: PlannedCycle): CycleWithDetails {
-  const projects = getProjects();
+  const projects = getProjectsSync();
   const printers = getPrinters();
   
   const project = projects.find(p => p.id === cycle.projectId);
@@ -215,7 +215,7 @@ export function getCycleWithDetails(cycle: PlannedCycle): CycleWithDetails {
  * Compute coverage for all active projects
  */
 export function computeProjectCoverage(): ProjectCoverage[] {
-  const projects = getProjects().filter(p => p.status !== 'completed');
+  const projects = getProjectsSync().filter(p => p.status !== 'completed');
   const cycles = getPlannedCycles();
   
   // Get future planned cycles (not completed/failed)
@@ -290,7 +290,7 @@ export function computeWeeklyStats(): WeeklyStats {
   const endDate = weekDays[6].dateStr;
   
   const cycles = getPlannedCyclesForWeek(startDate, endDate);
-  const projects = getProjects();
+  const projects = getProjectsSync();
   const coverage = computeProjectCoverage();
   
   // Count risk cycles

@@ -845,14 +845,8 @@ export const getProjectsLocal = (): Project[] => {
 };
 
 // ASYNC: Read from cloud first, fallback to local
-export const getProjects = (): Project[] => {
-  // For now, return local projects synchronously
-  // Cloud sync happens in background via getProjectsFromCloud
-  return getProjectsLocal();
-};
-
-// Async version that tries cloud first
-export const getProjectsFromCloud = async (): Promise<Project[]> => {
+// This is the main function - all UI should call this
+export const getProjects = async (): Promise<Project[]> => {
   const workspaceId = getWorkspaceId();
   
   if (!workspaceId) {
@@ -875,6 +869,15 @@ export const getProjectsFromCloud = async (): Promise<Project[]> => {
     console.warn('[Projects] Cloud unavailable, using local:', e);
   }
   
+  return getProjectsLocal();
+};
+
+// Legacy alias for backward compatibility during migration
+export const getProjectsFromCloud = getProjects;
+
+// Synchronous version - for internal services that need sync access (planning engine, etc.)
+// These read from the local cache which is updated by getProjects() when UI loads
+export const getProjectsSync = (): Project[] => {
   return getProjectsLocal();
 };
 
@@ -2516,7 +2519,7 @@ export { recalculatePlan, triggerPlanningRecalculation } from './planningRecalcu
  * Returns the count of promoted projects.
  */
 export const promoteProjectsWithReadyCycles = (): number => {
-  const projects = getProjects();
+  const projects = getProjectsLocal();
   const plannedCycles = getPlannedCycles();
   
   let promotedCount = 0;
@@ -2548,7 +2551,7 @@ export const promoteProjectsWithReadyCycles = (): number => {
  * Use this for execution views that should show all schedulable work.
  */
 export const getProjectsWithPlannedCycles = (): Project[] => {
-  const projects = getProjects();
+  const projects = getProjectsLocal();
   const plannedCycles = getPlannedCycles();
   
   const projectIdsWithCycles = new Set(plannedCycles.map(c => c.projectId));

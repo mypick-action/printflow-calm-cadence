@@ -14,7 +14,7 @@ import {
   getPlannedCycles,
   getSpools,
   getPrinters,
-  getProjects,
+  getProjectsSync,
   getProducts,
   getFactorySettings,
   getColorInventory,
@@ -47,7 +47,7 @@ const calculateRemainingDemandByColor = (): Map<string, {
   projectIds: string[];
   projectNames: string[];
 }> => {
-  const projects = getProjects();
+  const projects = getProjectsSync();
   const products = getProducts();
   const demandByColor = new Map<string, {
     totalGrams: number;
@@ -169,7 +169,7 @@ export const generateLoadRecommendations = (
   const allCycles = cycles || getPlannedCycles();
   const allSpools = spools || getSpools();
   const allPrinters = printers || getPrinters();
-  const allProjects = projects || getProjects();
+  const allProjects = projects || getProjectsSync();
 
   // Only consider planned cycles (not completed/failed)
   const activeCycles = allCycles.filter(c => 

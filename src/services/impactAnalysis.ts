@@ -7,7 +7,7 @@ import {
   Project,
   PlannedCycle,
   Product,
-  getProjects,
+  getProjectsSync,
   getPlannedCycles,
   getFactorySettings,
   getActivePrinters,
@@ -731,7 +731,7 @@ export const analyzeDecisionOptions = (
   needsSpoolChange: boolean = false,
   targetPrinterId?: string // REQUIRED: The printer where the current cycle is running
 ): DecisionAnalysis => {
-  const projects = getProjects();
+  const projects = getProjectsSync();
   const cycles = getPlannedCycles();
   const project = projects.find(p => p.id === projectId);
   

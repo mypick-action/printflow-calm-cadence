@@ -5,7 +5,7 @@ import {
   getSpools,
   getPrinters,
   getPlannedCycles,
-  getProjects,
+  getProjectsSync,
   getProducts,
   getFactorySettings,
   Spool,
@@ -87,7 +87,7 @@ const checkLowMaterialAlerts = (): MaterialAlert[] => {
  * Uses centralized materialAdapter for availability checks
  */
 const checkInsufficientForJobsAlerts = (): MaterialAlert[] => {
-  const allProjects = getProjects();
+  const allProjects = getProjectsSync();
   const alerts: MaterialAlert[] = [];
   
   // Use centralized adapter for material needs calculation

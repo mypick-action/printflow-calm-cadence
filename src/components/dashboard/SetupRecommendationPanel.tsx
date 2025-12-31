@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
 import {
   getPrinters,
   getPlannedCycles,
-  getProjects,
+  getProjectsSync,
   getSpools,
   isMountedStateUnknown,
   isLoadedSpoolsInitialized,
@@ -52,7 +52,7 @@ export const SetupRecommendationPanel: React.FC<SetupRecommendationPanelProps> =
   const { recommendations, confidence } = useMemo(() => {
     const printers = getPrinters().filter(p => p.status === 'active');
     const cycles = getPlannedCycles();
-    const projects = getProjects();
+    const projects = getProjectsSync();
     const spools = getSpools();
     const mountedStateUnknown = isMountedStateUnknown();
     const loadedSpoolsInit = isLoadedSpoolsInitialized();

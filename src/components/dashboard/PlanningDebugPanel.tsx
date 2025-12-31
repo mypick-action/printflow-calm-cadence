@@ -11,7 +11,7 @@ import { Bug, ChevronDown, RefreshCw, Trash2, AlertCircle, CheckCircle2, Copy, Z
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import {
-  getProjects,
+  getProjectsSync,
   getProducts,
   getPrinters,
   getActivePrinters,
@@ -85,7 +85,7 @@ export const PlanningDebugPanel: React.FC = () => {
   };
 
   const refreshStats = () => {
-    const projects = getProjects();
+    const projects = getProjectsSync();
     const products = getProducts();
     const printers = getPrinters();
     const activePrinters = getActivePrinters();
