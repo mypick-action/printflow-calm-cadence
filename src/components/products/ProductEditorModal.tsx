@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -27,15 +28,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, PackagePlus, Trash2, Star, Moon } from 'lucide-react';
+import { Plus, PackagePlus, Trash2, Star, Moon, Loader2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { Product, PlatePreset } from '@/services/storage';
 import { 
-  createProduct,
-  updateProduct,
-  getProducts,
-  Product, 
-  PlatePreset,
-} from '@/services/storage';
+  createProductCloudFirst, 
+  updateProductCloudFirst 
+} from '@/services/productService';
 
 const generatePresetId = () => `preset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
@@ -55,7 +54,8 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
   onProductSaved,
 }) => {
   const { language } = useLanguage();
-  
+  const { workspaceId } = useAuth();
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     gramsPerUnit: 50,
@@ -188,8 +188,16 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSaveProduct = () => {
+  const handleSaveProduct = async () => {
     if (!validateForm()) return;
+    if (!workspaceId) {
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: language === 'he' ? 'אין חיבור לענן' : 'No cloud connection',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     // Ensure at least one preset is recommended
     let presets = formData.platePresets;
@@ -197,39 +205,50 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
       presets = presets.map((p, idx) => ({ ...p, isRecommended: idx === 0 }));
     }
 
-    if (editingProduct) {
-      // Update existing product using storage helper (triggers auto-replan)
-      const updated = updateProduct(editingProduct.id, {
-        name: formData.name,
-        gramsPerUnit: formData.gramsPerUnit,
-        platePresets: presets,
-      });
-      
-      if (updated) {
+    setSaving(true);
+    
+    try {
+      if (editingProduct) {
+        // Update existing product using cloud-first service
+        const updated = await updateProductCloudFirst(editingProduct.id, workspaceId, {
+          name: formData.name,
+          gramsPerUnit: formData.gramsPerUnit,
+          platePresets: presets,
+        });
+        
         toast({
           title: language === 'he' ? 'מוצר עודכן' : 'Product updated',
           description: formData.name,
         });
         
         onProductSaved?.(updated);
+      } else {
+        // Create new product using cloud-first service
+        const created = await createProductCloudFirst(workspaceId, {
+          name: formData.name,
+          gramsPerUnit: formData.gramsPerUnit,
+          platePresets: presets,
+        });
+        
+        toast({
+          title: language === 'he' ? 'מוצר נוצר בהצלחה' : 'Product created successfully',
+          description: `${created.name} (${created.gramsPerUnit}g)`,
+        });
+        
+        onProductSaved?.(created);
       }
-    } else {
-      // Create new product
-      const created = createProduct({
-        name: formData.name,
-        gramsPerUnit: formData.gramsPerUnit,
-        platePresets: presets,
-      });
       
+      onOpenChange(false);
+    } catch (error) {
+      console.error('Error saving product:', error);
       toast({
-        title: language === 'he' ? 'מוצר נוצר בהצלחה' : 'Product created successfully',
-        description: `${created.name} (${created.gramsPerUnit}g)`,
+        title: language === 'he' ? 'שגיאה בשמירה' : 'Error saving',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
       });
-      
-      onProductSaved?.(created);
+    } finally {
+      setSaving(false);
     }
-
-    onOpenChange(false);
   };
 
   const getRiskBadge = (level: 'low' | 'medium' | 'high') => {
@@ -490,13 +509,15 @@ export const ProductEditorModal: React.FC<ProductEditorModalProps> = ({
 
           {/* Save buttons */}
           <div className="flex gap-2 pt-4 border-t">
-            <Button variant="outline" onClick={() => onOpenChange(false)} className="flex-1">
+            <Button variant="outline" onClick={() => onOpenChange(false)} className="flex-1" disabled={saving}>
               {language === 'he' ? 'ביטול' : 'Cancel'}
             </Button>
             <Button 
               onClick={handleSaveProduct} 
               className="flex-1"
+              disabled={saving}
             >
+              {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {editingProduct 
                 ? (language === 'he' ? 'שמור שינויים' : 'Save Changes')
                 : (language === 'he' ? 'צור מוצר' : 'Create Product')

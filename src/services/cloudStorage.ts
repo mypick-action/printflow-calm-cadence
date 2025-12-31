@@ -988,3 +988,64 @@ export const deleteMaterialInventory = async (id: string): Promise<boolean> => {
   
   return true;
 };
+
+// ============= WORKSPACE RESET =============
+// Deletes all workspace data in correct order (respecting foreign keys)
+
+export const resetWorkspaceData = async (workspaceId: string): Promise<boolean> => {
+  try {
+    console.log('[CloudStorage] Resetting workspace data:', workspaceId);
+    
+    // Delete in order: cycles -> projects -> presets -> products
+    // Also: cycle_logs, material_inventory
+    
+    const { error: cyclesErr } = await supabase
+      .from('planned_cycles')
+      .delete()
+      .eq('workspace_id', workspaceId);
+    if (cyclesErr) console.error('Error deleting cycles:', cyclesErr);
+    
+    const { error: logsErr } = await supabase
+      .from('cycle_logs')
+      .delete()
+      .eq('workspace_id', workspaceId);
+    if (logsErr) console.error('Error deleting logs:', logsErr);
+    
+    const { error: projectsErr } = await supabase
+      .from('projects')
+      .delete()
+      .eq('workspace_id', workspaceId);
+    if (projectsErr) console.error('Error deleting projects:', projectsErr);
+    
+    const { error: presetsErr } = await supabase
+      .from('plate_presets')
+      .delete()
+      .eq('workspace_id', workspaceId);
+    if (presetsErr) console.error('Error deleting presets:', presetsErr);
+    
+    const { error: productsErr } = await supabase
+      .from('products')
+      .delete()
+      .eq('workspace_id', workspaceId);
+    if (productsErr) console.error('Error deleting products:', productsErr);
+    
+    const { error: inventoryErr } = await supabase
+      .from('material_inventory')
+      .delete()
+      .eq('workspace_id', workspaceId);
+    if (inventoryErr) console.error('Error deleting inventory:', inventoryErr);
+    
+    // Clear localStorage
+    localStorage.removeItem('printflow_products');
+    localStorage.removeItem('printflow_projects');
+    localStorage.removeItem('printflow_planned_cycles');
+    localStorage.removeItem('printflow_color_inventory');
+    localStorage.removeItem('printflow_spools');
+    
+    console.log('[CloudStorage] Workspace data reset complete');
+    return true;
+  } catch (error) {
+    console.error('[CloudStorage] Error resetting workspace:', error);
+    return false;
+  }
+};
