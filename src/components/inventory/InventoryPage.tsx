@@ -97,18 +97,10 @@ export const InventoryPage: React.FC = () => {
       const cloudInventory = await getMaterialInventory(workspaceId);
       console.log('[InventoryPage] Cloud inventory result:', cloudInventory.length, 'items');
       
-      // If cloud is empty but local has data, offer migration
-      const localInventory = getColorInventory();
-      if (cloudInventory.length === 0 && localInventory.length > 0) {
-        console.log('[InventoryPage] Cloud empty, local has data - migrating...');
-        const result = await migrateInventoryToCloud(workspaceId);
-        console.log('[InventoryPage] Migration result:', result);
-        // Re-fetch after migration
-        const updatedInventory = await getMaterialInventory(workspaceId);
-        updateLocalCache(updatedInventory);
-      } else {
-        updateLocalCache(cloudInventory);
-      }
+      // NOTE: Auto-migration removed to prevent duplication issues
+      // Migration should only run during onboarding or via manual trigger
+      // Just use cloud data (or empty if cloud is empty)
+      updateLocalCache(cloudInventory);
     } catch (err) {
       console.error('[InventoryPage] Error loading from cloud:', err);
       setError(language === 'he' ? 'שגיאה בטעינת מלאי מהענן' : 'Error loading inventory from cloud');

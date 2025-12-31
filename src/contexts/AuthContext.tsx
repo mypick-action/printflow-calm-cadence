@@ -87,19 +87,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setWorkspaceId(p?.current_workspace_id ?? null);
               setLoading(false);
               
-              // Run migration once on login (local → cloud)
-              if (p?.current_workspace_id) {
-                import('@/services/cloudBridge').then(({ migrateAllLocalDataToCloud }) => {
-                  migrateAllLocalDataToCloud(p.current_workspace_id!).then((result) => {
-                    if (result.projects.created > 0 || result.projects.updated > 0) {
-                      console.log(`[Auth] Projects: created=${result.projects.created}, updated=${result.projects.updated}`);
-                    }
-                    if (result.cycles.created > 0 || result.cycles.updated > 0) {
-                      console.log(`[Auth] Cycles: created=${result.cycles.created}, updated=${result.cycles.updated}`);
-                    }
-                  });
-                });
-              }
+              // NOTE: Auto-migration removed to prevent duplication issues
+              // Migration should only run during onboarding or via manual trigger in debug panel
             });
           }, 0);
         } else {
