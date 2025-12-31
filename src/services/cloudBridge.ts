@@ -369,51 +369,69 @@ export async function hydrateLocalFromCloud(
   // Optional: Hydrate products
   if (opts?.includeProducts) {
     const cloudProducts = await getCloudProducts(workspaceId);
-    const cloudPresets = await getCloudPlatePresets(workspaceId);
     
-    // Build preset lookup by product_id
-    const presetsByProductId = new Map<string, DbPlatePreset[]>();
-    for (const preset of cloudPresets) {
-      if (preset.product_id) {
-        const existing = presetsByProductId.get(preset.product_id) || [];
-        existing.push(preset);
-        presetsByProductId.set(preset.product_id, existing);
-      }
-    }
+    // CRITICAL: Check existing local products BEFORE overwriting
+    const existingRaw = localStorage.getItem(KEYS.PRODUCTS);
+    const existingLocal = existingRaw ? JSON.parse(existingRaw) : [];
     
-    // Map cloud products + presets to local Product format
-    const mappedProducts: LocalProduct[] = cloudProducts.map((cp: DbProduct) => {
-      const productPresets = presetsByProductId.get(cp.id) || [];
+    // If cloud is empty but local has products, DON'T overwrite - local is source of truth until migration
+    if (cloudProducts.length === 0 && existingLocal.length > 0) {
+      console.log('[CloudBridge] Cloud products empty → preserving', existingLocal.length, 'local products');
+      // Skip product hydration entirely
+    } else if (cloudProducts.length > 0) {
+      // Cloud has products - proceed with hydration
+      const cloudPresets = await getCloudPlatePresets(workspaceId);
       
-      return {
-        id: cp.id, // Products don't have legacy_id, use UUID directly
-        name: cp.name,
-        gramsPerUnit: cp.default_grams_per_unit,
-        platePresets: productPresets.length > 0 
-          ? productPresets.map((preset, index) => ({
-              id: preset.id,
-              name: preset.name,
-              unitsPerPlate: preset.units_per_plate,
-              cycleHours: preset.cycle_hours,
-              riskLevel: 'low' as const,
-              allowedForNightCycle: preset.allowed_for_night_cycle,
-              isRecommended: index === 0, // First preset is recommended
-            }))
-          : [{
-              // Default preset if none exist
-              id: `preset-${cp.id}-default`,
-              name: 'Default',
-              unitsPerPlate: cp.default_units_per_plate,
-              cycleHours: cp.default_print_time_hours,
-              riskLevel: 'low' as const,
-              allowedForNightCycle: true,
-              isRecommended: true,
-            }],
-      };
-    });
-    
-    localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(mappedProducts));
-    console.log('[CloudBridge] Wrote products to localStorage:', mappedProducts.length);
+      // Build preset lookup by product_id
+      const presetsByProductId = new Map<string, DbPlatePreset[]>();
+      for (const preset of cloudPresets) {
+        if (preset.product_id) {
+          const existing = presetsByProductId.get(preset.product_id) || [];
+          existing.push(preset);
+          presetsByProductId.set(preset.product_id, existing);
+        }
+      }
+      
+      // Map cloud products + presets to local Product format
+      const mappedProducts: LocalProduct[] = cloudProducts.map((cp: DbProduct) => {
+        const productPresets = presetsByProductId.get(cp.id) || [];
+        
+        return {
+          id: cp.id, // Products don't have legacy_id, use UUID directly
+          name: cp.name,
+          gramsPerUnit: cp.default_grams_per_unit,
+          platePresets: productPresets.length > 0 
+            ? productPresets.map((preset, index) => ({
+                id: preset.id,
+                name: preset.name,
+                unitsPerPlate: preset.units_per_plate,
+                cycleHours: preset.cycle_hours,
+                riskLevel: 'low' as const,
+                allowedForNightCycle: preset.allowed_for_night_cycle,
+                isRecommended: index === 0, // First preset is recommended
+              }))
+            : [{
+                // Default preset if none exist
+                id: `preset-${cp.id}-default`,
+                name: 'Default',
+                unitsPerPlate: cp.default_units_per_plate,
+                cycleHours: cp.default_print_time_hours,
+                riskLevel: 'low' as const,
+                allowedForNightCycle: true,
+                isRecommended: true,
+              }],
+        };
+      });
+      
+      // Backup before overwriting
+      if (existingLocal.length > 0) {
+        localStorage.setItem('printflow_products_backup', JSON.stringify(existingLocal));
+        console.log('[CloudBridge] Backed up', existingLocal.length, 'local products before overwrite');
+      }
+      
+      localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(mappedProducts));
+      console.log('[CloudBridge] Wrote products to localStorage:', mappedProducts.length);
+    }
   }
 
   markHydrated(workspaceId);
