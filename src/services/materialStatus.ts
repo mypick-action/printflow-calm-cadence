@@ -181,7 +181,9 @@ export const getProjectMaterialStatus = (project: Project): ProjectMaterialStatu
   const remainingQuantity = Math.max(0, project.quantityTarget - project.quantityGood);
   const requiredGrams = product.gramsPerUnit * remainingQuantity;
   
-  const materialStatus = getMaterialStatusForColor(project.color, requiredGrams);
+  // Use project color for material status
+  const effectiveColor = project.color || '';
+  const materialStatus = getMaterialStatusForColor(effectiveColor, requiredGrams);
   
   // Generate order recommendation if not full
   let orderRecommendation: SpoolOrderRecommendation | undefined;
@@ -213,7 +215,7 @@ export const getProjectMaterialStatus = (project: Project): ProjectMaterialStatu
     }
     
     orderRecommendation = {
-      color: project.color,
+      color: effectiveColor,
       requiredGrams,
       availableGrams: materialStatus.availableGrams,
       missingGrams: materialStatus.missingGrams,
