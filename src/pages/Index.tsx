@@ -56,7 +56,7 @@ const PrintFlowApp: React.FC = () => {
         
         // If onboarding complete, hydrate localStorage from cloud and load printer names
         if (isComplete) {
-          await hydrateLocalFromCloud(workspaceId, { force: true, includeProjects: true, includePlannedCycles: true, includeProducts: true });
+          await hydrateLocalFromCloud(workspaceId, { force: true, includeProjects: true, includePlannedCycles: true, includeProducts: true, includeInventory: true });
           const printers = await getPrinters(workspaceId);
           setPrinterNames(printers.map(p => p.name));
         }
@@ -97,7 +97,7 @@ const PrintFlowApp: React.FC = () => {
     
     if (success) {
       // Hydrate localStorage from cloud so engines can work
-      await hydrateLocalFromCloud(workspaceId, { force: true, includeProjects: true, includePlannedCycles: true, includeProducts: true });
+      await hydrateLocalFromCloud(workspaceId, { force: true, includeProjects: true, includePlannedCycles: true, includeProducts: true, includeInventory: true });
       
       toast.success(language === 'he' ? 'ההגדרות נשמרו בהצלחה!' : 'Settings saved successfully!');
       setPrinterNames(data.printerNames);
