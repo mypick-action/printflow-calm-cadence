@@ -502,6 +502,7 @@ export type Database = {
       projects: {
         Row: {
           assigned_printer_id: string | null
+          color: string | null
           created_at: string
           custom_cycle_hours: number | null
           deadline: string | null
@@ -523,6 +524,7 @@ export type Database = {
         }
         Insert: {
           assigned_printer_id?: string | null
+          color?: string | null
           created_at?: string
           custom_cycle_hours?: number | null
           deadline?: string | null
@@ -544,6 +546,7 @@ export type Database = {
         }
         Update: {
           assigned_printer_id?: string | null
+          color?: string | null
           created_at?: string
           custom_cycle_hours?: number | null
           deadline?: string | null

@@ -924,6 +924,7 @@ const mapLocalProjectToCloud = (p: Project): Omit<cloudStorage.DbProject, 'works
     is_recovery_project: p.isRecoveryProject ?? false,
     parent_project_id: p.parentProjectId || null,
     notes: null,
+    color: p.color || null,
   };
 };
 
