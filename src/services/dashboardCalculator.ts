@@ -197,6 +197,7 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
   
   // Filter cycles for today - only show active cycles (planned or in_progress)
   // Completed/failed/cancelled cycles should not appear in the dashboard
+  // IMPORTANT: Dashboard works with LOCAL data - no UUID validation required
   const todayCycles = plannedCycles.filter(cycle => {
     const cycleDate = new Date(cycle.startTime);
     const isToday = isSameLocalDay(cycleDate, targetDate);
@@ -204,17 +205,40 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     return isToday && isActiveStatus;
   });
   
-  // DEBUG: Log cycle date distribution
+  // DEBUG: Detailed logging to understand why cycles might not show
+  console.log('[DashboardCalculator] === CYCLE ANALYSIS ===');
+  console.log('[DashboardCalculator] Target date (local):', format(targetDate, 'yyyy-MM-dd'));
+  console.log('[DashboardCalculator] Total cycles in localStorage:', plannedCycles.length);
+  
   if (plannedCycles.length > 0) {
+    // Show first few cycles for debugging
+    const sampleCycles = plannedCycles.slice(0, 3).map(c => ({
+      id: c.id.substring(0, 15) + '...',
+      projectId: c.projectId.substring(0, 15) + '...',
+      startTime: c.startTime,
+      status: c.status,
+      startTimeLocal: format(new Date(c.startTime), 'yyyy-MM-dd HH:mm'),
+    }));
+    console.log('[DashboardCalculator] Sample cycles:', sampleCycles);
+    
+    // Date distribution
     const dateDistribution: Record<string, number> = {};
     plannedCycles.forEach(c => {
-      const dateKey = c.startTime.split('T')[0];
+      const dateKey = c.startTime ? c.startTime.split('T')[0] : 'no-date';
       dateDistribution[dateKey] = (dateDistribution[dateKey] || 0) + 1;
     });
     console.log('[DashboardCalculator] Cycle date distribution:', dateDistribution);
-    console.log('[DashboardCalculator] Target date:', format(targetDate, 'yyyy-MM-dd'));
-    console.log('[DashboardCalculator] Total cycles:', plannedCycles.length, '→ Today:', todayCycles.length);
+    
+    // Status distribution
+    const statusDistribution: Record<string, number> = {};
+    plannedCycles.forEach(c => {
+      statusDistribution[c.status] = (statusDistribution[c.status] || 0) + 1;
+    });
+    console.log('[DashboardCalculator] Cycle status distribution:', statusDistribution);
   }
+  
+  console.log('[DashboardCalculator] Cycles matching today + active status:', todayCycles.length);
+  console.log('[DashboardCalculator] === END ANALYSIS ===');
   
   // Build printer plans
   const printerPlans: PrinterDayPlan[] = printers.map(printer => {
