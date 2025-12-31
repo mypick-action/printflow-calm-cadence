@@ -270,91 +270,90 @@ export async function hydrateLocalFromCloud(
   // Optional: Hydrate projects
   if (opts?.includeProjects) {
     const cloudProjects = await getProjects(workspaceId);
-    const existingProjects = safeJsonParse<Project[]>(localStorage.getItem(KEYS.PROJECTS));
+    
+    console.log('[CloudBridge] Projects hydration mode: OVERWRITE (cloud is SSOT)');
+    console.log('[CloudBridge] Cloud projects count:', cloudProjects.length);
     
     // Build lookup: UUID → legacy_id for cycle mapping
     const projectUuidToLegacyId = new Map<string, string>();
     for (const p of cloudProjects) {
-      if (p.legacy_id) {
-        projectUuidToLegacyId.set(p.id, p.legacy_id);
-      }
+      // Accept both UUID-only projects and those with legacy_id
+      const localId = p.legacy_id || p.id;
+      projectUuidToLegacyId.set(p.id, localId);
     }
     
     // Map projects: cloud format → localStorage format
-    // CRITICAL: Only use legacy_id as local ID to prevent snowball effect
+    // OVERWRITE MODE: No merge with existing - cloud is single source of truth
     const mappedProjects: Project[] = [];
     
     for (const p of cloudProjects || []) {
-      // CRITICAL: Only hydrate projects with legacy_id to prevent UUID snowball
-      if (!p.legacy_id) {
-        console.warn('[CloudBridge] Skipping project without legacy_id:', p.id, p.name);
-        continue;
-      }
+      // FIXED: Accept both UUID-only and legacy_id projects
+      const localId = p.legacy_id || p.id; // Prefer legacy_id, fallback to UUID
       
-      const localId = p.legacy_id;
-      
-      // Find existing project to preserve local-only fields
-      const existing = existingProjects?.find(ep => ep.id === localId);
-      
+      // NO existing lookup - pure overwrite from cloud!
       mappedProjects.push({
-        id: localId, // ALWAYS use legacy_id
-        name: p.name ?? existing?.name ?? '',
-        productId: p.product_id ?? existing?.productId ?? '',
-        productName: existing?.productName ?? (p.product_id ? '' : 'ללא מוצר'),
-        preferredPresetId: p.preset_id ?? existing?.preferredPresetId ?? undefined,
+        id: localId,
+        name: p.name ?? '',
+        productId: p.product_id ?? '',
+        productName: p.product_id ? '' : 'ללא מוצר', // Will be populated by product lookup
+        preferredPresetId: p.preset_id ?? undefined,
         quantityTarget: p.quantity_target ?? 1,
         quantityGood: p.quantity_completed ?? 0,
         quantityScrap: p.quantity_failed ?? 0,
-        dueDate: p.deadline ?? existing?.dueDate ?? '',
+        dueDate: p.deadline ?? '',
         urgency: (p.priority === 'urgent' || p.priority === 'critical') 
           ? p.priority as 'urgent' | 'critical' 
-          : (existing?.urgency ?? 'normal'),
-        urgencyManualOverride: existing?.urgencyManualOverride ?? false,
+          : 'normal',
+        urgencyManualOverride: false, // Cloud is SSOT
         status: (p.status ?? 'pending') as 'pending' | 'in_progress' | 'completed' | 'on_hold',
-        color: p.color ?? existing?.color ?? '', // Don't overwrite with null
-        createdAt: p.created_at ?? existing?.createdAt ?? new Date().toISOString(),
-        parentProjectId: p.parent_project_id ?? existing?.parentProjectId ?? undefined,
-        customCycleHours: p.custom_cycle_hours ?? existing?.customCycleHours ?? undefined,
+        color: p.color ?? '',
+        createdAt: p.created_at ?? new Date().toISOString(),
+        parentProjectId: p.parent_project_id ?? undefined,
+        customCycleHours: p.custom_cycle_hours ?? undefined,
         isRecoveryProject: p.is_recovery_project ?? false,
-        // Store UUID for future sync reference (optional field)
+        // Store UUID for future sync reference
         cloudUuid: p.id,
       } as Project & { cloudUuid?: string });
     }
 
     localStorage.setItem(KEYS.PROJECTS, JSON.stringify(mappedProjects));
-    console.log('[CloudBridge] Wrote projects to localStorage:', mappedProjects.length);
+    console.log('[CloudBridge] OVERWRITE projects to localStorage:', mappedProjects.length);
     
     // Also hydrate planned cycles if requested
     if (opts?.includePlannedCycles) {
       const cloudCycles = await getPlannedCycles(workspaceId);
-      const existingCycles = safeJsonParse<PlannedCycle[]>(localStorage.getItem(KEYS.PLANNED_CYCLES));
+      
+      console.log('[CloudBridge] Cycles hydration mode: OVERWRITE (cloud is SSOT)');
+      console.log('[CloudBridge] Cloud cycles count:', cloudCycles.length);
       
       // Map cycles: cloud format → localStorage format
-      // CRITICAL: Map project_id (UUID) → legacy_id for local compatibility
+      // OVERWRITE MODE: No merge with existing - cloud is single source of truth
+      // IMPORTANT: Don't set readinessState/requiredX to alert-triggering values
       const mappedCycles: PlannedCycle[] = (cloudCycles || []).map((c) => {
         // Map project UUID to legacy_id
         const projectLegacyId = projectUuidToLegacyId.get(c.project_id) || c.project_id;
         
-        // Find existing cycle to preserve local-only fields
-        const existing = existingCycles?.find(ec => ec.id === c.legacy_id || ec.id === c.id);
-        
+        // NO existing lookup - pure overwrite from cloud!
+        // Leave readinessState/requiredX as undefined - let dashboardCalculator compute
         return {
-          id: c.legacy_id || c.id, // Use legacy_id for local compatibility
-          projectId: projectLegacyId, // CRITICAL: Use legacy_id, not UUID
+          id: c.legacy_id || c.id,
+          projectId: projectLegacyId,
           printerId: c.printer_id,
           unitsPlanned: c.units_planned ?? 1,
-          gramsPlanned: existing?.gramsPlanned ?? 0,
-          plateType: existing?.plateType ?? 'full',
+          gramsPlanned: 0, // Will be recalculated by planning engine
+          plateType: 'full',
           startTime: c.start_time ?? '',
           endTime: c.end_time ?? '',
-          shift: existing?.shift ?? 'day',
+          shift: 'day',
           status: (c.status === 'scheduled' ? 'planned' : c.status) as PlannedCycle['status'],
-          readinessState: existing?.readinessState ?? 'waiting_for_spool',
-          requiredColor: existing?.requiredColor,
-          requiredMaterial: existing?.requiredMaterial,
-          requiredGrams: existing?.requiredGrams,
-          source: existing?.source ?? 'auto',
-          locked: existing?.locked ?? false,
+          // IMPORTANT: Leave as undefined - let dashboardCalculator compute these
+          // Setting 'waiting_for_spool' would trigger alerts
+          readinessState: undefined,
+          requiredColor: undefined,
+          requiredMaterial: undefined,
+          requiredGrams: undefined,
+          source: 'auto',
+          locked: false,
           // Store UUIDs for future sync reference
           projectUuid: c.project_id,
           cycleUuid: c.id,
@@ -362,7 +361,7 @@ export async function hydrateLocalFromCloud(
       });
 
       localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
-      console.log('[CloudBridge] Wrote planned cycles to localStorage:', mappedCycles.length);
+      console.log('[CloudBridge] OVERWRITE cycles to localStorage:', mappedCycles.length);
     }
   }
 
