@@ -22,7 +22,7 @@ import {
   Printer as PrinterType,
   PlannedCycle,
 } from '@/services/storage';
-import { isSameDay } from 'date-fns';
+import { isSameLocalDay } from '@/services/dateUtils';
 
 interface SetupRecommendation {
   printerId: string;
@@ -60,7 +60,7 @@ export const SetupRecommendationPanel: React.FC<SetupRecommendationPanelProps> =
     // Get cycles for the target date
     const dayCycles = cycles.filter(c => {
       const cycleDate = new Date(c.startTime);
-      return isSameDay(cycleDate, date) && c.status !== 'completed' && c.status !== 'failed';
+      return isSameLocalDay(cycleDate, date) && c.status !== 'completed' && c.status !== 'failed';
     });
 
     if (dayCycles.length === 0) {

@@ -19,7 +19,8 @@ import {
   PlatePreset,
   FactorySettings,
 } from './storage';
-import { format, isSameDay, addMinutes, parseISO } from 'date-fns';
+import { format, addMinutes, parseISO } from 'date-fns';
+import { isSameLocalDay } from './dateUtils';
 
 // ============= TYPES =============
 
@@ -197,8 +198,8 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
   // Filter cycles for today - only show active cycles (planned or in_progress)
   // Completed/failed/cancelled cycles should not appear in the dashboard
   const todayCycles = plannedCycles.filter(cycle => {
-    const cycleDate = parseISO(cycle.startTime);
-    const isToday = isSameDay(cycleDate, targetDate);
+    const cycleDate = new Date(cycle.startTime);
+    const isToday = isSameLocalDay(cycleDate, targetDate);
     const isActiveStatus = cycle.status === 'planned' || cycle.status === 'in_progress';
     return isToday && isActiveStatus;
   });

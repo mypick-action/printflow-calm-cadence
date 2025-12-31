@@ -98,7 +98,7 @@ export function getWeekRange(startDate: Date = new Date()): DayInfo[] {
       dateStr: formatDateStringLocal(date),
       dayName: DAY_NAMES_EN[dayOfWeek],
       dayNameHe: DAY_NAMES_HE[dayOfWeek],
-      isToday: date.getTime() === today.getTime(),
+      isToday: formatDateStringLocal(date) === formatDateStringLocal(today),
     });
   }
   

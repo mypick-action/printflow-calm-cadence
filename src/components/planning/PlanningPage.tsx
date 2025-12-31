@@ -14,7 +14,8 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
-import { format, addDays, startOfWeek, isSameDay, isWithinInterval, parseISO } from 'date-fns';
+import { format, addDays, startOfWeek, isWithinInterval, parseISO } from 'date-fns';
+import { isSameLocalDay } from '@/services/dateUtils';
 import { 
   CalendarDays, 
   ChevronLeft, 
@@ -195,7 +196,7 @@ export const PlanningPage: React.FC<PlanningPageProps> = ({ onEndCycle }) => {
       const dayCycles = plannedCycles
         .filter(cycle => {
           const cycleDate = new Date(cycle.startTime);
-          return isSameDay(cycleDate, date);
+          return isSameLocalDay(cycleDate, date);
         })
         .map(cycle => {
           const project = getProject(cycle.projectId);
@@ -458,7 +459,7 @@ export const PlanningPage: React.FC<PlanningPageProps> = ({ onEndCycle }) => {
       {/* Week Calendar View */}
       <div className="grid grid-cols-7 gap-2">
         {weekDays.map((day, index) => {
-          const isToday = isSameDay(day.date, new Date());
+          const isToday = isSameLocalDay(day.date, new Date());
           const plannedUnits = calculateDayPlannedUnits(day); // Use actual planned units
           const endOfDayCycles = getEndOfDayCycles(day);
           
@@ -570,7 +571,7 @@ export const PlanningPage: React.FC<PlanningPageProps> = ({ onEndCycle }) => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {printers.map((printer) => {
               // FIXED: Use viewedTableDate instead of always today
-              const viewedDayCycles = weekDays.find(d => isSameDay(d.date, viewedTableDate))?.cycles || [];
+              const viewedDayCycles = weekDays.find(d => isSameLocalDay(d.date, viewedTableDate))?.cycles || [];
               const printerEodCycle = viewedDayCycles.find(c => c.printerId === printer.id && c.shift === 'end_of_day');
               
               return (
