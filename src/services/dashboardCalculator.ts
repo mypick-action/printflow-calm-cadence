@@ -164,15 +164,12 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
   const productMap = new Map<string, Product>();
   allProducts.forEach(p => productMap.set(p.id, p));
   
-  // Check for projects with missing product data
+  // Check for projects with missing product data - DEDUPLICATED
+  const projectsWithMissingProduct: string[] = [];
   activeProjects.forEach(project => {
     const product = productMap.get(project.productId);
     if (!product) {
-      missingData.push({ 
-        type: 'product', 
-        message: `מוצר חסר לפרויקט: ${project.name}`, 
-        messageEn: `Missing product for project: ${project.name}` 
-      });
+      projectsWithMissingProduct.push(project.name);
       return;
     }
     
@@ -187,6 +184,15 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
       });
     }
   });
+  
+  // Add single deduplicated warning for missing products
+  if (projectsWithMissingProduct.length > 0) {
+    missingData.push({ 
+      type: 'product', 
+      message: `מוצר חסר ל-${projectsWithMissingProduct.length} פרויקטים`, 
+      messageEn: `Product missing for ${projectsWithMissingProduct.length} projects` 
+    });
+  }
   
   // Filter cycles for today - only show active cycles (planned or in_progress)
   // Completed/failed/cancelled cycles should not appear in the dashboard
