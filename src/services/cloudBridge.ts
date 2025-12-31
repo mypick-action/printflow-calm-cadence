@@ -325,45 +325,54 @@ export async function hydrateLocalFromCloud(
     if (opts?.includePlannedCycles) {
       const cloudCycles = await getPlannedCycles(workspaceId);
       
-      console.log('[CloudBridge] Cycles hydration mode: OVERWRITE (cloud is SSOT)');
-      console.log('[CloudBridge] Cloud cycles count:', cloudCycles.length);
+      // Check existing local cycles BEFORE deciding to overwrite
+      const existingCyclesRaw = localStorage.getItem(KEYS.PLANNED_CYCLES);
+      const existingLocalCycles = existingCyclesRaw ? JSON.parse(existingCyclesRaw) : [];
       
-      // Map cycles: cloud format → localStorage format
-      // OVERWRITE MODE: No merge with existing - cloud is single source of truth
-      // IMPORTANT: Don't set readinessState/requiredX to alert-triggering values
-      const mappedCycles: PlannedCycle[] = (cloudCycles || []).map((c) => {
-        // Map project UUID to legacy_id
-        const projectLegacyId = projectUuidToLegacyId.get(c.project_id) || c.project_id;
+      console.log('[CloudBridge] Cycles hydration - cloud:', cloudCycles.length, 'local:', existingLocalCycles.length);
+      
+      // If cloud is empty but local has cycles, PRESERVE local cycles
+      // Local is source of truth until cycles are synced to cloud
+      if (cloudCycles.length === 0 && existingLocalCycles.length > 0) {
+        console.log('[CloudBridge] Cloud cycles empty → preserving', existingLocalCycles.length, 'local cycles');
+        // Skip overwriting - local is source of truth until migration
+      } else if (cloudCycles.length > 0) {
+        // Cloud has cycles - proceed with hydration (cloud is SSOT)
+        console.log('[CloudBridge] Cloud has cycles → overwriting localStorage');
         
-        // NO existing lookup - pure overwrite from cloud!
-        // Leave readinessState/requiredX as undefined - let dashboardCalculator compute
-        return {
-          id: c.legacy_id || c.id,
-          projectId: projectLegacyId,
-          printerId: c.printer_id,
-          unitsPlanned: c.units_planned ?? 1,
-          gramsPlanned: 0, // Will be recalculated by planning engine
-          plateType: 'full',
-          startTime: c.start_time ?? '',
-          endTime: c.end_time ?? '',
-          shift: 'day',
-          status: (c.status === 'scheduled' ? 'planned' : c.status) as PlannedCycle['status'],
-          // IMPORTANT: Leave as undefined - let dashboardCalculator compute these
-          // Setting 'waiting_for_spool' would trigger alerts
-          readinessState: undefined,
-          requiredColor: undefined,
-          requiredMaterial: undefined,
-          requiredGrams: undefined,
-          source: 'auto',
-          locked: false,
-          // Store UUIDs for future sync reference
-          projectUuid: c.project_id,
-          cycleUuid: c.id,
-        } as PlannedCycle & { projectUuid?: string; cycleUuid?: string };
-      });
+        // Map cycles: cloud format → localStorage format
+        const mappedCycles: PlannedCycle[] = (cloudCycles || []).map((c) => {
+          // Map project UUID to legacy_id
+          const projectLegacyId = projectUuidToLegacyId.get(c.project_id) || c.project_id;
+          
+          return {
+            id: c.legacy_id || c.id,
+            projectId: projectLegacyId,
+            printerId: c.printer_id,
+            unitsPlanned: c.units_planned ?? 1,
+            gramsPlanned: 0, // Will be recalculated by planning engine
+            plateType: 'full',
+            startTime: c.start_time ?? '',
+            endTime: c.end_time ?? '',
+            shift: 'day',
+            status: (c.status === 'scheduled' ? 'planned' : c.status) as PlannedCycle['status'],
+            readinessState: undefined,
+            requiredColor: undefined,
+            requiredMaterial: undefined,
+            requiredGrams: undefined,
+            source: 'auto',
+            locked: false,
+            projectUuid: c.project_id,
+            cycleUuid: c.id,
+          } as PlannedCycle & { projectUuid?: string; cycleUuid?: string };
+        });
 
-      localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
-      console.log('[CloudBridge] OVERWRITE cycles to localStorage:', mappedCycles.length);
+        localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
+        console.log('[CloudBridge] OVERWRITE cycles to localStorage:', mappedCycles.length);
+      } else {
+        // Both are empty - nothing to do
+        console.log('[CloudBridge] Both cloud and local cycles are empty');
+      }
     }
   }
 
