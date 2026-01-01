@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { hydrateLocalFromCloud } from '@/services/cloudBridge';
+import { hydrateLocalFromCloud, setReplanInProgress } from '@/services/cloudBridge';
 import * as cloudStorage from '@/services/cloudStorage';
 import { hardResetLocalCache } from '@/services/storage';
 import { recalculatePlan } from '@/services/planningRecalculator';
@@ -105,6 +105,9 @@ export const SyncDebugPanel: React.FC = () => {
     setPurging(true);
     setError(null);
     
+    // Set flag BEFORE any operations to prevent hydration from clearing cycles
+    setReplanInProgress(true);
+    
     try {
       console.log('[SyncDebugPanel] === PURGE CLOUD + REPLAN START ===');
       
@@ -143,15 +146,16 @@ export const SyncDebugPanel: React.FC = () => {
       
       if (result.cyclesModified > 0 && cloudCycles.length === 0) {
         // Cycles were generated but cloud sync failed!
-        setError('אזהרה: מחזורים נוצרו אבל לא הועלו לענן. נסה שוב.');
-        console.error('[SyncDebugPanel] CRITICAL: Cycles generated but cloud sync failed!');
-        setPurging(false);
+        const errorMsg = result.cloudSyncError 
+          ? `סנכרון נכשל: ${result.cloudSyncError}`
+          : 'מחזורים נוצרו אבל לא הועלו לענן (בדוק RLS/Auth)';
+        setError(errorMsg);
+        console.error('[SyncDebugPanel] CRITICAL: Cycles generated but cloud sync failed!', result.cloudSyncError);
         return;
       }
       
       if (!result.cloudSyncSuccess && result.cloudSyncError) {
         setError(`שגיאת סנכרון: ${result.cloudSyncError}`);
-        setPurging(false);
         return;
       }
       
@@ -160,6 +164,9 @@ export const SyncDebugPanel: React.FC = () => {
     } catch (e) {
       console.error('[SyncDebugPanel] Purge and replan failed:', e);
       setError(e instanceof Error ? e.message : 'Purge failed');
+    } finally {
+      // ALWAYS reset the flag, even on error
+      setReplanInProgress(false);
       setPurging(false);
     }
   };
