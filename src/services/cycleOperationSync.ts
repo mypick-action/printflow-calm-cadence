@@ -11,6 +11,7 @@ import type { DbPlannedCycle } from '@/services/cloudStorage';
 
 export interface CycleOperationResult {
   success: boolean;
+  localSaved: boolean;
   cloudSynced: boolean;
   error?: string;
 }
@@ -107,47 +108,32 @@ export async function syncCycleOperation(
 ): Promise<CycleOperationResult> {
   console.log('[cycleOperationSync] Starting sync:', type, payload.cycleId);
   
-  // Get cached workspace ID
+  // Get cached workspace ID - NO fallback fetch, just return cloudSynced=false
   const workspaceId = getCachedWorkspaceId();
   
   if (!workspaceId) {
-    console.warn('[cycleOperationSync] No cached workspaceId, attempting to fetch...');
+    console.warn('[cycleOperationSync] No cached workspaceId - skipping cloud sync');
     
-    // Fallback: fetch from profile
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        return {
-          success: true, // Local saved, cloud skipped
-          cloudSynced: false,
-          error: 'לא מחובר - נשמר מקומית',
-        };
-      }
-      
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('current_workspace_id')
-        .eq('user_id', user.id)
-        .single();
-      
-      if (!profile?.current_workspace_id) {
-        return {
-          success: true,
-          cloudSynced: false,
-          error: 'אין workspace - נשמר מקומית',
-        };
-      }
-      
-      // Use fetched workspace ID
-      return await performCloudSync(type, payload, profile.current_workspace_id);
-    } catch (err) {
-      console.error('[cycleOperationSync] Failed to get workspace:', err);
-      return {
-        success: true,
-        cloudSynced: false,
-        error: 'שגיאה בקבלת workspace - נשמר מקומית',
-      };
-    }
+    // Dispatch failure event for UI
+    window.dispatchEvent(new CustomEvent('cycle-sync-result', {
+      detail: { 
+        type, 
+        cycleId: payload.cycleId, 
+        success: true, 
+        localSaved: true,
+        cloudSynced: false, 
+        error: 'לא סונכרן - אין workspace בזיכרון',
+        canRetry: true,
+        payload, // Include payload for retry
+      },
+    }));
+    
+    return {
+      success: true,
+      localSaved: true,
+      cloudSynced: false,
+      error: 'לא סונכרן - אין workspace בזיכרון',
+    };
   }
   
   return await performCloudSync(type, payload, workspaceId);
@@ -167,8 +153,22 @@ async function performCloudSync(
     
     if (!projectUuid) {
       console.error('[cycleOperationSync] Could not resolve project UUID for:', payload.projectId);
+      
+      window.dispatchEvent(new CustomEvent('cycle-sync-result', {
+        detail: { 
+          type, 
+          cycleId: payload.cycleId, 
+          success: true, 
+          localSaved: true,
+          cloudSynced: false, 
+          error: 'לא נמצא UUID לפרויקט',
+          canRetry: false,
+        },
+      }));
+      
       return {
-        success: true, // Local is saved
+        success: true,
+        localSaved: true,
         cloudSynced: false,
         error: 'לא נמצא UUID לפרויקט - נשמר מקומית בלבד',
       };
@@ -178,10 +178,10 @@ async function performCloudSync(
     const cloudFields = mapLocalToCloudFields(payload);
     
     if (type === 'manual_start') {
-      // For new manual cycles, use insert (with proper required fields)
+      // For new manual cycles, use UPSERT for idempotency (retry-safe)
       const { data, error } = await supabase
         .from('planned_cycles')
-        .insert({
+        .upsert({
           id: payload.cycleId,
           workspace_id: workspaceId,
           project_id: projectUuid,
@@ -193,14 +193,30 @@ async function performCloudSync(
           start_time: payload.startTime || null,
           end_time: payload.endTime || null,
           preset_id: payload.presetId || null,
-        })
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' })
         .select()
         .single();
       
       if (error) {
-        console.error('[cycleOperationSync] Insert failed:', error);
+        console.error('[cycleOperationSync] Upsert failed:', error);
+        
+        window.dispatchEvent(new CustomEvent('cycle-sync-result', {
+          detail: { 
+            type, 
+            cycleId: payload.cycleId, 
+            success: true, 
+            localSaved: true,
+            cloudSynced: false, 
+            error: error.message,
+            canRetry: true,
+            payload,
+          },
+        }));
+        
         return {
           success: true,
+          localSaved: true,
           cloudSynced: false,
           error: `שגיאת סנכרון: ${error.message}`,
         };
@@ -216,14 +232,29 @@ async function performCloudSync(
           updated_at: new Date().toISOString(),
         })
         .eq('id', payload.cycleId)
-        .eq('workspace_id', workspaceId) // Additional safety filter
+        .eq('workspace_id', workspaceId) // Workspace filter for safety
         .select()
         .single();
       
       if (error) {
         console.error('[cycleOperationSync] Update failed:', error);
+        
+        window.dispatchEvent(new CustomEvent('cycle-sync-result', {
+          detail: { 
+            type, 
+            cycleId: payload.cycleId, 
+            success: true, 
+            localSaved: true,
+            cloudSynced: false, 
+            error: error.message,
+            canRetry: true,
+            payload,
+          },
+        }));
+        
         return {
           success: true,
+          localSaved: true,
           cloudSynced: false,
           error: `שגיאת עדכון: ${error.message}`,
         };
@@ -234,24 +265,41 @@ async function performCloudSync(
     
     // Dispatch success event for UI feedback
     window.dispatchEvent(new CustomEvent('cycle-sync-result', {
-      detail: { type, cycleId: payload.cycleId, success: true },
+      detail: { 
+        type, 
+        cycleId: payload.cycleId, 
+        success: true, 
+        localSaved: true,
+        cloudSynced: true,
+      },
     }));
     
     return {
       success: true,
+      localSaved: true,
       cloudSynced: true,
     };
     
   } catch (err) {
     console.error('[cycleOperationSync] Unexpected error:', err);
     
-    // Dispatch failure event
+    // Dispatch failure event with retry info
     window.dispatchEvent(new CustomEvent('cycle-sync-result', {
-      detail: { type, cycleId: payload.cycleId, success: false, error: String(err) },
+      detail: { 
+        type, 
+        cycleId: payload.cycleId, 
+        success: true, 
+        localSaved: true,
+        cloudSynced: false, 
+        error: String(err),
+        canRetry: true,
+        payload,
+      },
     }));
     
     return {
-      success: true, // Local is saved
+      success: true,
+      localSaved: true,
       cloudSynced: false,
       error: `שגיאה לא צפויה: ${err}`,
     };
