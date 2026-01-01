@@ -21,6 +21,7 @@ import {
   Play,
   AlertTriangle,
   ChevronLeft,
+  Replace,
 } from 'lucide-react';
 import { 
   getPlannedCycles, 
@@ -29,16 +30,23 @@ import {
   getPrinter,
   getProject,
   PlannedCycle,
+  getActiveProjects,
+  getProducts,
+  addManualCycle,
+  getPrinters,
 } from '@/services/storage';
 import { scheduleAutoReplan } from '@/services/autoReplan';
 import { toast } from 'sonner';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, addHours } from 'date-fns';
+import { selectOptimalPreset } from '@/services/planningEngine';
+import { getAvailableGramsByColor } from '@/services/materialAdapter';
 
 interface PrinterActionsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   printerId: string;
   onComplete: () => void;
+  onOpenManualPrint?: (printerId: string) => void;
 }
 
 type ModalView = 'menu' | 'forgot_start' | 'remove_job';
@@ -48,6 +56,7 @@ export const PrinterActionsModal: React.FC<PrinterActionsModalProps> = ({
   onOpenChange,
   printerId,
   onComplete,
+  onOpenManualPrint,
 }) => {
   const { language } = useLanguage();
   const [view, setView] = useState<ModalView>('menu');
@@ -184,6 +193,128 @@ export const PrinterActionsModal: React.FC<PrinterActionsModalProps> = ({
     return 2; // Default fallback
   };
 
+  // Handle switching to manual print
+  const handleSwitchToManual = () => {
+    if (isInProgress) {
+      // If printer is busy, open manual print modal with printer pre-selected
+      if (onOpenManualPrint) {
+        onOpenChange(false);
+        onOpenManualPrint(printerId);
+      }
+    } else {
+      // If printer is idle, auto-generate optimal job and start it
+      const projects = getActiveProjects();
+      const products = getProducts();
+      const printerObj = getPrinter(printerId);
+      
+      if (!projects.length || !products.length || !printerObj) {
+        toast.error(
+          language === 'he' ? 'אין פרויקטים זמינים' : 'No projects available'
+        );
+        return;
+      }
+      
+      // Find best project for this printer (prioritize by urgency, then deadline)
+      const sortedProjects = projects
+        .filter(p => p.quantityTarget > p.quantityGood)
+        .sort((a, b) => {
+          const urgencyOrder = { critical: 0, urgent: 1, normal: 2 };
+          if (urgencyOrder[a.urgency] !== urgencyOrder[b.urgency]) {
+            return urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
+          }
+          return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+        });
+      
+      const bestProject = sortedProjects[0];
+      if (!bestProject) {
+        toast.error(
+          language === 'he' ? 'אין פרויקטים זמינים להדפסה' : 'No projects available for printing'
+        );
+        return;
+      }
+      
+      const product = products.find(p => p.id === bestProject.productId);
+      if (!product || !product.platePresets?.length) {
+        toast.error(
+          language === 'he' ? 'המוצר חסר פריסות' : 'Product missing presets'
+        );
+        return;
+      }
+      
+      // Calculate optimal preset
+      const remainingUnits = bestProject.quantityTarget - bestProject.quantityGood;
+      const availableGrams = getAvailableGramsByColor(bestProject.color);
+      
+      const presetResult = selectOptimalPreset(
+        product,
+        remainingUnits,
+        24, // Max available hours for auto-start
+        availableGrams,
+        false, // Not a night slot
+        bestProject.preferredPresetId
+      );
+      
+      if (!presetResult) {
+        toast.error(
+          language === 'he' ? 'לא נמצאה פריסה מתאימה' : 'No suitable preset found'
+        );
+        return;
+      }
+      
+      const { preset, reason } = presetResult;
+      const start = new Date();
+      const end = addHours(start, preset.cycleHours);
+      const unitsForCycle = Math.min(preset.unitsPerPlate, remainingUnits);
+      const gramsForCycle = unitsForCycle * product.gramsPerUnit;
+      
+      // Create the cycle
+      const newCycle: PlannedCycle = {
+        id: `auto-manual-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        projectId: bestProject.id,
+        printerId: printerId,
+        unitsPlanned: unitsForCycle,
+        gramsPlanned: gramsForCycle,
+        plateType: unitsForCycle < preset.unitsPerPlate ? 'reduced' : 'full',
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        shift: 'day',
+        status: 'in_progress',
+        source: 'manual',
+        locked: true,
+        actualStartTime: start.toISOString(),
+        readinessState: 'ready',
+        requiredColor: bestProject.color,
+        requiredMaterial: 'PLA',
+        requiredGrams: gramsForCycle,
+        presetId: preset.id,
+        presetName: preset.name,
+        presetSelectionReason: reason,
+      };
+      
+      addManualCycle(newCycle);
+      
+      // Update printer state
+      updatePrinter(printerId, { 
+        mountState: 'in_use',
+        mountedColor: bestProject.color,
+        currentMaterial: 'PLA',
+      });
+      
+      scheduleAutoReplan('auto_manual_cycle_added');
+      
+      toast.success(
+        language === 'he' ? 'העבודה הושמה אוטומטית' : 'Job auto-assigned',
+        { description: language === 'he' 
+          ? `${bestProject.name} - ${preset.name} (${unitsForCycle} יחידות)`
+          : `${bestProject.name} - ${preset.name} (${unitsForCycle} units)`
+        }
+      );
+      
+      onComplete();
+      onOpenChange(false);
+    }
+  };
+
   const isInProgress = currentCycle?.status === 'in_progress';
 
   return (
@@ -278,12 +409,62 @@ export const PrinterActionsModal: React.FC<PrinterActionsModalProps> = ({
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* Switch to manual print option */}
+                <Card 
+                  className="cursor-pointer hover:border-warning/50 transition-colors border-dashed"
+                  onClick={handleSwitchToManual}
+                >
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-warning/10 flex items-center justify-center">
+                      <Replace className="w-5 h-5 text-warning" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-medium">
+                        {language === 'he' ? 'החלף להדפסה ידנית' : 'Switch to manual print'}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {language === 'he' 
+                          ? isInProgress 
+                            ? 'פתח חלון הדפסה ידנית' 
+                            : 'המערכת תבחר אוטומטית את העבודה האופטימלית'
+                          : isInProgress 
+                            ? 'Open manual print dialog' 
+                            : 'System will auto-select optimal job'}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </>
             ) : (
-              <div className="text-center py-6 text-muted-foreground">
-                {language === 'he' 
-                  ? 'אין עבודות מתוכננות למדפסת זו'
-                  : 'No jobs planned for this printer'}
+              <div className="space-y-3">
+                <div className="text-center py-4 text-muted-foreground">
+                  {language === 'he' 
+                    ? 'אין עבודות מתוכננות למדפסת זו'
+                    : 'No jobs planned for this printer'}
+                </div>
+                
+                {/* Allow manual print even when no planned jobs */}
+                <Card 
+                  className="cursor-pointer hover:border-warning/50 transition-colors border-dashed"
+                  onClick={handleSwitchToManual}
+                >
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-warning/10 flex items-center justify-center">
+                      <Replace className="w-5 h-5 text-warning" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-medium">
+                        {language === 'he' ? 'התחל הדפסה ידנית' : 'Start manual print'}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {language === 'he' 
+                          ? 'המערכת תבחר אוטומטית את העבודה האופטימלית'
+                          : 'System will auto-select optimal job'}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             )}
           </div>
