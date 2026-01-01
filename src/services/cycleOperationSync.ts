@@ -4,7 +4,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import { getProjectsSync } from '@/services/storage';
-import { isUuid, getCachedWorkspaceId } from '@/services/cloudBridge';
+import { isUuid, getCachedWorkspaceId, setCachedWorkspaceId } from '@/services/cloudBridge';
 import type { DbPlannedCycle } from '@/services/cloudStorage';
 
 // ============= TYPES =============
@@ -96,11 +96,47 @@ function mapLocalToCloudFields(payload: CycleOperationPayload): Partial<DbPlanne
   return cloudFields;
 }
 
+// ============= WORKSPACE FETCH =============
+
+/**
+ * Fetch workspace ID from profile (one-time, then cache)
+ */
+async function fetchAndCacheWorkspaceId(): Promise<string | null> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.warn('[cycleOperationSync] No authenticated user');
+      return null;
+    }
+    
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('current_workspace_id')
+      .eq('user_id', user.id)
+      .single();
+    
+    if (error || !profile?.current_workspace_id) {
+      console.error('[cycleOperationSync] Failed to fetch workspace:', error);
+      return null;
+    }
+    
+    // Cache for future calls
+    setCachedWorkspaceId(profile.current_workspace_id);
+    console.log('[cycleOperationSync] Fetched and cached workspaceId:', profile.current_workspace_id);
+    
+    return profile.current_workspace_id;
+  } catch (err) {
+    console.error('[cycleOperationSync] Error fetching workspace:', err);
+    return null;
+  }
+}
+
 // ============= MAIN SYNC FUNCTION =============
 
 /**
  * Sync a cycle operation to cloud immediately
  * Handles all the complexity of workspace lookup, field mapping, and error handling
+ * Option A: Always syncs to cloud - fetches workspace if not cached
  */
 export async function syncCycleOperation(
   type: OperationType,
@@ -108,11 +144,16 @@ export async function syncCycleOperation(
 ): Promise<CycleOperationResult> {
   console.log('[cycleOperationSync] Starting sync:', type, payload.cycleId);
   
-  // Get cached workspace ID - NO fallback fetch, just return cloudSynced=false
-  const workspaceId = getCachedWorkspaceId();
+  // Get cached workspace ID, or fetch once if missing
+  let workspaceId = getCachedWorkspaceId();
   
   if (!workspaceId) {
-    console.warn('[cycleOperationSync] No cached workspaceId - skipping cloud sync');
+    console.log('[cycleOperationSync] No cached workspaceId - fetching from profile...');
+    workspaceId = await fetchAndCacheWorkspaceId();
+  }
+  
+  if (!workspaceId) {
+    console.error('[cycleOperationSync] Could not get workspaceId - sync failed');
     
     // Dispatch failure event for UI
     window.dispatchEvent(new CustomEvent('cycle-sync-result', {
@@ -122,7 +163,7 @@ export async function syncCycleOperation(
         success: true, 
         localSaved: true,
         cloudSynced: false, 
-        error: 'לא סונכרן - אין workspace בזיכרון',
+        error: 'לא ניתן לסנכרן - אין חיבור לענן',
         canRetry: true,
         payload, // Include payload for retry
       },
@@ -132,7 +173,7 @@ export async function syncCycleOperation(
       success: true,
       localSaved: true,
       cloudSynced: false,
-      error: 'לא סונכרן - אין workspace בזיכרון',
+      error: 'לא ניתן לסנכרן - אין חיבור לענן',
     };
   }
   
