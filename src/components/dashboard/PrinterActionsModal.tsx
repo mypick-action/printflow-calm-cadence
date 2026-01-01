@@ -195,11 +195,16 @@ export const PrinterActionsModal: React.FC<PrinterActionsModalProps> = ({
 
   // Handle switching to manual print
   const handleSwitchToManual = () => {
+    // Always close this modal first
+    onOpenChange(false);
+    
     if (isInProgress) {
       // If printer is busy, open manual print modal with printer pre-selected
       if (onOpenManualPrint) {
-        onOpenChange(false);
-        onOpenManualPrint(printerId);
+        // Small delay to let this modal close first
+        setTimeout(() => {
+          onOpenManualPrint(printerId);
+        }, 100);
       }
     } else {
       // If printer is idle, auto-generate optimal job and start it
