@@ -245,6 +245,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   };
 
   const renderPrinterCard = (plan: PrinterDayPlan) => {
+    console.log(
+      '[PrinterCard]',
+      plan.printer.id,
+      plan.cycles.length,
+      plan.cycles.map(c => c.printerId)
+    );
     const hasCycles = plan.cycles.length > 0;
     const hasMultipleCycles = plan.cycles.length > 1;
     const isExpanded = expandedPrinters.has(plan.printer.id);
