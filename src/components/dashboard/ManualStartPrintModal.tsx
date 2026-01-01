@@ -39,8 +39,8 @@ import {
 } from '@/services/storage';
 import { format, addHours } from 'date-fns';
 import { scheduleAutoReplan } from '@/services/autoReplan';
-import { upsertPlannedCycleCloud } from '@/services/cloudStorage';
-import { supabase } from '@/integrations/supabase/client';
+import { syncCycleOperation } from '@/services/cycleOperationSync';
+import { toast } from '@/hooks/use-toast';
 
 interface ManualStartPrintModalProps {
   open: boolean;
@@ -166,41 +166,28 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
       });
     }
 
-    // IMMEDIATELY sync cycle to cloud (don't wait for debounced replan)
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('current_workspace_id')
-          .eq('user_id', user.id)
-          .single();
-        
-        if (profile?.current_workspace_id) {
-          // Map local project ID to cloud UUID if needed
-          const projectUuid = (selectedProject as any).cloudId || 
-                              (selectedProject as any).cloudUuid || 
-                              selectedProjectId;
-          
-          await upsertPlannedCycleCloud(profile.current_workspace_id, {
-            id: cycleId,
-            legacy_id: null,
-            project_id: projectUuid,
-            printer_id: selectedPrinterId,
-            preset_id: selectedPreset?.id || null,
-            scheduled_date: format(start, 'yyyy-MM-dd'),
-            start_time: start.toISOString(),
-            end_time: end.toISOString(),
-            units_planned: units,
-            status: 'in_progress',
-            cycle_index: 0,
-          });
-          console.log('[ManualStartPrintModal] Cycle synced to cloud');
-        }
-      }
-    } catch (err) {
-      console.error('[ManualStartPrintModal] Failed to sync cycle to cloud:', err);
-      // Continue anyway - local state is saved, will sync on next replan
+    // IMMEDIATELY sync cycle to cloud via unified service
+    const syncResult = await syncCycleOperation('manual_start', {
+      cycleId: cycleId,
+      projectId: selectedProjectId, // Service will resolve to cloud UUID
+      printerId: selectedPrinterId,
+      status: 'in_progress',
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      presetId: selectedPreset?.id || null,
+      unitsPlanned: units,
+      scheduledDate: format(start, 'yyyy-MM-dd'),
+      cycleIndex: 0,
+    });
+    
+    if (syncResult.cloudSynced) {
+      console.log('[ManualStartPrintModal] Cycle synced to cloud');
+    } else if (syncResult.error) {
+      toast({
+        title: 'סנכרון לענן נכשל',
+        description: syncResult.error,
+        variant: 'destructive',
+      });
     }
     
     // Schedule replan for planning updates

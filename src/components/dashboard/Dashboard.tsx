@@ -568,6 +568,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
           }}
           cycle={{
             id: selectedCycleForStart.id,
+            projectId: selectedCycleForStart.projectId,
             projectName: selectedCycleForStart.projectName,
             productName: selectedCycleForStart.productName,
             color: selectedCycleForStart.color,
