@@ -1,5 +1,5 @@
-// SyncDebugPanel - Temporary debug panel for cloud/local sync status
-// Shows workspaceId, cloud vs local counts, and Hard Reset button
+// SyncDebugPanel - Debug panel for cloud/local sync status
+// Shows workspaceId, cloud vs local counts, and reset options
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -10,7 +10,8 @@ import { recalculatePlan } from '@/services/planningRecalculator';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Database, HardDrive, RefreshCw, Trash2, AlertTriangle } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Database, HardDrive, RefreshCw, Trash2, AlertTriangle, CloudOff, Zap } from 'lucide-react';
 
 interface SyncCounts {
   cloud: { projects: number; cycles: number };
@@ -22,7 +23,9 @@ export const SyncDebugPanel: React.FC = () => {
   const [counts, setCounts] = useState<SyncCounts | null>(null);
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [purging, setPurging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeLogs, setIncludeLogs] = useState(false);
 
   const refreshCounts = async () => {
     if (!workspaceId) return;
@@ -57,8 +60,8 @@ export const SyncDebugPanel: React.FC = () => {
     }
   };
 
-  // Hard Reset with FULL await chain: clear → hydrate projects → hydrate cycles → replan → refresh
-  const handleHardReset = async () => {
+  // Hard Reset LOCAL ONLY: clear local → hydrate from cloud
+  const handleLocalReset = async () => {
     if (!workspaceId) {
       setError('No workspaceId available');
       return;
@@ -68,34 +71,78 @@ export const SyncDebugPanel: React.FC = () => {
     setError(null);
     
     try {
-      console.log('[SyncDebugPanel] === HARD RESET START ===');
+      console.log('[SyncDebugPanel] === LOCAL RESET START ===');
       
-      // Step 1: Clear all local cache (except PRODUCTS - protected)
+      // Step 1: Clear local cache
       console.log('[SyncDebugPanel] Step 1: Clearing local cache...');
       hardResetLocalCache();
       
-      // Step 2: Hydrate projects from cloud (OVERWRITE mode)
-      console.log('[SyncDebugPanel] Step 2: Hydrating projects from cloud (OVERWRITE)...');
+      // Step 2: Hydrate from cloud (OVERWRITE mode)
+      console.log('[SyncDebugPanel] Step 2: Hydrating from cloud (OVERWRITE)...');
       await hydrateLocalFromCloud(workspaceId, { 
         force: true, 
         includeProjects: true, 
-        includePlannedCycles: true, // This will also hydrate cycles in OVERWRITE mode
-        includeProducts: false // DON'T touch products - protected
+        includePlannedCycles: true,
+        includeProducts: false
       });
       
-      // Step 3: Recalculate plan (AFTER hydration complete)
-      console.log('[SyncDebugPanel] Step 3: Recalculating plan...');
-      const result = recalculatePlan('whole_week', true, 'hard_reset');
-      console.log('[SyncDebugPanel] Replan result:', result);
-      
-      console.log('[SyncDebugPanel] === HARD RESET COMPLETE - RELOADING ===');
-      
-      // Step 4: Force page reload
+      console.log('[SyncDebugPanel] === LOCAL RESET COMPLETE - RELOADING ===');
       window.location.reload();
     } catch (e) {
-      console.error('[SyncDebugPanel] Hard reset failed:', e);
+      console.error('[SyncDebugPanel] Local reset failed:', e);
       setError(e instanceof Error ? e.message : 'Reset failed');
       setResetting(false);
+    }
+  };
+
+  // PURGE CLOUD + REPLAN: delete cloud cycles → clear local → replan fresh
+  const handlePurgeAndReplan = async () => {
+    if (!workspaceId) {
+      setError('No workspaceId available');
+      return;
+    }
+    
+    setPurging(true);
+    setError(null);
+    
+    try {
+      console.log('[SyncDebugPanel] === PURGE CLOUD + REPLAN START ===');
+      
+      // Step 1: Purge cloud cycles (and optionally logs)
+      console.log('[SyncDebugPanel] Step 1: Purging cloud cycles...');
+      const purgeResult = await cloudStorage.purgeCloudCycles(workspaceId, { 
+        includeLogs: includeLogs 
+      });
+      console.log('[SyncDebugPanel] Purge result:', purgeResult);
+      
+      if (!purgeResult.success) {
+        throw new Error('Failed to purge cloud cycles');
+      }
+      
+      // Step 2: Clear local cache
+      console.log('[SyncDebugPanel] Step 2: Clearing local cache...');
+      hardResetLocalCache();
+      
+      // Step 3: Hydrate projects from cloud (cycles are now empty)
+      console.log('[SyncDebugPanel] Step 3: Hydrating projects from cloud...');
+      await hydrateLocalFromCloud(workspaceId, { 
+        force: true, 
+        includeProjects: true, 
+        includePlannedCycles: true, // Will get empty list now
+        includeProducts: false
+      });
+      
+      // Step 4: Generate fresh plan
+      console.log('[SyncDebugPanel] Step 4: Generating fresh plan...');
+      const result = recalculatePlan('whole_week', true, 'purge_cloud_replan');
+      console.log('[SyncDebugPanel] Replan result:', result);
+      
+      console.log('[SyncDebugPanel] === PURGE + REPLAN COMPLETE - RELOADING ===');
+      window.location.reload();
+    } catch (e) {
+      console.error('[SyncDebugPanel] Purge and replan failed:', e);
+      setError(e instanceof Error ? e.message : 'Purge failed');
+      setPurging(false);
     }
   };
 
@@ -170,6 +217,18 @@ export const SyncDebugPanel: React.FC = () => {
           <div className="text-muted-foreground">Loading counts...</div>
         )}
         
+        {/* Include logs checkbox */}
+        <div className="flex items-center gap-2 pt-2">
+          <Checkbox 
+            id="includeLogs" 
+            checked={includeLogs} 
+            onCheckedChange={(checked) => setIncludeLogs(checked === true)}
+          />
+          <label htmlFor="includeLogs" className="text-xs text-muted-foreground cursor-pointer">
+            כולל מחיקת cycle_logs (היסטוריה)
+          </label>
+        </div>
+        
         {/* Actions */}
         <div className="flex gap-2 pt-2 flex-wrap">
           <Button 
@@ -183,18 +242,28 @@ export const SyncDebugPanel: React.FC = () => {
           </Button>
           <Button 
             size="sm" 
-            variant="destructive" 
-            onClick={handleHardReset} 
-            disabled={resetting || !workspaceId}
+            variant="secondary" 
+            onClick={handleLocalReset} 
+            disabled={resetting || purging || !workspaceId}
           >
-            <Trash2 className="w-3 h-3 ml-1" />
-            {resetting ? 'מאפס...' : 'Hard Reset (FULL)'}
+            <HardDrive className="w-3 h-3 ml-1" />
+            {resetting ? 'מאפס...' : 'Reset Local Only'}
+          </Button>
+          <Button 
+            size="sm" 
+            variant="destructive" 
+            onClick={handlePurgeAndReplan} 
+            disabled={resetting || purging || !workspaceId}
+          >
+            <CloudOff className="w-3 h-3 ml-1" />
+            {purging ? 'מוחק...' : 'Purge Cloud + Replan'}
           </Button>
         </div>
         
         {/* Help text */}
-        <div className="text-[10px] text-muted-foreground mt-2">
-          Hard Reset: מנקה cache מקומי → טוען מהענן (overwrite) → מחשב plan מחדש
+        <div className="text-[10px] text-muted-foreground mt-2 space-y-1">
+          <div><strong>Reset Local:</strong> מנקה localStorage → טוען מהענן (ללא שינוי בענן)</div>
+          <div><strong>Purge Cloud + Replan:</strong> מוחק cycles מהענן → מנקה local → יוצר plan חדש מאפס</div>
         </div>
       </CardContent>
     </Card>

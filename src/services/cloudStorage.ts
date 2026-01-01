@@ -798,6 +798,103 @@ export const deletePlannedCycles = async (workspaceId: string, projectId?: strin
   return true;
 };
 
+/**
+ * Purge all planned cycles (and optionally cycle_logs) from cloud for a workspace.
+ * This is a destructive operation intended for "clean slate" scenarios.
+ */
+export const purgeCloudCycles = async (
+  workspaceId: string, 
+  options: { includeLogs?: boolean; onlyPlannedStatus?: boolean } = {}
+): Promise<{ cyclesDeleted: number; logsDeleted: number; success: boolean }> => {
+  console.log('[CloudStorage] Purging cloud cycles for workspace:', workspaceId, options);
+  
+  let cyclesDeleted = 0;
+  let logsDeleted = 0;
+  
+  try {
+    // Delete planned_cycles
+    let cyclesQuery = supabase.from('planned_cycles').delete().eq('workspace_id', workspaceId);
+    
+    // Optionally only delete 'scheduled'/'planned' status cycles (keep completed/failed)
+    if (options.onlyPlannedStatus) {
+      cyclesQuery = cyclesQuery.in('status', ['scheduled', 'planned']);
+    }
+    
+    // Get count before delete
+    const { count: cycleCount } = await supabase
+      .from('planned_cycles')
+      .select('*', { count: 'exact', head: true })
+      .eq('workspace_id', workspaceId);
+    
+    const { error: cyclesErr } = await cyclesQuery;
+    
+    if (cyclesErr) {
+      console.error('[CloudStorage] Error purging cycles:', cyclesErr);
+      return { cyclesDeleted: 0, logsDeleted: 0, success: false };
+    }
+    
+    cyclesDeleted = cycleCount || 0;
+    console.log(`[CloudStorage] Deleted ${cyclesDeleted} planned cycles`);
+    
+    // Optionally delete cycle_logs
+    if (options.includeLogs) {
+      const { count: logCount } = await supabase
+        .from('cycle_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('workspace_id', workspaceId);
+      
+      const { error: logsErr } = await supabase
+        .from('cycle_logs')
+        .delete()
+        .eq('workspace_id', workspaceId);
+      
+      if (logsErr) {
+        console.error('[CloudStorage] Error purging logs:', logsErr);
+      } else {
+        logsDeleted = logCount || 0;
+        console.log(`[CloudStorage] Deleted ${logsDeleted} cycle logs`);
+      }
+    }
+    
+    return { cyclesDeleted, logsDeleted, success: true };
+  } catch (error) {
+    console.error('[CloudStorage] Purge error:', error);
+    return { cyclesDeleted: 0, logsDeleted: 0, success: false };
+  }
+};
+
+/**
+ * Delete planned cycles by date range (for Replace-on-Replan behavior)
+ */
+export const deleteCloudCyclesByDateRange = async (
+  workspaceId: string,
+  fromDate: string, // YYYY-MM-DD
+  toDate?: string   // YYYY-MM-DD, optional
+): Promise<number> => {
+  console.log(`[CloudStorage] Deleting cloud cycles from ${fromDate} to ${toDate || 'end'}`);
+  
+  let query = supabase
+    .from('planned_cycles')
+    .delete()
+    .eq('workspace_id', workspaceId)
+    .gte('scheduled_date', fromDate)
+    .in('status', ['scheduled', 'planned']); // Only delete non-completed
+  
+  if (toDate) {
+    query = query.lte('scheduled_date', toDate);
+  }
+  
+  const { error, count } = await query;
+  
+  if (error) {
+    console.error('[CloudStorage] Error deleting cycles by date range:', error);
+    return 0;
+  }
+  
+  console.log(`[CloudStorage] Deleted ${count || 0} cycles in date range`);
+  return count || 0;
+};
+
 // ============= CYCLE LOGS =============
 
 export const getCycleLogs = async (workspaceId: string): Promise<DbCycleLog[]> => {

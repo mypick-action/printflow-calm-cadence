@@ -14,7 +14,7 @@ import {
 import { generatePlan, BlockingIssue, PlanningWarning } from './planningEngine';
 import { addPlanningLogEntry } from './planningLogger';
 import { pdebug } from './planningDebug';
-import { upsertPlannedCycleByLegacyId } from './cloudStorage';
+import { upsertPlannedCycleByLegacyId, deleteCloudCyclesByDateRange } from './cloudStorage';
 import { supabase } from '@/integrations/supabase/client';
 import { formatDateStringLocal } from './dateUtils';
 
@@ -151,8 +151,8 @@ export const recalculatePlan = (
   // Save the updated cycles to localStorage
   setItem(KEYS.PLANNED_CYCLES, newCycles);
 
-  // Sync cycles to cloud (async, non-blocking)
-  syncCyclesToCloud(newCycles).catch(err => {
+  // Sync cycles to cloud (async, non-blocking) - pass startDate for REPLACE behavior
+  syncCyclesToCloud(newCycles, startDate).catch(err => {
     console.error('[planningRecalculator] Failed to sync cycles to cloud:', err);
   });
 
@@ -227,10 +227,12 @@ export const triggerPlanningRecalculation = (reason: string): void => {
 };
 
 /**
- * Sync planned cycles to cloud storage
- * Maps local format to cloud format and upserts by legacy_id
+ * Sync planned cycles to cloud storage with REPLACE behavior.
+ * 1. Deletes existing planned/scheduled cycles for the date range
+ * 2. Upserts the new cycles
+ * This ensures Replan = Replace, not Append.
  */
-async function syncCyclesToCloud(cycles: PlannedCycle[]): Promise<void> {
+async function syncCyclesToCloud(cycles: PlannedCycle[], startDate?: Date): Promise<void> {
   // Get workspace ID from Supabase profile
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -250,6 +252,15 @@ async function syncCyclesToCloud(cycles: PlannedCycle[]): Promise<void> {
     return;
   }
   
+  // STEP 1: DELETE old planned/scheduled cycles from the planning range
+  // This prevents Append behavior - ensures Replace
+  const fromDate = startDate 
+    ? formatDateStringLocal(startDate)
+    : formatDateStringLocal(new Date());
+  
+  const deletedCount = await deleteCloudCyclesByDateRange(workspaceId, fromDate);
+  console.log(`[planningRecalculator] Deleted ${deletedCount} old cloud cycles from ${fromDate}`);
+  
   // Get projects from localStorage to map projectId → UUID
   const projectsRaw = localStorage.getItem(KEYS.PROJECTS);
   const projects = projectsRaw ? JSON.parse(projectsRaw) : [];
@@ -260,7 +271,7 @@ async function syncCyclesToCloud(cycles: PlannedCycle[]): Promise<void> {
     }
   }
   
-  // Only sync 'planned' cycles (not completed/failed which should already be synced)
+  // STEP 2: Sync 'planned' cycles (not completed/failed which should already be synced)
   const plannedCycles = cycles.filter(c => c.status === 'planned');
   console.log(`[planningRecalculator] Syncing ${plannedCycles.length} planned cycles to cloud`);
   
@@ -299,5 +310,5 @@ async function syncCyclesToCloud(cycles: PlannedCycle[]): Promise<void> {
     }
   }
   
-  console.log(`[planningRecalculator] Cloud sync complete: ${synced} synced, ${errors} errors`);
+  console.log(`[planningRecalculator] Cloud sync complete: ${synced} synced, ${errors} errors (deleted ${deletedCount} old)`);
 }
