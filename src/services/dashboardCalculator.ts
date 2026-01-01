@@ -240,6 +240,15 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
   }
   
   console.log('[DashboardCalculator] Cycles matching today + active status:', todayCycles.length);
+  
+  // DEBUG: Log printerId distribution to detect grouping issues
+  const printerIdDistribution: Record<string, number> = {};
+  todayCycles.forEach(c => {
+    const key = c.printerId || 'NULL_PRINTER_ID';
+    printerIdDistribution[key] = (printerIdDistribution[key] || 0) + 1;
+  });
+  console.log('[DashboardCalculator] PrinterId distribution in todayCycles:', printerIdDistribution);
+  console.log('[DashboardCalculator] Active printers:', printers.map(p => ({ id: p.id, name: p.name })));
   console.log('[DashboardCalculator] === END ANALYSIS ===');
   
   // Build printer plans
@@ -247,6 +256,9 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     const printerCycles = todayCycles
       .filter(c => c.printerId === printer.id)
       .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+    
+    // DEBUG: Log grouping per printer
+    console.log(`[DashboardCalculator] Printer "${printer.name}" (${printer.id}): ${printerCycles.length} cycles assigned`);
     
     const dashboardCycles: DashboardCycle[] = printerCycles.map(cycle => {
       const project = allProjects.find(p => p.id === cycle.projectId);
