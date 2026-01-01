@@ -198,8 +198,8 @@ export const PrinterActionsModal: React.FC<PrinterActionsModalProps> = ({
     // Always close this modal first
     onOpenChange(false);
     
-    if (isInProgress) {
-      // If printer is busy, open manual print modal with printer pre-selected
+    // If there's any current cycle (planned or in_progress), open manual print modal
+    if (currentCycle) {
       if (onOpenManualPrint) {
         // Small delay to let this modal close first
         setTimeout(() => {
@@ -207,7 +207,7 @@ export const PrinterActionsModal: React.FC<PrinterActionsModalProps> = ({
         }, 100);
       }
     } else {
-      // If printer is idle, auto-generate optimal job and start it
+      // If printer is completely idle (no cycles), auto-generate optimal job
       const projects = getActiveProjects();
       const products = getProducts();
       const printerObj = getPrinter(printerId);
