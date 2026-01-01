@@ -245,11 +245,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   };
 
   const renderPrinterCard = (plan: PrinterDayPlan) => {
-    const hasCycles = plan.cycles.length > 0;
-    const hasMultipleCycles = plan.cycles.length > 1;
+    // Dedupe cycles by id to prevent double-rendering from hydration race conditions
+    const uniqueCycles = plan.cycles.filter((cycle, index, arr) =>
+      arr.findIndex(c => c.id === cycle.id) === index
+    );
+    
+    const hasCycles = uniqueCycles.length > 0;
+    const hasMultipleCycles = uniqueCycles.length > 1;
     const isExpanded = expandedPrinters.has(plan.printer.id);
-    const firstCycle = plan.cycles[0];
-    const remainingCycles = plan.cycles.slice(1);
+    const firstCycle = uniqueCycles[0];
+    const remainingCycles = uniqueCycles.slice(1);
     
     return (
       <Card key={plan.printer.id} variant="elevated" className="overflow-hidden">
