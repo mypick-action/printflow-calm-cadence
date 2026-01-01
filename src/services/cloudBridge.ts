@@ -352,16 +352,28 @@ export async function hydrateLocalFromCloud(
     
     // Also hydrate planned cycles if requested
     if (opts?.includePlannedCycles) {
-      const cloudCycles = await getPlannedCycles(workspaceId);
+      // Use try-catch to detect fetch failures vs genuine empty results
+      let cloudCycles: Awaited<ReturnType<typeof getPlannedCycles>>;
+      let fetchSucceeded = false;
+      
+      try {
+        cloudCycles = await getPlannedCycles(workspaceId);
+        fetchSucceeded = true;
+        console.log('[CloudBridge] Cloud cycles fetch succeeded:', cloudCycles.length, 'cycles');
+      } catch (fetchError) {
+        console.error('[CloudBridge] Cloud cycles fetch FAILED:', fetchError);
+        cloudCycles = [];
+        fetchSucceeded = false;
+      }
       
       // Check existing local cycles BEFORE deciding to overwrite
       const existingCyclesRaw = localStorage.getItem(KEYS.PLANNED_CYCLES);
       const existingLocalCycles = existingCyclesRaw ? JSON.parse(existingCyclesRaw) : [];
       
-      console.log('[CloudBridge] Cycles hydration - cloud:', cloudCycles.length, 'local:', existingLocalCycles.length);
+      console.log('[CloudBridge] Cycles hydration - cloud:', cloudCycles.length, 'local:', existingLocalCycles.length, 'fetchSucceeded:', fetchSucceeded);
       
       // CLOUD IS SSOT - Always overwrite local with cloud data
-      // If cloud is empty, local should also be empty (no more "preserve local" logic)
+      // But ONLY if fetch succeeded - don't clear local on network errors!
       if (cloudCycles.length > 0) {
         // Cloud has cycles - proceed with hydration
         console.log('[CloudBridge] Cloud has cycles → overwriting localStorage');
@@ -396,14 +408,17 @@ export async function hydrateLocalFromCloud(
         localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
         console.log('[CloudBridge] OVERWRITE cycles to localStorage:', mappedCycles.length);
       } else {
-        // Cloud is empty - check if we should clear local
-        if (replanInProgress) {
+        // Cloud returned empty - but why?
+        if (!fetchSucceeded) {
+          // Fetch failed - DO NOT clear local!
+          console.warn('[CloudBridge] Cloud fetch failed → preserving local cycles (network error, not empty cloud)');
+        } else if (replanInProgress) {
           // Replan in progress - don't clear local cycles!
           // The sync hasn't completed yet, so cloud being empty is expected
           console.log('[CloudBridge] Cloud cycles empty but replanInProgress=true → preserving local cycles');
         } else if (existingLocalCycles.length > 0) {
-          // No replan in progress, cloud is truly SSOT and empty
-          console.log('[CloudBridge] Cloud cycles empty → clearing', existingLocalCycles.length, 'local cycles (cloud is SSOT)');
+          // Fetch succeeded, no replan, cloud is truly empty - clear local
+          console.log('[CloudBridge] Cloud cycles empty (fetch succeeded) → clearing', existingLocalCycles.length, 'local cycles (cloud is SSOT)');
           localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify([]));
         } else {
           console.log('[CloudBridge] Both cloud and local cycles are empty');
