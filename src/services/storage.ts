@@ -165,6 +165,10 @@ export interface PlannedCycle {
   actualStartTime?: string; // When the print actually started
   actualEndTime?: string; // When the print actually ended
   spoolStartGrams?: number; // Grams on spool when cycle started (for material tracking)
+  // Preset selection fields
+  presetId?: string; // Selected preset ID
+  presetName?: string; // Preset name for display
+  presetSelectionReason?: string; // Why this preset was chosen (for auto-selection)
 }
 
 // Load recommendation for operators

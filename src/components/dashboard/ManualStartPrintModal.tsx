@@ -1,7 +1,7 @@
 // ManualStartPrintModal - Allow users to start a manual print job
 // Creates a locked cycle that the planning engine will respect
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   Dialog,
@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Play, Printer, Package, Clock, AlertTriangle } from 'lucide-react';
+import { Play, Printer, Package, Clock, AlertTriangle, Layers } from 'lucide-react';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import {
   getActiveProjects,
@@ -31,6 +31,7 @@ import {
   getProject,
   getProduct,
   PlannedCycle,
+  PlatePreset,
   addManualCycle,
   getPlannedCycles,
   updatePrinter,
@@ -57,6 +58,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
   const { language } = useLanguage();
   const [selectedProjectId, setSelectedProjectId] = useState<string>(defaultProjectId || '');
   const [selectedPrinterId, setSelectedPrinterId] = useState<string>(defaultPrinterId || '');
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('');
   const [startTime, setStartTime] = useState<string>(format(new Date(), "yyyy-MM-dd'T'HH:mm"));
   const [estimatedHours, setEstimatedHours] = useState<string>('');
   const [unitsPlanned, setUnitsPlanned] = useState<string>('');
@@ -76,10 +78,29 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     return getProduct(selectedProject.productId);
   }, [selectedProject]);
 
-  // Get preset from product
-  const preset = selectedProduct?.platePresets?.[0];
-  const defaultHours = preset?.cycleHours || 2;
-  const defaultUnits = preset?.unitsPerPlate || 1;
+  // Get available presets for the selected product
+  const availablePresets = useMemo(() => {
+    return selectedProduct?.platePresets || [];
+  }, [selectedProduct]);
+
+  // Get selected preset (default to recommended or first)
+  const selectedPreset = useMemo((): PlatePreset | undefined => {
+    if (selectedPresetId && availablePresets.length > 0) {
+      return availablePresets.find(p => p.id === selectedPresetId);
+    }
+    // Default: recommended or first preset
+    return availablePresets.find(p => p.isRecommended) || availablePresets[0];
+  }, [selectedPresetId, availablePresets]);
+
+  // Reset preset when project changes
+  useEffect(() => {
+    setSelectedPresetId('');
+    setEstimatedHours('');
+    setUnitsPlanned('');
+  }, [selectedProjectId]);
+
+  const defaultHours = selectedPreset?.cycleHours || 2;
+  const defaultUnits = selectedPreset?.unitsPerPlate || 1;
   const gramsPerUnit = selectedProduct?.gramsPerUnit || 10;
 
   const printerIsBusy = useMemo(() => {
@@ -87,6 +108,11 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     const cycles = getPlannedCycles();
     return cycles.some(c => c.printerId === selectedPrinterId && c.status === 'in_progress');
   }, [selectedPrinterId, open]);
+
+  const handleProjectChange = (projectId: string) => {
+    setSelectedProjectId(projectId);
+    setSelectedPresetId(''); // Reset preset when project changes
+  };
 
   const handleSubmit = () => {
     if (!selectedProjectId || !selectedPrinterId || !selectedProject) return;
@@ -117,6 +143,10 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
       requiredMaterial: 'PLA',
       requiredGrams: units * gramsPerUnit,
       spoolStartGrams: spoolGramsNum,
+      // Preset selection fields
+      presetId: selectedPreset?.id,
+      presetName: selectedPreset?.name,
+      presetSelectionReason: 'manual_selection',
     };
 
     addManualCycle(newCycle);
@@ -134,6 +164,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     
     setSelectedProjectId(defaultProjectId || '');
     setSelectedPrinterId(defaultPrinterId || '');
+    setSelectedPresetId('');
     setStartTime(format(new Date(), "yyyy-MM-dd'T'HH:mm"));
     setEstimatedHours('');
     setUnitsPlanned('');
@@ -167,7 +198,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
               <Package className="w-4 h-4 text-muted-foreground" />
               {language === 'he' ? 'פרויקט' : 'Project'}
             </Label>
-            <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+          <Select value={selectedProjectId} onValueChange={handleProjectChange}>
               <SelectTrigger>
                 <SelectValue placeholder={language === 'he' ? 'בחר פרויקט' : 'Select project'} />
               </SelectTrigger>
@@ -186,6 +217,50 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
               </SelectContent>
             </Select>
           </div>
+
+          {/* Preset Selection - only show if multiple presets available */}
+          {availablePresets.length > 1 && (
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-muted-foreground" />
+                {language === 'he' ? 'פריסה' : 'Preset'}
+              </Label>
+              <Select value={selectedPresetId || selectedPreset?.id || ''} onValueChange={setSelectedPresetId}>
+                <SelectTrigger>
+                  <SelectValue placeholder={language === 'he' ? 'בחר פריסה' : 'Select preset'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {availablePresets.map(preset => (
+                    <SelectItem key={preset.id} value={preset.id}>
+                      <div className="flex items-center gap-2">
+                        <span>{preset.name}</span>
+                        <span className="text-muted-foreground text-xs">
+                          ({preset.unitsPerPlate} {language === 'he' ? 'יח׳' : 'units'} × {preset.cycleHours} {language === 'he' ? 'ש׳' : 'hrs'})
+                        </span>
+                        {preset.isRecommended && (
+                          <Badge variant="secondary" className="text-xs">
+                            {language === 'he' ? 'מומלץ' : 'Recommended'}
+                          </Badge>
+                        )}
+                        {preset.riskLevel === 'high' && (
+                          <Badge variant="destructive" className="text-xs">
+                            {language === 'he' ? 'סיכון גבוה' : 'High Risk'}
+                          </Badge>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedPreset && (
+                <p className="text-xs text-muted-foreground">
+                  {language === 'he' 
+                    ? `גרמים למחזור: ${selectedPreset.unitsPerPlate * gramsPerUnit}g`
+                    : `Grams per cycle: ${selectedPreset.unitsPerPlate * gramsPerUnit}g`}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Printer Selection */}
           <div className="space-y-2">

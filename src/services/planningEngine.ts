@@ -64,6 +64,10 @@ export interface ScheduledCycle {
   requiredColor: string;
   requiredGrams: number;
   suggestedSpoolIds?: string[];
+  // Preset selection fields
+  presetId?: string;
+  presetName?: string;
+  presetSelectionReason?: string;
 }
 
 export interface DayPlan {
@@ -189,7 +193,148 @@ const getAvailableFilamentForColor = (color: string, spools: Spool[]): number =>
   return getAvailableGramsByColor(color);
 };
 
-// ============= PROJECT PRIORITIZATION =============
+// ============= OPTIMAL PRESET SELECTION =============
+
+interface PresetSelectionResult {
+  preset: PlatePreset;
+  reason: string;
+  reasonHe: string;
+}
+
+/**
+ * Select the optimal preset for a cycle based on constraints
+ * Scoring considers: units per plate, cycle time, risk level, recommended status
+ */
+export const selectOptimalPreset = (
+  product: Product,
+  remainingUnits: number,
+  availableHours: number,
+  availableGrams: number,
+  isNightSlot: boolean,
+  preferredPresetId?: string
+): PresetSelectionResult | null => {
+  const presets = product.platePresets;
+  if (!presets || presets.length === 0) return null;
+  
+  // If only one preset, use it
+  if (presets.length === 1) {
+    return {
+      preset: presets[0],
+      reason: 'Only available preset',
+      reasonHe: 'פריסה יחידה זמינה',
+    };
+  }
+  
+  // If preferred preset is set and valid, use it
+  if (preferredPresetId) {
+    const preferred = presets.find(p => p.id === preferredPresetId);
+    if (preferred) {
+      return {
+        preset: preferred,
+        reason: 'User preferred preset',
+        reasonHe: 'פריסה מועדפת ע״י המשתמש',
+      };
+    }
+  }
+  
+  // Filter presets by constraints
+  const validPresets = presets.filter(p => {
+    // Night slot: only allow if preset is marked as safe for night
+    if (isNightSlot && !p.allowedForNightCycle) return false;
+    
+    // Check if cycle fits in available time
+    if (p.cycleHours > availableHours) return false;
+    
+    // Check if we have enough material for one cycle
+    const gramsNeeded = p.unitsPerPlate * product.gramsPerUnit;
+    if (gramsNeeded > availableGrams) return false;
+    
+    return true;
+  });
+  
+  if (validPresets.length === 0) {
+    // No valid presets - return the recommended or first preset with reason
+    const fallback = presets.find(p => p.isRecommended) || presets[0];
+    return {
+      preset: fallback,
+      reason: 'No preset fits constraints, using default',
+      reasonHe: 'אין פריסה מתאימה לאילוצים, שימוש בברירת מחדל',
+    };
+  }
+  
+  // Score each valid preset
+  const scored = validPresets.map(p => {
+    let score = 0;
+    const gramsNeeded = p.unitsPerPlate * product.gramsPerUnit;
+    
+    // More units per plate = better efficiency (40 points max)
+    const maxUnits = Math.max(...validPresets.map(pr => pr.unitsPerPlate));
+    score += (p.unitsPerPlate / maxUnits) * 40;
+    
+    // Shorter cycle = faster turnaround (20 points max)
+    const maxHours = Math.max(...validPresets.map(pr => pr.cycleHours));
+    score += (1 - p.cycleHours / maxHours) * 20;
+    
+    // Risk level bonus (20 points max)
+    if (p.riskLevel === 'low') score += 20;
+    else if (p.riskLevel === 'medium') score += 10;
+    // high risk = 0 points
+    
+    // Recommended bonus (20 points)
+    if (p.isRecommended) score += 20;
+    
+    // Special adjustments
+    // If remaining units are low, prefer smaller presets to avoid waste
+    if (remainingUnits <= p.unitsPerPlate) {
+      // Penalize presets with too many units (would waste capacity)
+      const wastedUnits = p.unitsPerPlate - remainingUnits;
+      score -= wastedUnits * 2;
+    }
+    
+    // If remaining hours are low, prefer faster presets
+    if (availableHours < 4 && p.cycleHours > availableHours * 0.8) {
+      score -= 10;
+    }
+    
+    // Night cycle: prefer low risk
+    if (isNightSlot && p.riskLevel === 'low') {
+      score += 10;
+    }
+    
+    return { preset: p, score };
+  });
+  
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+  
+  const best = scored[0];
+  
+  // Generate reason based on why this preset was chosen
+  let reason = 'Best overall score';
+  let reasonHe = 'הציון הטוב ביותר';
+  
+  if (best.preset.isRecommended) {
+    reason = 'Recommended preset with optimal balance';
+    reasonHe = 'פריסה מומלצת עם איזון אופטימלי';
+  } else if (remainingUnits <= best.preset.unitsPerPlate) {
+    reason = 'Best fit for remaining units';
+    reasonHe = 'התאמה מיטבית ליחידות הנותרות';
+  } else if (isNightSlot && best.preset.riskLevel === 'low') {
+    reason = 'Safe preset for night operation';
+    reasonHe = 'פריסה בטוחה לפעילות לילה';
+  } else if (best.preset.unitsPerPlate === Math.max(...validPresets.map(p => p.unitsPerPlate))) {
+    reason = 'Maximum units per cycle';
+    reasonHe = 'מקסימום יחידות למחזור';
+  }
+  
+  return {
+    preset: best.preset,
+    reason,
+    reasonHe,
+  };
+};
+
+
 
 const prioritizeProjects = (projects: Project[], products: Product[], fromDate: Date, existingCycles: PlannedCycle[] = []): ProjectPlanningState[] => {
   const projectStates: ProjectPlanningState[] = [];
@@ -515,8 +660,33 @@ const scheduleCyclesForDay = (
         for (const state of workingStates) {
           if (state.remainingUnits <= 0) continue;
           
+          // ============= DYNAMIC PRESET SELECTION =============
+          // Calculate available time in slot
+          const availableSlotHours = (slot.endOfDayTime.getTime() - slot.currentTime.getTime()) / (1000 * 60 * 60);
+          
+          // Check if it's a night slot (after end of day)
+          const isNightSlot = slot.currentTime >= slot.endOfDayTime;
+          
+          // Get available material for this color
+          const colorKey = normalizeColor(state.project.color);
+          const availableMaterial = workingMaterial.get(colorKey) || 0;
+          
+          // Select optimal preset dynamically
+          const presetSelection = selectOptimalPreset(
+            state.product,
+            state.remainingUnits,
+            availableSlotHours > 0 ? availableSlotHours : 24, // If night slot, use full day
+            availableMaterial,
+            isNightSlot,
+            state.project.preferredPresetId
+          );
+          
+          // Use dynamically selected preset or fall back to state.preset
+          const activePreset = presetSelection?.preset || state.preset;
+          const presetReason = presetSelection?.reason || 'Default preset';
+          
           // Use custom cycle hours if set (for recovery projects), otherwise use preset default
-          const cycleHours = state.project.customCycleHours ?? state.preset.cycleHours;
+          const cycleHours = state.project.customCycleHours ?? activePreset.cycleHours;
           const transitionMinutes = settings.transitionMinutes;
           const cycleEndTime = addHours(slot.currentTime, cycleHours);
           
@@ -531,17 +701,15 @@ const scheduleCyclesForDay = (
           const canStartAtNight = 
             settings.afterHoursBehavior === 'FULL_AUTOMATION' &&
             printer?.canStartNewCyclesAfterHours === true &&
-            state.preset.allowedForNightCycle !== false; // Default true if not explicitly set to false
+            activePreset.allowedForNightCycle !== false; // Default true if not explicitly set to false
           
           if (slot.currentTime >= slot.endOfDayTime && !canStartAtNight) continue;
           
-          // Calculate material needs
-          const gramsNeeded = getGramsPerCycle(state.product, state.preset);
-          const colorKey = normalizeColor(state.project.color);
-          const availableMaterial = workingMaterial.get(colorKey) || 0;
+          // Calculate material needs using the active preset
+          const gramsNeeded = getGramsPerCycle(state.product, activePreset);
           
           // Determine units for this cycle
-          const unitsThisCycle = Math.min(state.preset.unitsPerPlate, state.remainingUnits);
+          const unitsThisCycle = Math.min(activePreset.unitsPerPlate, state.remainingUnits);
           const gramsThisCycle = unitsThisCycle * state.product.gramsPerUnit;
           
           // ============= CRITICAL: SPOOL-LIMITED SCHEDULING (PRD RULE) =============
@@ -657,6 +825,10 @@ const scheduleCyclesForDay = (
             requiredColor: state.project.color,
             requiredGrams: gramsThisCycle,
             suggestedSpoolIds: suggestedSpoolIds.length > 0 ? suggestedSpoolIds : undefined,
+            // Preset selection fields
+            presetId: activePreset.id,
+            presetName: activePreset.name,
+            presetSelectionReason: presetReason,
           };
           
           // Update slot
@@ -955,6 +1127,10 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
           requiredColor: cycle.requiredColor,
           requiredGrams: cycle.requiredGrams,
           suggestedSpoolId: cycle.suggestedSpoolIds?.[0],
+          // Preset selection fields
+          presetId: cycle.presetId,
+          presetName: cycle.presetName,
+          presetSelectionReason: cycle.presetSelectionReason,
         });
       }
     }
