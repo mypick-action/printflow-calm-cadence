@@ -255,9 +255,13 @@ export const ProjectsPage: React.FC = () => {
     quantityTarget: 100,
     dueDate: '',
     color: predefinedColors[0], // Default to first predefined color
+    material: 'PLA' as string, // Default material type
     manualUrgency: null as ProjectPriority | null,
     includeInPlanning: true, // Default: include in planning
   });
+  
+  // Available material types
+  const materialTypes = ['PLA', 'PETG', 'ABS', 'TPU', 'ASA', 'PC', 'Nylon'];
 
   // Get earliest planned print date for a project
   const getPlannedPrintDate = (projectId: string): string | null => {
@@ -563,6 +567,7 @@ export const ProjectsPage: React.FC = () => {
       quantityTarget: 100,
       dueDate: '',
       color: predefinedColors[0], // Reset to first predefined color
+      material: 'PLA',
       manualUrgency: null,
       includeInPlanning: true,
     });
@@ -867,6 +872,26 @@ export const ProjectsPage: React.FC = () => {
                     className="mt-2"
                   />
                 )}
+              </div>
+              
+              {/* Material Type Selection */}
+              <div className="space-y-2">
+                <Label>{language === 'he' ? 'סוג חומר' : 'Material Type'}</Label>
+                <Select 
+                  value={newProject.material} 
+                  onValueChange={(value) => setNewProject({ ...newProject, material: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-background border shadow-lg">
+                    {materialTypes.map((material) => (
+                      <SelectItem key={material} value={material}>
+                        {material}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               
               {/* Quantity */}
