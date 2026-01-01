@@ -42,7 +42,34 @@ import type { DbPrinter, DbFactorySettings, DbProject as DbProjectType } from '@
 const BRIDGE_KEYS = {
   lastHydratedAt: 'printflow_cloud_last_hydrated_at',
   lastHydratedWorkspace: 'printflow_cloud_last_hydrated_workspace',
+  cachedWorkspaceId: 'printflow_cached_workspace_id',
 } as const;
+
+// ============= CACHED WORKSPACE ID =============
+// Stored after initial auth/hydration to avoid repeated profile lookups
+
+/**
+ * Get cached workspace ID (set during auth/hydration)
+ * Returns null if not cached - caller should fallback to profile lookup
+ */
+export function getCachedWorkspaceId(): string | null {
+  return localStorage.getItem(BRIDGE_KEYS.cachedWorkspaceId);
+}
+
+/**
+ * Set cached workspace ID (called during auth/hydration)
+ */
+export function setCachedWorkspaceId(workspaceId: string): void {
+  localStorage.setItem(BRIDGE_KEYS.cachedWorkspaceId, workspaceId);
+  console.log('[CloudBridge] Cached workspaceId:', workspaceId);
+}
+
+/**
+ * Clear cached workspace ID (called on logout)
+ */
+export function clearCachedWorkspaceId(): void {
+  localStorage.removeItem(BRIDGE_KEYS.cachedWorkspaceId);
+}
 
 type AnyObj = Record<string, unknown>;
 
@@ -206,6 +233,9 @@ export async function hydrateLocalFromCloud(
   }
 
   console.log('[CloudBridge] Starting hydration for workspace:', workspaceId);
+  
+  // Cache workspace ID for operational sync (avoids profile lookups)
+  setCachedWorkspaceId(workspaceId);
 
   // Get existing local data to preserve fields not in cloud
   const existingPrinters = safeJsonParse<Printer[]>(localStorage.getItem(KEYS.PRINTERS));

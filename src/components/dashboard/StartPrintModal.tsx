@@ -22,14 +22,15 @@ import {
   updatePlannedCycle,
 } from '@/services/storage';
 import { scheduleAutoReplan } from '@/services/autoReplan';
-import { updatePlannedCycleCloud } from '@/services/cloudStorage';
-import { supabase } from '@/integrations/supabase/client';
+import { syncCycleOperation } from '@/services/cycleOperationSync';
+import { toast } from '@/hooks/use-toast';
 
 interface StartPrintModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   cycle: {
     id: string;
+    projectId: string;
     projectName: string;
     productName: string;
     color: string;
@@ -144,17 +145,24 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
       endTime: endTimeIso,
     });
 
-    // IMMEDIATELY sync cycle status to cloud (don't wait for debounced replan)
-    try {
-      await updatePlannedCycleCloud(cycle.id, {
-        status: 'in_progress',
-        start_time: nowIso,
-        end_time: endTimeIso,
-      });
+    // IMMEDIATELY sync cycle status to cloud via unified service
+    const syncResult = await syncCycleOperation('start_print', {
+      cycleId: cycle.id,
+      projectId: cycle.projectId || '', // Will be resolved in service
+      printerId,
+      status: 'in_progress',
+      startTime: nowIso,
+      endTime: endTimeIso,
+    });
+    
+    if (syncResult.cloudSynced) {
       console.log('[StartPrintModal] Cycle synced to cloud');
-    } catch (err) {
-      console.error('[StartPrintModal] Failed to sync cycle to cloud:', err);
-      // Continue anyway - local state is saved, will sync on next replan
+    } else if (syncResult.error) {
+      toast({
+        title: 'סנכרון לענן נכשל',
+        description: syncResult.error,
+        variant: 'destructive',
+      });
     }
 
     // Schedule replan for planning updates
