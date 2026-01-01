@@ -1237,6 +1237,32 @@ export const markPrinterCyclesAsFailed = (printerId: string): number => {
   return count;
 };
 
+// Clean up orphaned cycles (cycles with projectId that doesn't exist)
+export const cleanupOrphanedCycles = (): { removed: number; orphanedProjectIds: string[] } => {
+  const cycles = getPlannedCycles();
+  const projects = getProjectsLocal();
+  const validProjectIds = new Set(projects.map(p => p.id));
+  
+  const orphanedProjectIds: string[] = [];
+  const validCycles = cycles.filter(c => {
+    if (validProjectIds.has(c.projectId)) {
+      return true;
+    }
+    if (!orphanedProjectIds.includes(c.projectId)) {
+      orphanedProjectIds.push(c.projectId);
+    }
+    return false;
+  });
+  
+  const removed = cycles.length - validCycles.length;
+  if (removed > 0) {
+    console.log(`[storage] Cleaned up ${removed} orphaned cycles with invalid project IDs:`, orphanedProjectIds);
+    setItem(KEYS.PLANNED_CYCLES, validCycles);
+  }
+  
+  return { removed, orphanedProjectIds };
+};
+
 // ============= CYCLE LOGS =============
 
 export const getCycleLogs = (): CycleLog[] => {
