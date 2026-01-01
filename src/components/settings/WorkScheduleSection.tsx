@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +12,8 @@ import {
   Save,
   Clock,
   RefreshCw,
-  Info
+  Info,
+  Loader2
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { 
@@ -22,6 +24,7 @@ import {
   DaySchedule,
   getDefaultWeeklySchedule
 } from '@/services/storage';
+import { updateFactorySettings as updateCloudFactorySettings } from '@/services/cloudStorage';
 import { RecalculateModal } from '@/components/planning/RecalculateModal';
 
 type DayKey = keyof WeeklySchedule;
@@ -44,10 +47,12 @@ const DAYS: DayConfig[] = [
 
 export const WorkScheduleSection: React.FC = () => {
   const { language } = useLanguage();
+  const { workspaceId } = useAuth();
   const [schedule, setSchedule] = useState<WeeklySchedule>(getDefaultWeeklySchedule());
   const [hasChanges, setHasChanges] = useState(false);
   const [showRecalculateModal, setShowRecalculateModal] = useState(false);
   const [showRecalculateButton, setShowRecalculateButton] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     const settings = getFactorySettings();
@@ -64,7 +69,7 @@ export const WorkScheduleSection: React.FC = () => {
     setHasChanges(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // Validate times
     for (const day of DAYS) {
       const daySchedule = schedule[day.key];
@@ -92,21 +97,59 @@ export const WorkScheduleSection: React.FC = () => {
       }
     }
 
-    const settings = getFactorySettings();
-    if (settings) {
-      saveFactorySettings({
-        ...settings,
-        weeklySchedule: schedule
-      });
+    setIsSaving(true);
+
+    try {
+      // Save to localStorage first
+      const settings = getFactorySettings();
+      if (settings) {
+        saveFactorySettings({
+          ...settings,
+          weeklySchedule: schedule
+        });
+      }
+
+      // Save to Cloud (Supabase)
+      if (workspaceId) {
+        console.log('[WorkSchedule] Saving to cloud, payload:', schedule);
+        const cloudResult = await updateCloudFactorySettings(workspaceId, {
+          weekly_work_hours: schedule as unknown as Record<string, unknown>
+        });
+        
+        if (!cloudResult) {
+          toast({
+            title: language === 'he' ? 'שגיאת שמירה' : 'Save Error',
+            description: language === 'he'
+              ? 'ההגדרות נשמרו מקומית אך נכשלה השמירה לענן. נסה שוב.'
+              : 'Settings saved locally but cloud sync failed. Please try again.',
+            variant: 'destructive',
+          });
+          setIsSaving(false);
+          return;
+        }
+        console.log('[WorkSchedule] Cloud save successful:', cloudResult);
+      }
+
       markCapacityChanged(language === 'he' ? 'שעות עבודה עודכנו' : 'Work schedule updated');
       setHasChanges(false);
       setShowRecalculateButton(true);
       toast({
         title: language === 'he' ? 'נשמר בהצלחה' : 'Saved successfully',
         description: language === 'he'
-          ? 'לוח שעות העבודה עודכן'
-          : 'Work schedule has been updated',
+          ? 'לוח שעות העבודה עודכן בענן ומקומית'
+          : 'Work schedule has been updated in cloud and locally',
       });
+    } catch (error) {
+      console.error('[WorkSchedule] Save error:', error);
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: language === 'he'
+          ? 'שגיאה בשמירת ההגדרות'
+          : 'Error saving settings',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -194,10 +237,14 @@ export const WorkScheduleSection: React.FC = () => {
           <div className="flex flex-col sm:flex-row gap-2 pt-2">
             <Button
               onClick={handleSave}
-              disabled={!hasChanges}
+              disabled={!hasChanges || isSaving}
               className="flex-1 gap-2"
             >
-              <Save className="w-4 h-4" />
+              {isSaving ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
               {language === 'he' ? 'שמור שינויים' : 'Save Changes'}
             </Button>
 
