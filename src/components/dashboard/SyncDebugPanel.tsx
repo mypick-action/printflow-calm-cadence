@@ -132,10 +132,28 @@ export const SyncDebugPanel: React.FC = () => {
         includeProducts: false
       });
       
-      // Step 4: Generate fresh plan
+      // Step 4: Generate fresh plan - AWAIT the result
       console.log('[SyncDebugPanel] Step 4: Generating fresh plan...');
-      const result = recalculatePlan('whole_week', true, 'purge_cloud_replan');
+      const result = await recalculatePlan('whole_week', true, 'purge_cloud_replan');
       console.log('[SyncDebugPanel] Replan result:', result);
+      
+      // Step 5: VERIFY cloud sync succeeded before reload
+      const cloudCycles = await cloudStorage.getPlannedCycles(workspaceId);
+      console.log('[SyncDebugPanel] Cloud cycles after sync:', cloudCycles.length);
+      
+      if (result.cyclesModified > 0 && cloudCycles.length === 0) {
+        // Cycles were generated but cloud sync failed!
+        setError('אזהרה: מחזורים נוצרו אבל לא הועלו לענן. נסה שוב.');
+        console.error('[SyncDebugPanel] CRITICAL: Cycles generated but cloud sync failed!');
+        setPurging(false);
+        return;
+      }
+      
+      if (!result.cloudSyncSuccess && result.cloudSyncError) {
+        setError(`שגיאת סנכרון: ${result.cloudSyncError}`);
+        setPurging(false);
+        return;
+      }
       
       console.log('[SyncDebugPanel] === PURGE + REPLAN COMPLETE - RELOADING ===');
       window.location.reload();

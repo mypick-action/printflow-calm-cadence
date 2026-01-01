@@ -134,7 +134,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
     }
   };
 
-  const handleColorChange = (newColor: string) => {
+  const handleColorChange = async (newColor: string) => {
     if (!project || newColor === project.color) return;
     
     const updated = updateProject(project.id, { color: newColor });
@@ -144,7 +144,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
       setColorPopoverOpen(false);
       
       // Run replan and check for issues
-      const result = runReplanNow('project_color_changed');
+      const result = await runReplanNow('project_color_changed');
       
       // Check for blocking issues related to material
       const criticalIssues = result.blockingIssues.filter(i => 
@@ -186,7 +186,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
     }
   };
 
-  const handleQuantityChange = () => {
+  const handleQuantityChange = async () => {
     const qty = Number(newQuantity.trim());
     if (!Number.isInteger(qty) || qty < 1 || !project) return;
     
@@ -209,8 +209,8 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
       setProject(updated);
       setQuantityPopoverOpen(false);
       
-      // Run replan and check for issues (synchronous)
-      const result = runReplanNow('project_quantity_updated');
+      // Run replan and check for issues
+      const result = await runReplanNow('project_quantity_updated');
       
       // Check for blocking issues
       const criticalIssues = result.blockingIssues.filter(i => 

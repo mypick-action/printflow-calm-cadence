@@ -15,6 +15,7 @@ import { generatePlan, BlockingIssue, PlanningWarning } from './planningEngine';
 import { addPlanningLogEntry } from './planningLogger';
 import { pdebug } from './planningDebug';
 import { upsertPlannedCycleByLegacyId, deleteCloudCyclesByDateRange } from './cloudStorage';
+import { setReplanInProgress } from './cloudBridge';
 import { supabase } from '@/integrations/supabase/client';
 import { formatDateStringLocal } from './dateUtils';
 
@@ -35,13 +36,29 @@ export interface RecalculateResult {
   // Full issues for UI display
   blockingIssues: BlockingIssue[];
   warnings: PlanningWarning[];
+  // Cloud sync status
+  cloudSyncSuccess?: boolean;
+  cloudSyncError?: string;
 }
 
-export const recalculatePlan = (
+export interface SyncResult {
+  success: boolean;
+  synced: number;
+  errors: number;
+  skipped: number;
+  error?: string;
+}
+
+/**
+ * Recalculate the production plan.
+ * IMPORTANT: This is now async and WAITS for cloud sync to complete before returning.
+ * This prevents race conditions where reload happens before cloud sync finishes.
+ */
+export const recalculatePlan = async (
   scope: RecalculateScope,
   lockStarted: boolean = true,
   reason: string = 'manual_replan'
-): RecalculateResult => {
+): Promise<RecalculateResult> => {
   const startTime = Date.now();
   const cycles = getPlannedCycles();
   const settings = getFactorySettings();
@@ -148,13 +165,41 @@ export const recalculatePlan = (
   // Log before saving for debugging
   console.log(`[planningRecalculator] Saving ${newCycles.length} cycles to origin: ${window.location.origin}`);
 
-  // Save the updated cycles to localStorage
+  // Save the updated cycles to localStorage FIRST (always succeeds)
   setItem(KEYS.PLANNED_CYCLES, newCycles);
+  console.log(`[planningRecalculator] ✓ Saved ${newCycles.length} cycles to localStorage`);
 
-  // Sync cycles to cloud (async, non-blocking) - pass startDate for REPLACE behavior
-  syncCyclesToCloud(newCycles, startDate).catch(err => {
-    console.error('[planningRecalculator] Failed to sync cycles to cloud:', err);
-  });
+  // CRITICAL: Sync cycles to cloud and WAIT for completion
+  // This prevents race conditions where reload happens before cloud sync finishes
+  let cloudSyncSuccess = false;
+  let cloudSyncError: string | undefined;
+  
+  // Set flag to prevent hydration from clearing cycles during sync
+  setReplanInProgress(true);
+  
+  try {
+    const syncResult = await syncCyclesToCloud(newCycles, startDate);
+    cloudSyncSuccess = syncResult.success;
+    cloudSyncError = syncResult.error;
+    cloudSyncSuccess = syncResult.success;
+    cloudSyncError = syncResult.error;
+    
+    if (cloudSyncSuccess) {
+      console.log(`[planningRecalculator] ✓ Cloud sync completed: ${syncResult.synced} synced`);
+      // Dispatch success event
+      window.dispatchEvent(new CustomEvent('sync-cycles-complete', {
+        detail: { synced: syncResult.synced, skipped: syncResult.skipped }
+      }));
+    } else {
+      console.error('[planningRecalculator] ✗ Cloud sync failed:', cloudSyncError);
+    }
+  } catch (err) {
+    console.error('[planningRecalculator] ✗ Cloud sync exception:', err);
+    cloudSyncError = err instanceof Error ? err.message : 'Unknown sync error';
+  } finally {
+    // Always reset the flag after sync attempt
+    setReplanInProgress(false);
+  }
 
   // Update planning meta
   savePlanningMeta({
@@ -202,6 +247,8 @@ export const recalculatePlan = (
     warningsCount: planResult.warnings.length,
     blockingIssues: planResult.blockingIssues,
     warnings: planResult.warnings,
+    cloudSyncSuccess,
+    cloudSyncError,
   };
 };
 
@@ -210,11 +257,11 @@ export const recalculatePlan = (
  * Unlike scheduleAutoReplan, this doesn't use debounce - for UI checks after project creation.
  * @param reason - The reason for replanning (for logging)
  */
-export const runReplanNow = (reason: string): RecalculateResult => {
+export const runReplanNow = async (reason: string): Promise<RecalculateResult> => {
   return recalculatePlan('from_now', true, reason);
 };
 
-// Trigger planning recalculation
+// Trigger planning recalculation (fire-and-forget for background tasks)
 export const triggerPlanningRecalculation = (reason: string): void => {
   // Mark capacity as changed, then recalculate
   const meta = getPlanningMeta();
@@ -223,7 +270,10 @@ export const triggerPlanningRecalculation = (reason: string): void => {
     capacityChangedSinceLastRecalculation: true,
     lastCapacityChangeReason: reason,
   });
-  recalculatePlan('from_now', true, reason);
+  // Fire and forget - don't block on this
+  recalculatePlan('from_now', true, reason).catch(err => {
+    console.error('[planningRecalculator] Background replan failed:', err);
+  });
 };
 
 /**
@@ -231,13 +281,15 @@ export const triggerPlanningRecalculation = (reason: string): void => {
  * 1. Deletes existing planned/scheduled cycles for the date range
  * 2. Upserts the new cycles
  * This ensures Replan = Replace, not Append.
+ * 
+ * IMPORTANT: Returns a SyncResult so caller knows if sync succeeded.
  */
-async function syncCyclesToCloud(cycles: PlannedCycle[], startDate?: Date): Promise<void> {
+async function syncCyclesToCloud(cycles: PlannedCycle[], startDate?: Date): Promise<SyncResult> {
   // Get workspace ID from Supabase profile
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     console.log('[planningRecalculator] No user, skipping cloud sync');
-    return;
+    return { success: false, synced: 0, errors: 0, skipped: 0, error: 'No user' };
   }
   
   const { data: profile } = await supabase
@@ -249,7 +301,7 @@ async function syncCyclesToCloud(cycles: PlannedCycle[], startDate?: Date): Prom
   const workspaceId = profile?.current_workspace_id;
   if (!workspaceId) {
     console.log('[planningRecalculator] No workspace, skipping cloud sync');
-    return;
+    return { success: false, synced: 0, errors: 0, skipped: 0, error: 'No workspace' };
   }
   
   // STEP 1: DELETE old planned/scheduled cycles from the planning range
@@ -353,4 +405,14 @@ async function syncCyclesToCloud(cycles: PlannedCycle[], startDate?: Date): Prom
       detail: { skipped, projects: skippedProjects }
     }));
   }
+  
+  // Return result for caller to know sync status
+  const success = errors === 0 && synced > 0;
+  return { 
+    success, 
+    synced, 
+    errors, 
+    skipped,
+    error: errors > 0 ? `${errors} cycles failed to sync` : undefined
+  };
 }

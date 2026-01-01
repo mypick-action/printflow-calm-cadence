@@ -70,9 +70,8 @@ export async function checkAndHandleDayChange(workspaceId: string): Promise<DayC
     console.log('[DayChange] Lock acquired - running replan');
     
     // 3. Run replan
-    // NOTE: recalculatePlan is SYNCHRONOUS (returns RecalculateResult, not Promise)
-    // It internally fires syncCyclesToCloud async but doesn't await it
-    const replanResult = recalculatePlan('from_now', true, 'new_day_detected');
+    // NOTE: recalculatePlan is now async - we need to await it
+    const replanResult = await recalculatePlan('from_now', true, 'new_day_detected');
     
     if (!replanResult.success) {
       // Replan failed - DON'T update last_plan_day so next device can try
@@ -123,7 +122,7 @@ export async function checkAndHandleDayChange(workspaceId: string): Promise<DayC
       console.log('[DayChange] Using localStorage fallback');
       localStorage.setItem(LOCAL_FALLBACK_KEY, todayLocal);
       
-      const result = recalculatePlan('from_now', true, 'new_day_fallback');
+      const result = await recalculatePlan('from_now', true, 'new_day_fallback');
       return { 
         isNewDay: true, 
         triggeredReplan: true, 
