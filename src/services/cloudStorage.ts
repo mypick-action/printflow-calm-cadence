@@ -799,6 +799,61 @@ export const deletePlannedCycles = async (workspaceId: string, projectId?: strin
 };
 
 /**
+ * Update a single planned cycle in cloud (for immediate operational updates)
+ * Used when starting/stopping a job - no need for full replan sync
+ */
+export const updatePlannedCycleCloud = async (
+  cycleId: string,
+  updates: Partial<DbPlannedCycle>
+): Promise<DbPlannedCycle | null> => {
+  const { data, error } = await supabase
+    .from('planned_cycles')
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', cycleId)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('[CloudStorage] Error updating planned cycle:', error);
+    return null;
+  }
+  
+  console.log('[CloudStorage] Updated planned cycle:', cycleId, updates);
+  return data;
+};
+
+/**
+ * Create or upsert a single planned cycle to cloud (for manual job creation)
+ * Immediate sync without waiting for replan
+ */
+export const upsertPlannedCycleCloud = async (
+  workspaceId: string,
+  cycle: Omit<DbPlannedCycle, 'workspace_id' | 'created_at' | 'updated_at'>
+): Promise<DbPlannedCycle | null> => {
+  const { data, error } = await supabase
+    .from('planned_cycles')
+    .upsert({
+      ...cycle,
+      workspace_id: workspaceId,
+    }, {
+      onConflict: 'id',
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('[CloudStorage] Error upserting planned cycle:', error);
+    return null;
+  }
+  
+  console.log('[CloudStorage] Upserted planned cycle:', cycle.id);
+  return data;
+};
+
+/**
  * Purge all planned cycles (and optionally cycle_logs) from cloud for a workspace.
  * This is a destructive operation intended for "clean slate" scenarios.
  */
