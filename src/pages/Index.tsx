@@ -18,11 +18,12 @@ import { WeeklyPlanningPage } from '@/components/weekly/WeeklyPlanningPage';
 import { OperationalDashboard } from '@/components/weekly/OperationalDashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Construction, Loader2, Upload, AlertCircle } from 'lucide-react';
+import { Construction, Loader2, Upload, AlertCircle, RefreshCw } from 'lucide-react';
 import { isOnboardingCompleteCloud, saveOnboardingToCloud, getPrinters, getProjects } from '@/services/cloudStorage';
 import { hydrateLocalFromCloud, migrateAllLocalDataToCloud, FullMigrationReport } from '@/services/cloudBridge';
 import { checkAndHandleDayChange } from '@/services/dayChangeDetector';
 import { KEYS, cleanupOrphanedCycles } from '@/services/storage';
+import { syncCycleOperation, CycleOperationPayload, OperationType } from '@/services/cycleOperationSync';
 import { toast } from 'sonner';
 
 interface LocalDataSummary {
@@ -62,6 +63,53 @@ const PrintFlowApp: React.FC = () => {
     
     window.addEventListener('sync-cycles-skipped', handleSyncSkipped as EventListener);
     return () => window.removeEventListener('sync-cycles-skipped', handleSyncSkipped as EventListener);
+  }, [language]);
+
+  // Listen for cycle-sync-result events and show appropriate toast
+  useEffect(() => {
+    const handleCycleSyncResult = (e: CustomEvent<{
+      type: OperationType;
+      cycleId: string;
+      success: boolean;
+      localSaved: boolean;
+      cloudSynced: boolean;
+      error?: string;
+      canRetry?: boolean;
+      payload?: CycleOperationPayload;
+    }>) => {
+      const { type, localSaved, cloudSynced, error, canRetry, payload } = e.detail;
+      
+      if (cloudSynced) {
+        // Success - show quiet toast (optional)
+        // toast.success(language === 'he' ? 'סונכרן לענן' : 'Synced to cloud');
+        return;
+      }
+      
+      // Cloud sync failed but local saved
+      if (localSaved && !cloudSynced) {
+        const retryAction = canRetry && payload ? {
+          label: language === 'he' ? 'נסה שוב' : 'Retry',
+          onClick: async () => {
+            const result = await syncCycleOperation(type, payload);
+            if (result.cloudSynced) {
+              toast.success(language === 'he' ? 'סונכרן לענן' : 'Synced to cloud');
+            }
+          },
+        } : undefined;
+        
+        toast.warning(
+          language === 'he' ? 'נשמר מקומית - לא סונכרן לענן' : 'Saved locally - not synced to cloud',
+          {
+            description: error,
+            duration: 8000,
+            action: retryAction,
+          }
+        );
+      }
+    };
+    
+    window.addEventListener('cycle-sync-result', handleCycleSyncResult as EventListener);
+    return () => window.removeEventListener('cycle-sync-result', handleCycleSyncResult as EventListener);
   }, [language]);
 
   // Redirect to auth if not logged in
