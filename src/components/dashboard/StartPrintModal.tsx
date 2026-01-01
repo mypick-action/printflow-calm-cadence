@@ -22,6 +22,8 @@ import {
   updatePlannedCycle,
 } from '@/services/storage';
 import { scheduleAutoReplan } from '@/services/autoReplan';
+import { updatePlannedCycleCloud } from '@/services/cloudStorage';
+import { supabase } from '@/integrations/supabase/client';
 
 interface StartPrintModalProps {
   open: boolean;
@@ -101,7 +103,7 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
   const hasEnoughMaterial = willHaveGrams >= gramsNeeded;
   const gramsMissing = gramsNeeded - willHaveGrams;
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     const now = new Date();
     const nowIso = now.toISOString();
     const cycleHours = cycle.cycleHours || 2;
@@ -135,14 +137,27 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
     // Start the printer job (mountState = 'in_use')
     startPrinterJob(printerId);
 
-    // Update the planned cycle to in_progress
+    // Update the planned cycle to in_progress (local)
     updatePlannedCycle(cycle.id, {
       status: 'in_progress',
       startTime: nowIso,
       endTime: endTimeIso,
     });
 
-    // Schedule replan
+    // IMMEDIATELY sync cycle status to cloud (don't wait for debounced replan)
+    try {
+      await updatePlannedCycleCloud(cycle.id, {
+        status: 'in_progress',
+        start_time: nowIso,
+        end_time: endTimeIso,
+      });
+      console.log('[StartPrintModal] Cycle synced to cloud');
+    } catch (err) {
+      console.error('[StartPrintModal] Failed to sync cycle to cloud:', err);
+      // Continue anyway - local state is saved, will sync on next replan
+    }
+
+    // Schedule replan for planning updates
     scheduleAutoReplan('cycle_started');
 
     onConfirm();

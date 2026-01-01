@@ -39,6 +39,8 @@ import {
 } from '@/services/storage';
 import { format, addHours } from 'date-fns';
 import { scheduleAutoReplan } from '@/services/autoReplan';
+import { upsertPlannedCycleCloud } from '@/services/cloudStorage';
+import { supabase } from '@/integrations/supabase/client';
 
 interface ManualStartPrintModalProps {
   open: boolean;
@@ -114,7 +116,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     setSelectedPresetId(''); // Reset preset when project changes
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!selectedProjectId || !selectedPrinterId || !selectedProject) return;
 
     const start = new Date(startTime);
@@ -124,8 +126,11 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
 
     const spoolGramsNum = parseInt(spoolGrams) || undefined;
 
+    // Generate a proper UUID for cloud compatibility
+    const cycleId = crypto.randomUUID();
+
     const newCycle: PlannedCycle = {
-      id: `manual-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: cycleId,
       projectId: selectedProjectId,
       printerId: selectedPrinterId,
       unitsPlanned: units,
@@ -149,6 +154,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
       presetSelectionReason: 'manual_selection',
     };
 
+    // Save to local storage
     addManualCycle(newCycle);
     
     // Also update the printer's mounted color to reflect reality
@@ -159,7 +165,45 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
         currentMaterial: 'PLA',
       });
     }
+
+    // IMMEDIATELY sync cycle to cloud (don't wait for debounced replan)
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('current_workspace_id')
+          .eq('user_id', user.id)
+          .single();
+        
+        if (profile?.current_workspace_id) {
+          // Map local project ID to cloud UUID if needed
+          const projectUuid = (selectedProject as any).cloudId || 
+                              (selectedProject as any).cloudUuid || 
+                              selectedProjectId;
+          
+          await upsertPlannedCycleCloud(profile.current_workspace_id, {
+            id: cycleId,
+            legacy_id: null,
+            project_id: projectUuid,
+            printer_id: selectedPrinterId,
+            preset_id: selectedPreset?.id || null,
+            scheduled_date: format(start, 'yyyy-MM-dd'),
+            start_time: start.toISOString(),
+            end_time: end.toISOString(),
+            units_planned: units,
+            status: 'in_progress',
+            cycle_index: 0,
+          });
+          console.log('[ManualStartPrintModal] Cycle synced to cloud');
+        }
+      }
+    } catch (err) {
+      console.error('[ManualStartPrintModal] Failed to sync cycle to cloud:', err);
+      // Continue anyway - local state is saved, will sync on next replan
+    }
     
+    // Schedule replan for planning updates
     scheduleAutoReplan('manual_cycle_added');
     
     setSelectedProjectId(defaultProjectId || '');
