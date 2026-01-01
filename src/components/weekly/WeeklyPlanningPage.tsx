@@ -13,7 +13,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
 import { 
   CalendarDays, 
   Search, 
@@ -22,7 +21,6 @@ import {
   Filter
 } from 'lucide-react';
 import { getPrinters } from '@/services/storage';
-import { getLastReplanInfo } from '@/services/planningLogger';
 import { 
   getWeekRange, 
   getCyclesByDayAndPrinter,
@@ -48,21 +46,6 @@ export const WeeklyPlanningPage: React.FC<WeeklyPlanningPageProps> = ({
   const printers = getPrinters();
   const weekDays = getWeekRange();
   const cyclesByDayAndPrinter = getCyclesByDayAndPrinter();
-  const lastReplanInfo = getLastReplanInfo();
-  
-  // Guard: Don't render until planning data is ready
-  // This prevents "UNKNOWN" state on mobile when hydration is incomplete
-  const isDataReady = useMemo(() => {
-    // Check we have valid week range
-    if (!weekDays || weekDays.length !== 7) return false;
-    // Check printers are loaded (can be empty array if no printers configured)
-    if (!printers) return false;
-    // Check cycles structure exists
-    if (!cyclesByDayAndPrinter) return false;
-    // Verify lastReplan exists (indicates planning engine has run at least once)
-    // Note: On first run before any planning, this could be null - that's OK
-    return true;
-  }, [weekDays, printers, cyclesByDayAndPrinter, lastReplanInfo]);
 
   // Filter printers
   const filteredPrinters = useMemo(() => {
@@ -129,12 +112,7 @@ export const WeeklyPlanningPage: React.FC<WeeklyPlanningPageProps> = ({
   const renderCycleCell = (cycles: CycleWithDetails[]) => {
     const filtered = filterCycles(cycles);
     
-    // Dedupe by cycle.id to prevent double-rendering from hydration race conditions
-    const uniqueFiltered = filtered.filter((cycle, index, arr) => 
-      arr.findIndex(c => c.id === cycle.id) === index
-    );
-    
-    if (uniqueFiltered.length === 0) {
+    if (filtered.length === 0) {
       return (
         <div className="h-full min-h-[80px] p-1 flex items-center justify-center text-muted-foreground/50 text-xs">
           —
@@ -144,7 +122,7 @@ export const WeeklyPlanningPage: React.FC<WeeklyPlanningPageProps> = ({
 
     return (
       <div className="p-1 space-y-1 min-h-[80px]">
-        {uniqueFiltered.map(cycle => (
+        {filtered.map(cycle => (
           <div
             key={cycle.id}
             className={getCycleClasses(cycle)}
@@ -177,23 +155,6 @@ export const WeeklyPlanningPage: React.FC<WeeklyPlanningPageProps> = ({
       </div>
     );
   };
-
-  // Show loading skeleton while data is hydrating
-  if (!isDataReady) {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          <Skeleton className="w-8 h-8 rounded" />
-          <div>
-            <Skeleton className="h-7 w-48 mb-1" />
-            <Skeleton className="h-4 w-32" />
-          </div>
-        </div>
-        <Skeleton className="h-16 w-full rounded-lg" />
-        <Skeleton className="h-[400px] w-full rounded-lg" />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">
