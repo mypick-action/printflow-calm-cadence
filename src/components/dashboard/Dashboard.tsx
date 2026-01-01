@@ -70,6 +70,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null);
   const [expandedPrinters, setExpandedPrinters] = useState<Set<string>>(new Set());
   const [manualStartModalOpen, setManualStartModalOpen] = useState(false);
+  const [manualStartPrinterId, setManualStartPrinterId] = useState<string | undefined>(undefined);
   const [printerActionsModalOpen, setPrinterActionsModalOpen] = useState(false);
   const [selectedPrinterForActions, setSelectedPrinterForActions] = useState<string | null>(null);
   // hasSyncedProjects state removed - migration no longer runs from Dashboard
@@ -77,6 +78,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const openPrinterActionsModal = (printerId: string) => {
     setSelectedPrinterForActions(printerId);
     setPrinterActionsModalOpen(true);
+  };
+
+  const handleOpenManualPrint = (printerId: string) => {
+    setManualStartPrinterId(printerId);
+    setManualStartModalOpen(true);
   };
 
   const refreshData = useCallback(() => {
@@ -587,8 +593,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
       {/* Manual Start Print Modal */}
       <ManualStartPrintModal
         open={manualStartModalOpen}
-        onOpenChange={setManualStartModalOpen}
+        onOpenChange={(open) => {
+          setManualStartModalOpen(open);
+          if (!open) setManualStartPrinterId(undefined);
+        }}
         onComplete={refreshData}
+        defaultPrinterId={manualStartPrinterId}
       />
 
       {/* Printer Actions Modal */}
@@ -598,6 +608,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
           onOpenChange={setPrinterActionsModalOpen}
           printerId={selectedPrinterForActions}
           onComplete={refreshData}
+          onOpenManualPrint={handleOpenManualPrint}
         />
       )}
     </div>
