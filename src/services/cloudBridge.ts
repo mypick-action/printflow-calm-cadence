@@ -340,13 +340,10 @@ export async function hydrateLocalFromCloud(
       
       console.log('[CloudBridge] Cycles hydration - cloud:', cloudCycles.length, 'local:', existingLocalCycles.length);
       
-      // If cloud is empty but local has cycles, PRESERVE local cycles
-      // Local is source of truth until cycles are synced to cloud
-      if (cloudCycles.length === 0 && existingLocalCycles.length > 0) {
-        console.log('[CloudBridge] Cloud cycles empty → preserving', existingLocalCycles.length, 'local cycles');
-        // Skip overwriting - local is source of truth until migration
-      } else if (cloudCycles.length > 0) {
-        // Cloud has cycles - proceed with hydration (cloud is SSOT)
+      // CLOUD IS SSOT - Always overwrite local with cloud data
+      // If cloud is empty, local should also be empty (no more "preserve local" logic)
+      if (cloudCycles.length > 0) {
+        // Cloud has cycles - proceed with hydration
         console.log('[CloudBridge] Cloud has cycles → overwriting localStorage');
         
         // Map cycles: cloud format → localStorage format
@@ -379,8 +376,13 @@ export async function hydrateLocalFromCloud(
         localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
         console.log('[CloudBridge] OVERWRITE cycles to localStorage:', mappedCycles.length);
       } else {
-        // Both are empty - nothing to do
-        console.log('[CloudBridge] Both cloud and local cycles are empty');
+        // Cloud is empty - clear local cycles too (cloud is SSOT)
+        if (existingLocalCycles.length > 0) {
+          console.log('[CloudBridge] Cloud cycles empty → clearing', existingLocalCycles.length, 'local cycles (cloud is SSOT)');
+          localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify([]));
+        } else {
+          console.log('[CloudBridge] Both cloud and local cycles are empty');
+        }
       }
     }
   }

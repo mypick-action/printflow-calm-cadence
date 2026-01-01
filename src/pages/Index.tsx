@@ -22,7 +22,7 @@ import { Construction, Loader2, Upload, AlertCircle } from 'lucide-react';
 import { isOnboardingCompleteCloud, saveOnboardingToCloud, getPrinters, getProjects } from '@/services/cloudStorage';
 import { hydrateLocalFromCloud, migrateAllLocalDataToCloud, FullMigrationReport } from '@/services/cloudBridge';
 import { checkAndHandleDayChange } from '@/services/dayChangeDetector';
-import { KEYS } from '@/services/storage';
+import { KEYS, cleanupOrphanedCycles } from '@/services/storage';
 import { toast } from 'sonner';
 
 interface LocalDataSummary {
@@ -48,6 +48,21 @@ const PrintFlowApp: React.FC = () => {
   const [showMigrationPrompt, setShowMigrationPrompt] = useState(false);
   const [localDataSummary, setLocalDataSummary] = useState<LocalDataSummary | null>(null);
   const [migrating, setMigrating] = useState(false);
+
+  // Listen for sync-cycles-skipped events and show toast
+  useEffect(() => {
+    const handleSyncSkipped = (e: CustomEvent<{ skipped: number; projects: string[] }>) => {
+      const { skipped, projects } = e.detail;
+      toast.error(
+        language === 'he'
+          ? `${skipped} מחזורים לא סונכרנו - פרויקטים לא קיימים: ${projects.slice(0, 3).join(', ')}${projects.length > 3 ? '...' : ''}`
+          : `${skipped} cycles not synced - orphaned projects: ${projects.slice(0, 3).join(', ')}${projects.length > 3 ? '...' : ''}`
+      );
+    };
+    
+    window.addEventListener('sync-cycles-skipped', handleSyncSkipped as EventListener);
+    return () => window.removeEventListener('sync-cycles-skipped', handleSyncSkipped as EventListener);
+  }, [language]);
 
   // Redirect to auth if not logged in
   useEffect(() => {
@@ -97,6 +112,12 @@ const PrintFlowApp: React.FC = () => {
               includeProducts: true, 
               includeInventory: true,
             });
+            
+            // Cleanup any orphaned cycles after hydration
+            const cleanupResult = cleanupOrphanedCycles();
+            if (cleanupResult.removed > 0) {
+              console.log(`[Index] Cleaned up ${cleanupResult.removed} orphaned cycles`);
+            }
             
             // Run day-change detection after hydration
             await runDayChangeDetection(workspaceId);

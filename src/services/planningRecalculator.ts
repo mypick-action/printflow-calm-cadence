@@ -262,29 +262,62 @@ async function syncCyclesToCloud(cycles: PlannedCycle[], startDate?: Date): Prom
   console.log(`[planningRecalculator] Deleted ${deletedCount} old cloud cycles from ${fromDate}`);
   
   // Get projects from localStorage to map projectId → UUID
+  // Support multiple mapping scenarios:
+  // 1. Legacy projects with cloudId: id → cloudId
+  // 2. Cloud-first projects with cloudUuid: id → cloudUuid  
+  // 3. Projects where id IS already a UUID: id → id
   const projectsRaw = localStorage.getItem(KEYS.PROJECTS);
   const projects = projectsRaw ? JSON.parse(projectsRaw) : [];
   const projectIdToUuid = new Map<string, string>();
+  const validProjectIds = new Set<string>();
+  
   for (const p of projects) {
+    validProjectIds.add(p.id);
+    // Priority: cloudId > cloudUuid > (id if already UUID)
     if (p.cloudId) {
       projectIdToUuid.set(p.id, p.cloudId);
+    } else if (p.cloudUuid) {
+      projectIdToUuid.set(p.id, p.cloudUuid);
+    } else if (p.id && p.id.length === 36 && /^[0-9a-f-]+$/i.test(p.id)) {
+      // id is already a UUID (cloud-first project)
+      projectIdToUuid.set(p.id, p.id);
     }
   }
   
-  // STEP 2: Sync 'planned' cycles (not completed/failed which should already be synced)
-  const plannedCycles = cycles.filter(c => c.status === 'planned');
-  console.log(`[planningRecalculator] Syncing ${plannedCycles.length} planned cycles to cloud`);
+  // STEP 2: Sync cycles - include planned, in_progress, and locked manual cycles
+  const syncableCycles = cycles.filter(c => 
+    c.status === 'planned' || 
+    c.status === 'in_progress' || 
+    (c.locked && c.source === 'manual')
+  );
+  console.log(`[planningRecalculator] Syncing ${syncableCycles.length} cycles to cloud`);
   
   let synced = 0;
   let errors = 0;
+  let skipped = 0;
+  const skippedProjects: string[] = [];
   
-  for (const cycle of plannedCycles) {
+  for (const cycle of syncableCycles) {
+    // First check if projectId refers to a valid project
+    if (!validProjectIds.has(cycle.projectId)) {
+      console.warn('[planningRecalculator] Skipping cycle with orphaned project:', cycle.projectId);
+      skipped++;
+      if (!skippedProjects.includes(cycle.projectId)) {
+        skippedProjects.push(cycle.projectId);
+      }
+      continue;
+    }
+    
     // Map local projectId to cloud UUID
     const projectUuid = (cycle as any).projectUuid || projectIdToUuid.get(cycle.projectId) || cycle.projectId;
     
     // Skip if we don't have a valid UUID for the project
     if (!projectUuid || projectUuid.length < 36) {
-      console.warn('[planningRecalculator] Skipping cycle with invalid project UUID:', cycle.projectId);
+      console.warn('[planningRecalculator] Skipping cycle with invalid project UUID:', cycle.projectId, '→', projectUuid);
+      skipped++;
+      if (!skippedProjects.includes(cycle.projectId)) {
+        skippedProjects.push(cycle.projectId);
+      }
       continue;
     }
     
@@ -310,5 +343,14 @@ async function syncCyclesToCloud(cycles: PlannedCycle[], startDate?: Date): Prom
     }
   }
   
-  console.log(`[planningRecalculator] Cloud sync complete: ${synced} synced, ${errors} errors (deleted ${deletedCount} old)`);
+  console.log(`[planningRecalculator] Cloud sync complete: ${synced} synced, ${errors} errors, ${skipped} skipped (deleted ${deletedCount} old)`);
+  
+  // Show warning toast if cycles were skipped
+  if (skipped > 0) {
+    console.error(`[planningRecalculator] SYNC WARNING: ${skipped} cycles skipped due to invalid/orphaned projects:`, skippedProjects);
+    // Dispatch custom event for UI to catch
+    window.dispatchEvent(new CustomEvent('sync-cycles-skipped', {
+      detail: { skipped, projects: skippedProjects }
+    }));
+  }
 }
