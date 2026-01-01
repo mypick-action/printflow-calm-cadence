@@ -588,9 +588,9 @@ export const ProjectsPage: React.FC = () => {
     setManualStartOpen(true);
   };
 
-  const handleAutomaticAssignment = () => {
+  const handleAutomaticAssignment = async () => {
     // Run immediate replan and get full result
-    const result = runReplanNow('project_created');
+    const result = await runReplanNow('project_created');
     
     // Debug log - show what came back from planning
     console.log('[ProjectsPage] Replan result:', {

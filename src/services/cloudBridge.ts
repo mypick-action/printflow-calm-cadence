@@ -46,6 +46,26 @@ const BRIDGE_KEYS = {
 
 type AnyObj = Record<string, unknown>;
 
+// Flag to prevent hydration from clearing cycles during an active replan
+// This prevents the race condition where hydration sees empty cloud before sync completes
+let replanInProgress = false;
+
+/**
+ * Set replan in progress flag. This prevents hydration from clearing local cycles
+ * when cloud is empty (because the sync hasn't completed yet).
+ */
+export function setReplanInProgress(value: boolean): void {
+  replanInProgress = value;
+  console.log('[CloudBridge] replanInProgress set to:', value);
+}
+
+/**
+ * Check if a replan is currently in progress
+ */
+export function isReplanInProgress(): boolean {
+  return replanInProgress;
+}
+
 // Helper to detect if a string is a UUID (cloud ID) vs legacy timestamp-based ID
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function isUuid(s: string): boolean {
@@ -376,8 +396,13 @@ export async function hydrateLocalFromCloud(
         localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
         console.log('[CloudBridge] OVERWRITE cycles to localStorage:', mappedCycles.length);
       } else {
-        // Cloud is empty - clear local cycles too (cloud is SSOT)
-        if (existingLocalCycles.length > 0) {
+        // Cloud is empty - check if we should clear local
+        if (replanInProgress) {
+          // Replan in progress - don't clear local cycles!
+          // The sync hasn't completed yet, so cloud being empty is expected
+          console.log('[CloudBridge] Cloud cycles empty but replanInProgress=true → preserving local cycles');
+        } else if (existingLocalCycles.length > 0) {
+          // No replan in progress, cloud is truly SSOT and empty
           console.log('[CloudBridge] Cloud cycles empty → clearing', existingLocalCycles.length, 'local cycles (cloud is SSOT)');
           localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify([]));
         } else {

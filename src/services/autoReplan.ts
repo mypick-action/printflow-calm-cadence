@@ -83,7 +83,7 @@ const executeAutoReplan = async (): Promise<void> => {
     // Dynamic import to avoid circular dependencies - import directly from recalculator
     const { recalculatePlan } = await import('./planningRecalculator');
     
-    const result = recalculatePlan('from_now', true);
+    const result = await recalculatePlan('from_now', true);
     const replanDurationMs = Math.round(performance.now() - startTime);
     
     // Log the replan result

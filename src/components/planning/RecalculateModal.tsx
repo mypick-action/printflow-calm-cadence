@@ -66,7 +66,7 @@ export const RecalculateModal: React.FC<RecalculateModalProps> = ({
     // Simulate a small delay for UX
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    const result = recalculatePlan(scope, lockStarted);
+    const result = await recalculatePlan(scope, lockStarted);
     
     setIsRecalculating(false);
     
