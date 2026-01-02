@@ -38,6 +38,7 @@ export interface Project {
   quantityTarget: number;
   quantityGood: number;
   quantityScrap: number;
+  quantityOverage?: number; // Units produced beyond target (from external suppliers or overproduction)
   dueDate: string; // ISO date string
   urgency: 'normal' | 'urgent' | 'critical';
   urgencyManualOverride: boolean; // true if user manually set urgency
@@ -1058,7 +1059,7 @@ export const updateProject = (id: string, updates: Partial<Project>, skipAutoRep
   
   // Schedule auto-replan for planning-relevant changes
   if (!skipAutoReplan) {
-    const planningRelevantKeys = ['quantityTarget', 'dueDate', 'status', 'urgency', 'preferredPresetId', 'productId', 'includeInPlanning'];
+    const planningRelevantKeys = ['quantityTarget', 'quantityGood', 'dueDate', 'status', 'urgency', 'preferredPresetId', 'productId', 'includeInPlanning'];
     const hasRelevantChange = Object.keys(updates).some(key => planningRelevantKeys.includes(key));
     if (hasRelevantChange) {
       scheduleAutoReplan('project_updated');

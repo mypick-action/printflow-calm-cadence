@@ -36,6 +36,8 @@ import {
   AlertCircle,
   Pencil,
   Palette,
+  Plus,
+  Truck,
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { toast } from '@/hooks/use-toast';
@@ -108,6 +110,11 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   // Color editing state
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
   const [availableColors, setAvailableColors] = useState<string[]>([]);
+  
+  // External units state
+  const [externalUnitsPopoverOpen, setExternalUnitsPopoverOpen] = useState(false);
+  const [externalUnits, setExternalUnits] = useState<string>('');
+  const [externalNotes, setExternalNotes] = useState<string>('');
   
   // Warning modal state
   const [planningIssues, setPlanningIssues] = useState<{
@@ -246,6 +253,68 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
       }
       
       // Refresh data after replan
+      loadData();
+      setRefreshKey(k => k + 1);
+    }
+  };
+
+  // Handle adding external units (from external supplier)
+  const handleAddExternalUnits = async () => {
+    const units = Number(externalUnits.trim());
+    if (!Number.isInteger(units) || units < 1 || !project) return;
+    
+    const remaining = project.quantityTarget - project.quantityGood;
+    
+    // Calculate how much goes to quantityGood and how much to overage
+    let newQuantityGood = project.quantityGood;
+    let newOverage = project.quantityOverage || 0;
+    
+    if (units <= remaining) {
+      // All units go toward the target
+      newQuantityGood = project.quantityGood + units;
+    } else {
+      // Fill up to target, rest goes to overage
+      newQuantityGood = project.quantityTarget;
+      newOverage = (project.quantityOverage || 0) + (units - remaining);
+    }
+    
+    // Check if project is now completed
+    const isNowCompleted = newQuantityGood >= project.quantityTarget;
+    
+    // Update project (skipAutoReplan since we'll run runReplanNow manually)
+    const updated = updateProject(project.id, {
+      quantityGood: newQuantityGood,
+      quantityOverage: newOverage > 0 ? newOverage : undefined,
+      status: isNowCompleted ? 'completed' : project.status,
+    }, true);
+    
+    if (updated) {
+      setProject(updated);
+      setExternalUnitsPopoverOpen(false);
+      setExternalUnits('');
+      setExternalNotes('');
+      
+      // Run replan with lockStarted=true to protect in_progress cycles
+      const result = await runReplanNow('external_units_added');
+      
+      // Show appropriate toast
+      if (isNowCompleted) {
+        toast({
+          title: language === 'he' ? 'הפרויקט הושלם!' : 'Project completed!',
+          description: language === 'he' 
+            ? `נוספו ${units} יחידות מספק חיצוני${newOverage > 0 ? ` (${newOverage} עודף)` : ''}` 
+            : `Added ${units} units from external supplier${newOverage > 0 ? ` (${newOverage} excess)` : ''}`,
+        });
+      } else {
+        toast({
+          title: language === 'he' ? 'יחידות נוספו' : 'Units added',
+          description: language === 'he' 
+            ? `נוספו ${units} יחידות. נותרו ${project.quantityTarget - newQuantityGood} יחידות.` 
+            : `Added ${units} units. ${project.quantityTarget - newQuantityGood} remaining.`,
+        });
+      }
+      
+      // Refresh data
       loadData();
       setRefreshKey(k => k + 1);
     }
@@ -500,12 +569,67 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
               </Popover>
             </div>
 
-            {/* Produced */}
+            {/* Produced - with external units button */}
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">
                 {language === 'he' ? 'הופק' : 'Produced'}
               </p>
-              <p className="text-2xl font-bold text-success">{project.quantityGood}</p>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl font-bold text-success">{project.quantityGood}</span>
+                {project.quantityOverage && project.quantityOverage > 0 && (
+                  <span className="text-sm text-muted-foreground">
+                    (+{project.quantityOverage} {language === 'he' ? 'עודף' : 'extra'})
+                  </span>
+                )}
+                <Popover open={externalUnitsPopoverOpen} onOpenChange={(open) => {
+                  setExternalUnitsPopoverOpen(open);
+                  if (!open) {
+                    setExternalUnits('');
+                    setExternalNotes('');
+                  }
+                }}>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" title={language === 'he' ? 'הוסף יחידות מספק חיצוני' : 'Add external supplier units'}>
+                      <Truck className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64" align="start">
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Truck className="h-4 w-4" />
+                        {language === 'he' ? 'יחידות מספק חיצוני' : 'External supplier units'}
+                      </div>
+                      <div className="space-y-1">
+                        <Label>{language === 'he' ? 'כמות' : 'Quantity'}</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={externalUnits}
+                          onChange={(e) => setExternalUnits(e.target.value)}
+                          placeholder="100"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>{language === 'he' ? 'הערה (אופציונלי)' : 'Note (optional)'}</Label>
+                        <Input
+                          value={externalNotes}
+                          onChange={(e) => setExternalNotes(e.target.value)}
+                          placeholder={language === 'he' ? 'שם ספק...' : 'Supplier name...'}
+                        />
+                      </div>
+                      <Button 
+                        onClick={handleAddExternalUnits}
+                        disabled={!externalUnits || Number(externalUnits) < 1}
+                        className="w-full"
+                        size="sm"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        {language === 'he' ? 'הוסף יחידות' : 'Add Units'}
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
 
             {/* Scrap/Failed - Always visible */}
