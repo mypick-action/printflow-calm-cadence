@@ -95,6 +95,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   const { language } = useLanguage();
   const [project, setProject] = useState<Project | null>(null);
   const [product, setProduct] = useState<Product | null>(null);
+  const [isLoading, setIsLoading] = useState(true); // Loading state to distinguish from "not found"
   const [endCycleOpen, setEndCycleOpen] = useState(false);
   const [selectedPrinterIdForEndCycle, setSelectedPrinterIdForEndCycle] = useState<string | undefined>(undefined);
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
@@ -133,12 +134,14 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   }, [projectId, refreshKey]);
 
   const loadData = () => {
+    setIsLoading(true);
     const proj = getProject(projectId);
     setProject(proj || null);
     if (proj) {
       const prod = getProduct(proj.productId);
       setProduct(prod || null);
     }
+    setIsLoading(false);
   };
 
   const handleColorChange = async (newColor: string) => {
@@ -281,7 +284,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
     // Check if project is now completed
     const isNowCompleted = newQuantityGood >= project.quantityTarget;
     
-    // Update project (skipAutoReplan since we'll run runReplanNow manually)
+    // Update project (skipAutoReplan since we'll run replan AFTER loadData)
     const updated = updateProject(project.id, {
       quantityGood: newQuantityGood,
       quantityOverage: newOverage > 0 ? newOverage : undefined,
@@ -294,7 +297,12 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
       setExternalUnits('');
       setExternalNotes('');
       
-      // Run replan with lockStarted=true to protect in_progress cycles
+      // CRITICAL FIX: Reload data FIRST to ensure projects are hydrated,
+      // THEN run replan. This prevents orphaned project detection.
+      loadData();
+      setRefreshKey(k => k + 1);
+      
+      // Run replan AFTER loadData to prevent race condition
       const result = await runReplanNow('external_units_added');
       
       // Show appropriate toast
@@ -313,10 +321,6 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
             : `Added ${units} units. ${project.quantityTarget - newQuantityGood} remaining.`,
         });
       }
-      
-      // Refresh data
-      loadData();
-      setRefreshKey(k => k + 1);
     }
   };
 
@@ -483,6 +487,18 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
     }
     return { label: language === 'he' ? 'בתהליך' : 'In Progress', className: 'bg-primary/10 text-primary' };
   };
+
+  // Show loading state during hydration instead of "not found"
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <RefreshCw className="w-12 h-12 text-muted-foreground/50 animate-spin" />
+        <p className="text-muted-foreground">
+          {language === 'he' ? 'טוען...' : 'Loading...'}
+        </p>
+      </div>
+    );
+  }
 
   if (!project) {
     return (

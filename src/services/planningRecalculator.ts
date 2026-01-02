@@ -349,16 +349,34 @@ async function syncCyclesToCloud(cycles: PlannedCycle[], startDate?: Date): Prom
   let skipped = 0;
   const skippedProjects: string[] = [];
   
+  // CRITICAL FIX: If we detect orphaned projects, it's likely a race condition
+  // where projects haven't hydrated yet. Defer the sync instead of skipping cycles.
+  const orphanedProjectIds: string[] = [];
+  
   for (const cycle of syncableCycles) {
     // First check if projectId refers to a valid project
     if (!validProjectIds.has(cycle.projectId)) {
-      console.warn('[planningRecalculator] Skipping cycle with orphaned project:', cycle.projectId);
-      skipped++;
-      if (!skippedProjects.includes(cycle.projectId)) {
-        skippedProjects.push(cycle.projectId);
+      // Track orphaned projects but DON'T skip yet - this may be a hydration race
+      if (!orphanedProjectIds.includes(cycle.projectId)) {
+        orphanedProjectIds.push(cycle.projectId);
       }
-      continue;
     }
+  }
+  
+  // If we found orphaned projects, defer the sync entirely (race condition)
+  if (orphanedProjectIds.length > 0) {
+    console.warn('[planningRecalculator] Detected orphaned projects - likely race condition. Deferring sync:', orphanedProjectIds);
+    return { 
+      success: false, 
+      synced: 0, 
+      errors: 0, 
+      skipped: syncableCycles.length,
+      error: 'Deferred: projects not yet hydrated (race condition)'
+    };
+  }
+  
+  for (const cycle of syncableCycles) {
+    // Projects are validated above, so we can proceed
     
     // Map local projectId to cloud UUID
     const projectUuid = (cycle as any).projectUuid || projectIdToUuid.get(cycle.projectId) || cycle.projectId;
