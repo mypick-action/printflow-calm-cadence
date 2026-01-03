@@ -179,6 +179,32 @@ const addHours = (date: Date, hours: number): Date => {
   return result;
 };
 
+const addDays = (date: Date, days: number): Date => {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+};
+
+/**
+ * Find the next working day's start time.
+ * Scans up to `maxDaysAhead` days looking for a day with enabled schedule.
+ * Returns null if no working day found within the limit.
+ */
+const findNextWorkDayStart = (
+  fromDate: Date,
+  settings: FactorySettings,
+  maxDaysAhead: number = 7
+): Date | null => {
+  for (let offset = 1; offset <= maxDaysAhead; offset++) {
+    const checkDate = addDays(fromDate, offset);
+    const schedule = getDayScheduleForDate(checkDate, settings, []);
+    if (schedule?.enabled) {
+      return createDateWithTime(checkDate, schedule.startTime);
+    }
+  }
+  return null;
+};
+
 const getDaysUntilDue = (dueDate: string, fromDate: Date): number => {
   const due = new Date(dueDate);
   const from = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
@@ -518,7 +544,8 @@ interface PrinterTimeSlot {
   printerId: string;
   printerName: string;
   currentTime: Date;
-  endOfDayTime: Date;
+  endOfDayTime: Date;  // Extended end (includes night window for FULL_AUTOMATION)
+  endOfWorkHours: Date; // Regular work end (for determining if cycle is "night")
   cyclesScheduled: ScheduledCycle[];
 }
 
@@ -532,19 +559,45 @@ const scheduleCyclesForDay = (
   existingCycles: PlannedCycle[],
   spoolAssignmentTracker: Map<string, Set<string>>, // tracks which spools are assigned to which printers
   allowCrossMidnight: boolean = false, // allow cycles to cross midnight
-  planningStartTime?: Date // NEW: When replanning starts (from recalculatePlan)
+  planningStartTime?: Date, // NEW: When replanning starts (from recalculatePlan)
+  isAutonomousDay: boolean = false // true for non-working days with FULL_AUTOMATION
 ): { dayPlan: DayPlan; updatedProjectStates: ProjectPlanningState[]; updatedMaterialTracker: Map<string, number>; updatedSpoolAssignments: Map<string, Set<string>> } => {
-  const dayStart = createDateWithTime(date, schedule.startTime);
-  let dayEnd = createDateWithTime(date, schedule.endTime);
+  const dayStart = isAutonomousDay 
+    ? createDateWithTime(date, '00:00') 
+    : createDateWithTime(date, schedule.startTime);
   
-  // Handle cross-midnight shifts (e.g., 17:30 -> 02:00 next day)
-  // If endTime < startTime, it means the shift crosses midnight
-  const startMinutes = parseTime(schedule.startTime).hours * 60 + parseTime(schedule.startTime).minutes;
-  const endMinutes = parseTime(schedule.endTime).hours * 60 + parseTime(schedule.endTime).minutes;
+  // Calculate dayEnd based on mode:
+  // 1. Autonomous day (non-working with FULL_AUTOMATION): runs until next working day starts
+  // 2. FULL_AUTOMATION on working day: extends night window until next working day starts
+  // 3. Normal: just the regular work hours
+  let dayEnd: Date;
+  // For autonomous days, endOfRegularWorkday is start of day (00:00) - any cycle is "night"
+  let endOfRegularWorkday: Date = isAutonomousDay 
+    ? createDateWithTime(date, '00:00')
+    : createDateWithTime(date, schedule.endTime);
   
-  if (endMinutes < startMinutes || allowCrossMidnight) {
-    // Shift crosses midnight - add 1 day to end time
-    dayEnd = addHours(dayEnd, 24);
+  if (isAutonomousDay) {
+    // Non-working day: window extends until next working day start
+    const nextWorkDayStart = findNextWorkDayStart(date, settings, 7);
+    dayEnd = nextWorkDayStart ?? createDateWithTime(addDays(date, 1), '00:00');
+  } else {
+    // Working day - calculate regular end
+    const startMinutes = parseTime(schedule.startTime).hours * 60 + parseTime(schedule.startTime).minutes;
+    const endMinutes = parseTime(schedule.endTime).hours * 60 + parseTime(schedule.endTime).minutes;
+    
+    if (endMinutes < startMinutes || allowCrossMidnight) {
+      // Shift crosses midnight - add 1 day to end time
+      endOfRegularWorkday = addHours(endOfRegularWorkday, 24);
+    }
+    
+    // For FULL_AUTOMATION, extend to next working day's start (clean night window)
+    if (settings.afterHoursBehavior === 'FULL_AUTOMATION') {
+      const nextWorkDayStart = findNextWorkDayStart(date, settings, 7);
+      // Use next day start OR 24h from work end (whichever is earlier/defined)
+      dayEnd = nextWorkDayStart ?? createDateWithTime(addDays(date, 1), schedule.startTime);
+    } else {
+      dayEnd = endOfRegularWorkday;
+    }
   }
   
   const dateString = formatDateString(date);
@@ -565,6 +618,8 @@ const scheduleCyclesForDay = (
     dateString,
     dayStart: dayStart.toISOString(),
     dayEnd: dayEnd.toISOString(),
+    endOfWorkHours: endOfRegularWorkday.toISOString(),
+    isAutonomousDay,
     planningStartTime: planningStartTime?.toISOString() ?? null,
   });
   
@@ -626,6 +681,7 @@ const scheduleCyclesForDay = (
       printerName: p.name,
       currentTime: new Date(startTime),
       endOfDayTime: new Date(dayEnd),
+      endOfWorkHours: new Date(endOfRegularWorkday),
       cyclesScheduled: [],
     };
   });
@@ -667,8 +723,8 @@ const scheduleCyclesForDay = (
           // Calculate available time in slot
           const availableSlotHours = (slot.endOfDayTime.getTime() - slot.currentTime.getTime()) / (1000 * 60 * 60);
           
-          // Check if it's a night slot (after end of day)
-          const isNightSlot = slot.currentTime >= slot.endOfDayTime;
+          // Check if it's a night slot (after end of work hours, NOT end of planning window)
+          const isNightSlot = slot.currentTime >= slot.endOfWorkHours;
           
           // Get available material for this color
           const colorKey = normalizeColor(state.project.color);
@@ -706,7 +762,8 @@ const scheduleCyclesForDay = (
             printer?.canStartNewCyclesAfterHours === true &&
             activePreset.allowedForNightCycle !== false; // Default true if not explicitly set to false
           
-          if (slot.currentTime >= slot.endOfDayTime && !canStartAtNight) {
+          // Use endOfWorkHours for the night check (not endOfDayTime which is extended)
+          if (isNightSlot && !canStartAtNight) {
             // Log block reason
             const blockReason = !activePreset.allowedForNightCycle 
               ? 'no_night_preset' 
@@ -1275,8 +1332,14 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     
     const schedule = getDayScheduleForDate(planDate, settings, []);
     
-    if (!schedule || !schedule.enabled) {
-      // Non-working day
+    // Check if this is a non-working day
+    const isNonWorkingDay = !schedule || !schedule.enabled;
+    
+    // Determine if we should plan autonomously on non-working days
+    const shouldPlanAutonomous = isNonWorkingDay && settings.afterHoursBehavior === 'FULL_AUTOMATION';
+    
+    if (isNonWorkingDay && !shouldPlanAutonomous) {
+      // Non-working day with no FULL_AUTOMATION - skip
       days.push({
         date: planDate,
         dateString: formatDateString(planDate),
@@ -1298,20 +1361,27 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
       continue;
     }
     
+    // Create a synthetic schedule for autonomous days
+    // For autonomous days, we create a 24h window but use existing schedule defaults for structure
+    const effectiveSchedule: DaySchedule = isNonWorkingDay 
+      ? { enabled: true, startTime: '00:00', endTime: '23:59' }
+      : schedule!;
+    
     // Schedule cycles for this day
     // Pass spool assignment tracker to enforce 1 spool = 1 printer rule
     // Pass startDate as planningStartTime to prevent scheduling in the past
     const { dayPlan, updatedProjectStates, updatedMaterialTracker, updatedSpoolAssignments } = scheduleCyclesForDay(
       planDate,
-      schedule,
+      effectiveSchedule,
       printers,
       workingProjectStates,
       settings,
       workingMaterialTracker,
       existingCycles,
       workingSpoolAssignments,
-      false,      // allowCrossMidnight
-      startDate   // planningStartTime - prevents scheduling before this time
+      false,            // allowCrossMidnight
+      startDate,        // planningStartTime - prevents scheduling before this time
+      shouldPlanAutonomous  // isAutonomousDay - indicates this is a non-working day with FULL_AUTOMATION
     );
     
     days.push(dayPlan);
@@ -1463,16 +1533,19 @@ export const validateExistingPlan = (): PlanValidation => {
     }
   }
   
-  // Check for cycles on non-working days
+  // Check for cycles on non-working days (but allow with FULL_AUTOMATION)
   for (const cycle of cycles) {
     if (cycle.status === 'completed' || cycle.status === 'failed') continue;
     
     const cycleDate = new Date(cycle.startTime);
     const schedule = getDayScheduleForDate(cycleDate, settings, []);
     
+    // Allow non-working day cycles if FULL_AUTOMATION is enabled
     if (!schedule || !schedule.enabled) {
-      issues.push(`מחזור מתוכנן ביום לא פעיל: ${cycleDate.toLocaleDateString('he-IL')}`);
-      issuesEn.push(`Cycle scheduled on non-working day: ${cycleDate.toLocaleDateString('en-US')}`);
+      if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
+        issues.push(`מחזור מתוכנן ביום לא פעיל: ${cycleDate.toLocaleDateString('he-IL')}`);
+        issuesEn.push(`Cycle scheduled on non-working day: ${cycleDate.toLocaleDateString('en-US')}`);
+      }
     }
   }
   
