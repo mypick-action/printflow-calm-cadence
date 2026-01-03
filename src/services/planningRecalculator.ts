@@ -18,6 +18,7 @@ import { upsertPlannedCycleByLegacyId, deleteCloudCyclesByDateRange } from './cl
 import { setReplanInProgress } from './cloudBridge';
 import { supabase } from '@/integrations/supabase/client';
 import { formatDateStringLocal } from './dateUtils';
+import { clearBlockLog, getBlockSummary } from './cycleBlockLogger';
 
 // Re-export the KEYS constant for internal use
 const setItem = <T>(key: string, value: T): void => {
@@ -60,6 +61,10 @@ export const recalculatePlan = async (
   reason: string = 'manual_replan'
 ): Promise<RecalculateResult> => {
   const startTime = Date.now();
+  
+  // Clear block log before new planning session
+  clearBlockLog();
+  
   const cycles = getPlannedCycles();
   const settings = getFactorySettings();
   const printers = getActivePrinters();
@@ -225,6 +230,14 @@ export const recalculatePlan = async (
   } else {
     summary = `Planning failed: ${planResult.blockingIssues.map(i => i.messageEn).join(', ')}`;
     summaryHe = `התכנון נכשל: ${planResult.blockingIssues.map(i => i.message).join(', ')}`;
+  }
+
+  // Log cycle blocks summary
+  const blockSummary = getBlockSummary();
+  if (blockSummary.total > 0) {
+    console.log(`[planningRecalculator] Cycle blocks during this replan: ${blockSummary.total}`, blockSummary.byReason);
+  } else {
+    console.log('[planningRecalculator] No cycle blocks during this replan');
   }
 
   // Log the result

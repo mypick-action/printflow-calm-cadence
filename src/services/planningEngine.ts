@@ -37,6 +37,7 @@ import {
 import { normalizeColor } from './colorNormalization';
 import { getAvailableGramsByColor } from './materialAdapter';
 import { formatDateStringLocal } from './dateUtils';
+import { logCycleBlock } from './cycleBlockLogger';
 
 // ============= TYPES =============
 
@@ -703,7 +704,27 @@ const scheduleCyclesForDay = (
             printer?.canStartNewCyclesAfterHours === true &&
             activePreset.allowedForNightCycle !== false; // Default true if not explicitly set to false
           
-          if (slot.currentTime >= slot.endOfDayTime && !canStartAtNight) continue;
+          if (slot.currentTime >= slot.endOfDayTime && !canStartAtNight) {
+            // Log block reason
+            const blockReason = !activePreset.allowedForNightCycle 
+              ? 'no_night_preset' 
+              : 'after_hours_policy';
+            logCycleBlock({
+              reason: blockReason,
+              projectId: state.project.id,
+              projectName: state.project.name,
+              printerId: slot.printerId,
+              printerName: slot.printerName,
+              presetId: activePreset.id,
+              presetName: activePreset.name,
+              details: blockReason === 'no_night_preset'
+                ? `Preset "${activePreset.name}" not allowed for night cycle`
+                : `After hours policy prevents start (behavior: ${settings.afterHoursBehavior}, printer night: ${printer?.canStartNewCyclesAfterHours})`,
+              scheduledDate: dateString,
+              cycleHours: cycleHours,
+            });
+            continue;
+          }
           
           // Calculate material needs using the active preset
           const gramsNeeded = getGramsPerCycle(state.product, activePreset);
@@ -720,7 +741,21 @@ const scheduleCyclesForDay = (
           const hasMaterial = availableMaterial >= gramsThisCycle;
           
           if (!hasMaterial) {
-            // Not enough material - skip this project
+            // Not enough material - log and skip this project
+            logCycleBlock({
+              reason: 'material_insufficient',
+              projectId: state.project.id,
+              projectName: state.project.name,
+              printerId: slot.printerId,
+              printerName: slot.printerName,
+              presetId: activePreset.id,
+              presetName: activePreset.name,
+              details: `Need ${gramsThisCycle}g of ${state.project.color}, available: ${Math.floor(availableMaterial)}g`,
+              scheduledDate: dateString,
+              cycleHours: cycleHours,
+              gramsRequired: gramsThisCycle,
+              gramsAvailable: availableMaterial,
+            });
             continue;
           }
           
@@ -752,6 +787,18 @@ const scheduleCyclesForDay = (
           // But allow if this is a SEQUENTIAL cycle on the same printer (no new spool needed)
           if (!thisPrinterHasColor && printersUsingColor.size >= totalSpoolCount) {
             // Cannot assign - not enough physical spools for parallel operation
+            logCycleBlock({
+              reason: 'spool_parallel_limit',
+              projectId: state.project.id,
+              projectName: state.project.name,
+              printerId: slot.printerId,
+              printerName: slot.printerName,
+              presetId: activePreset.id,
+              presetName: activePreset.name,
+              details: `Color ${state.project.color}: ${printersUsingColor.size} printers already using, only ${totalSpoolCount} spools available`,
+              scheduledDate: dateString,
+              cycleHours: cycleHours,
+            });
             continue;
           }
           

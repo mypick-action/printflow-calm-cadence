@@ -44,35 +44,49 @@ const FLAG_CONFIGS: Record<FeatureFlagName, FeatureFlagConfig> = {
 
 // Check if a feature flag is enabled
 export const isFeatureEnabled = (flag: FeatureFlagName): boolean => {
-  // Check global override first (for testing)
-  const globalFlags = (globalThis as any).__PRINTFLOW_FF__;
-  if (globalFlags && typeof globalFlags[flag] === 'boolean') {
-    return globalFlags[flag];
-  }
+  try {
+    // Check global override first (for testing)
+    const globalFlags = (globalThis as any).__PRINTFLOW_FF__;
+    if (globalFlags && typeof globalFlags[flag] === 'boolean') {
+      return globalFlags[flag];
+    }
 
-  // Check localStorage
-  const storageKey = `${FF_STORAGE_PREFIX}${flag}`;
-  const fromStorage = localStorage.getItem(storageKey);
-  
-  if (fromStorage === '1' || fromStorage === 'true') return true;
-  if (fromStorage === '0' || fromStorage === 'false') return false;
-  
-  // Return default value
-  return FLAG_CONFIGS[flag]?.defaultValue ?? false;
+    // Check localStorage (wrapped in try/catch for restricted browsers)
+    const storageKey = `${FF_STORAGE_PREFIX}${flag}`;
+    const fromStorage = localStorage.getItem(storageKey);
+    
+    if (fromStorage === '1' || fromStorage === 'true') return true;
+    if (fromStorage === '0' || fromStorage === 'false') return false;
+    
+    // Return default value
+    return FLAG_CONFIGS[flag]?.defaultValue ?? false;
+  } catch (error) {
+    // localStorage not available - return default
+    console.warn(`[FeatureFlags] Cannot access localStorage for ${flag}, using default`);
+    return FLAG_CONFIGS[flag]?.defaultValue ?? false;
+  }
 };
 
 // Enable a feature flag
 export const enableFeature = (flag: FeatureFlagName): void => {
-  const storageKey = `${FF_STORAGE_PREFIX}${flag}`;
-  localStorage.setItem(storageKey, '1');
-  console.log(`[FeatureFlags] ${flag} ENABLED`);
+  try {
+    const storageKey = `${FF_STORAGE_PREFIX}${flag}`;
+    localStorage.setItem(storageKey, '1');
+    console.log(`[FeatureFlags] ${flag} ENABLED`);
+  } catch (error) {
+    console.warn(`[FeatureFlags] Cannot enable ${flag} in localStorage`);
+  }
 };
 
-// Disable a feature flag
+// Disable a feature flag (explicitly set to '0' for unambiguous state)
 export const disableFeature = (flag: FeatureFlagName): void => {
-  const storageKey = `${FF_STORAGE_PREFIX}${flag}`;
-  localStorage.removeItem(storageKey);
-  console.log(`[FeatureFlags] ${flag} DISABLED`);
+  try {
+    const storageKey = `${FF_STORAGE_PREFIX}${flag}`;
+    localStorage.setItem(storageKey, '0');
+    console.log(`[FeatureFlags] ${flag} DISABLED`);
+  } catch (error) {
+    console.warn(`[FeatureFlags] Cannot disable ${flag} in localStorage`);
+  }
 };
 
 // Get all feature flags and their current state
@@ -91,12 +105,16 @@ export const getAllFeatureFlags = (): Record<FeatureFlagName, { enabled: boolean
 
 // Reset all feature flags to defaults (OFF)
 export const resetAllFeatureFlags = (): void => {
-  for (const flag of Object.keys(FLAG_CONFIGS)) {
-    const storageKey = `${FF_STORAGE_PREFIX}${flag}`;
-    localStorage.removeItem(storageKey);
+  try {
+    for (const flag of Object.keys(FLAG_CONFIGS)) {
+      const storageKey = `${FF_STORAGE_PREFIX}${flag}`;
+      localStorage.removeItem(storageKey);
+    }
+    (globalThis as any).__PRINTFLOW_FF__ = undefined;
+    console.log('[FeatureFlags] All flags reset to defaults (OFF)');
+  } catch (error) {
+    console.warn('[FeatureFlags] Cannot reset flags in localStorage');
   }
-  (globalThis as any).__PRINTFLOW_FF__ = undefined;
-  console.log('[FeatureFlags] All flags reset to defaults (OFF)');
 };
 
 // Debug: Log all feature flag states
