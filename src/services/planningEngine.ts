@@ -831,23 +831,16 @@ const scheduleCyclesForDay = (
           // Get available material from ColorInventory (single source of truth)
           const hasMaterial = availableMaterial >= gramsThisCycle;
           
+          // ============= SOFT CONSTRAINT: Material availability =============
+          // DON'T block cycle creation - mark readiness state instead
+          // Planning creates cycles, execution handles material assignment
           if (!hasMaterial) {
-            // Not enough material - log and skip this project
-            logCycleBlock({
-              reason: 'material_insufficient',
-              projectId: state.project.id,
-              projectName: state.project.name,
-              printerId: slot.printerId,
-              printerName: slot.printerName,
-              presetId: activePreset.id,
-              presetName: activePreset.name,
-              details: `Need ${gramsThisCycle}g of ${state.project.color}, available: ${Math.floor(availableMaterial)}g`,
-              scheduledDate: dateString,
-              cycleHours: cycleHours,
-              gramsRequired: gramsThisCycle,
-              gramsAvailable: availableMaterial,
+            console.log('[Planning] Material insufficient - cycle will be created with blocked_inventory state', {
+              project: state.project.name,
+              color: state.project.color,
+              needed: gramsThisCycle,
+              available: Math.floor(availableMaterial)
             });
-            continue;
           }
           
           // For parallel scheduling, limit by REAL spool count (openSpoolCount + closedCount)
@@ -874,23 +867,16 @@ const scheduleCyclesForDay = (
           // Check if this printer already has this color assigned
           const thisPrinterHasColor = printersUsingColor.has(slot.printerId);
           
-          // If printer doesn't have color and we've reached spool limit for concurrent use, skip
-          // But allow if this is a SEQUENTIAL cycle on the same printer (no new spool needed)
-          if (!thisPrinterHasColor && printersUsingColor.size >= totalSpoolCount) {
-            // Cannot assign - not enough physical spools for parallel operation
-            logCycleBlock({
-              reason: 'spool_parallel_limit',
-              projectId: state.project.id,
-              projectName: state.project.name,
-              printerId: slot.printerId,
-              printerName: slot.printerName,
-              presetId: activePreset.id,
-              presetName: activePreset.name,
-              details: `Color ${state.project.color}: ${printersUsingColor.size} printers already using, only ${totalSpoolCount} spools available`,
-              scheduledDate: dateString,
-              cycleHours: cycleHours,
+          // ============= SOFT CONSTRAINT: Spool parallel limit =============
+          // Track capacity but DON'T block - at most a warning in readiness
+          const hasSpoolCapacity = thisPrinterHasColor || printersUsingColor.size < totalSpoolCount;
+          if (!hasSpoolCapacity) {
+            console.log('[Planning] Spool capacity exceeded - cycle will be created with warning', {
+              project: state.project.name,
+              color: state.project.color,
+              printersUsing: printersUsingColor.size,
+              totalSpools: totalSpoolCount
             });
-            continue;
           }
           
           // Determine plate type
@@ -911,38 +897,53 @@ const scheduleCyclesForDay = (
           // Check if material is available in inventory at all
           const hasEnoughInventory = availableMaterial >= gramsThisCycle;
           
-          if (!hasEnoughInventory) {
-            // Not enough material in inventory - this is a blocking issue
-            readinessState = 'blocked_inventory';
-            readinessDetails = `Insufficient ${state.project.color} material: need ${gramsThisCycle}g, available ${Math.floor(availableMaterial)}g`;
+          // Use existing printer variable from line 773 for mounted spool check
+          // (printer is already defined in this scope)
+          
+          // Check what color is currently mounted on this printer
+          let currentMountedColor: string | undefined;
+          let isCorrectColorMounted = false;
+          
+          if (printer?.hasAMS && printer.amsSlotStates) {
+            const matchingSlot = printer.amsSlotStates.find(s => 
+              normalizeColor(s.color) === colorKey && !!s.spoolId
+            );
+            isCorrectColorMounted = !!matchingSlot;
+            // Get first mounted color for display
+            const firstMounted = printer.amsSlotStates.find(s => !!s.spoolId && s.color);
+            currentMountedColor = firstMounted?.color;
           } else {
-            // Material exists in inventory - find suitable spools to suggest
-            const matchingSpools = availableSpoolsForColor.filter(s => s.gramsRemainingEst >= gramsThisCycle);
-            
-            // Check if a spool is already mounted on this printer
-            const allPrinters = getPrinters();
-            const printer = allPrinters.find(p => p.id === slot.printerId);
-            
-            let isSpoolMounted = false;
-            if (printer?.hasAMS && printer.amsSlotStates) {
-              isSpoolMounted = printer.amsSlotStates.some(s => 
-                normalizeColor(s.color) === colorKey && !!s.spoolId
-              );
+            isCorrectColorMounted = !!printer?.mountedSpoolId && 
+              normalizeColor(printer?.mountedColor) === colorKey;
+            currentMountedColor = printer?.mountedColor;
+          }
+          
+          // Determine readiness state - priority: blocked_inventory > waiting_for_spool > ready
+          if (!hasEnoughInventory) {
+            // Not enough material in inventory - blocked
+            readinessState = 'blocked_inventory';
+            readinessDetails = `חסר ${state.project.color}: צריך ${gramsThisCycle}g, זמין ${Math.floor(availableMaterial)}g`;
+          } else if (!hasSpoolCapacity) {
+            // All spools of this color are in use on other printers
+            readinessState = 'blocked_inventory';
+            readinessDetails = `אין גליל פנוי ל-${state.project.color}: ${printersUsingColor.size} מדפסות משתמשות ב-${totalSpoolCount} גלילים`;
+          } else if (isCorrectColorMounted) {
+            // Correct color already mounted
+            readinessState = 'ready';
+            readinessDetails = undefined;
+          } else {
+            // Need to load spool - include info about currently mounted color
+            readinessState = 'waiting_for_spool';
+            if (currentMountedColor && normalizeColor(currentMountedColor) !== colorKey) {
+              readinessDetails = `טען גליל ${state.project.color} על ${slot.printerName} (כרגע: ${currentMountedColor})`;
             } else {
-              isSpoolMounted = !!printer?.mountedSpoolId && 
-                normalizeColor(printer?.mountedColor) === colorKey;
+              readinessDetails = `טען גליל ${state.project.color} על ${slot.printerName}`;
             }
             
-            if (isSpoolMounted) {
-              readinessState = 'ready';
-              readinessDetails = undefined;
-            } else {
-              readinessState = 'waiting_for_spool';
-              readinessDetails = `Load ${state.project.color} spool on ${slot.printerName}`;
-              
-              for (const spool of matchingSpools.slice(0, 3)) {
-                suggestedSpoolIds.push(spool.id);
-              }
+            // Suggest matching spools
+            const matchingSpools = availableSpoolsForColor.filter(s => s.gramsRemainingEst >= gramsThisCycle);
+            for (const spool of matchingSpools.slice(0, 3)) {
+              suggestedSpoolIds.push(spool.id);
             }
           }
           
@@ -976,10 +977,10 @@ const scheduleCyclesForDay = (
           // Update project state
           state.remainingUnits -= unitsThisCycle;
           
-          // Only deduct material if we have it (for tracking purposes)
-          if (hasEnoughInventory) {
-            workingMaterial.set(colorKey, availableMaterial - gramsThisCycle);
-          }
+          // ============= NO MATERIAL DEDUCTION IN PLANNING =============
+          // Material is deducted ONLY at execution time in StartPrintModal
+          // Planning tracks estimates but never changes actual inventory
+          // workingMaterial remains unchanged - cycles may overlap on same material
           
           // Track this printer as using this color (for spool-limiting concurrent access)
           if (!workingSpoolAssignments.has(colorKey)) {

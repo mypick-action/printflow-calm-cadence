@@ -44,6 +44,9 @@ export interface DashboardCycle {
   hasAMS: boolean;
   status: PlannedCycle['status'];
   presetName?: string;
+  // Readiness state for execution
+  readinessState: 'ready' | 'waiting_for_spool' | 'blocked_inventory' | 'waiting_for_plate_reload';
+  readinessDetails?: string;
 }
 
 export interface PrinterDayPlan {
@@ -289,6 +292,9 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
         hasAMS: printer.hasAMS,
         status: cycle.status,
         presetName: preset?.name,
+        // Add readiness state for execution tracking
+        readinessState: cycle.readinessState || 'ready',
+        readinessDetails: cycle.readinessDetails,
       };
     });
     
