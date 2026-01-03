@@ -7,13 +7,17 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { 
   Calendar, 
   Save,
   Clock,
   RefreshCw,
   Info,
-  Loader2
+  Loader2,
+  Moon,
+  Zap,
+  StopCircle
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { 
@@ -28,6 +32,7 @@ import { updateFactorySettings as updateCloudFactorySettings } from '@/services/
 import { RecalculateModal } from '@/components/planning/RecalculateModal';
 
 type DayKey = keyof WeeklySchedule;
+type AfterHoursBehavior = 'NONE' | 'ONE_CYCLE_END_OF_DAY' | 'FULL_AUTOMATION';
 
 interface DayConfig {
   key: DayKey;
@@ -49,6 +54,7 @@ export const WorkScheduleSection: React.FC = () => {
   const { language } = useLanguage();
   const { workspaceId } = useAuth();
   const [schedule, setSchedule] = useState<WeeklySchedule>(getDefaultWeeklySchedule());
+  const [afterHoursBehavior, setAfterHoursBehavior] = useState<AfterHoursBehavior>('ONE_CYCLE_END_OF_DAY');
   const [hasChanges, setHasChanges] = useState(false);
   const [showRecalculateModal, setShowRecalculateModal] = useState(false);
   const [showRecalculateButton, setShowRecalculateButton] = useState(false);
@@ -58,6 +64,9 @@ export const WorkScheduleSection: React.FC = () => {
     const settings = getFactorySettings();
     if (settings?.weeklySchedule) {
       setSchedule(settings.weeklySchedule);
+    }
+    if (settings?.afterHoursBehavior) {
+      setAfterHoursBehavior(settings.afterHoursBehavior);
     }
   }, []);
 
@@ -105,15 +114,17 @@ export const WorkScheduleSection: React.FC = () => {
       if (settings) {
         saveFactorySettings({
           ...settings,
-          weeklySchedule: schedule
+          weeklySchedule: schedule,
+          afterHoursBehavior: afterHoursBehavior
         });
       }
 
-      // Save to Cloud (Supabase)
+      // Save to Cloud (Supabase) - include after_hours_behavior
       if (workspaceId) {
-        console.log('[WorkSchedule] Saving to cloud, payload:', schedule);
+        console.log('[WorkSchedule] Saving to cloud, payload:', { schedule, afterHoursBehavior });
         const cloudResult = await updateCloudFactorySettings(workspaceId, {
-          weekly_work_hours: schedule as unknown as Record<string, unknown>
+          weekly_work_hours: schedule as unknown as Record<string, unknown>,
+          after_hours_behavior: afterHoursBehavior
         });
         
         if (!cloudResult) {
@@ -221,6 +232,82 @@ export const WorkScheduleSection: React.FC = () => {
                 </div>
               );
             })}
+          </div>
+
+          {/* After Hours Behavior Section */}
+          <div className="pt-4 border-t">
+            <div className="flex items-center gap-2 mb-3">
+              <Moon className="w-4 h-4 text-primary" />
+              <span className="font-medium text-sm">
+                {language === 'he' ? 'התנהגות אחרי שעות עבודה' : 'After Hours Behavior'}
+              </span>
+            </div>
+            
+            <RadioGroup
+              value={afterHoursBehavior}
+              onValueChange={(value: AfterHoursBehavior) => {
+                setAfterHoursBehavior(value);
+                setHasChanges(true);
+              }}
+              className="space-y-2"
+            >
+              <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                afterHoursBehavior === 'NONE' ? 'bg-primary/5 border-primary' : 'bg-muted/30 border-border hover:border-primary/40'
+              }`}>
+                <RadioGroupItem value="NONE" id="none" className="mt-1" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <StopCircle className="w-4 h-4 text-muted-foreground" />
+                    <span className="font-medium text-sm">
+                      {language === 'he' ? 'ללא הדפסות בלילה' : 'No Night Printing'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {language === 'he' 
+                      ? 'מחזורים יסתיימו לפני סוף יום העבודה'
+                      : 'Cycles will finish before end of workday'}
+                  </p>
+                </div>
+              </label>
+
+              <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                afterHoursBehavior === 'ONE_CYCLE_END_OF_DAY' ? 'bg-primary/5 border-primary' : 'bg-muted/30 border-border hover:border-primary/40'
+              }`}>
+                <RadioGroupItem value="ONE_CYCLE_END_OF_DAY" id="one_cycle" className="mt-1" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <Moon className="w-4 h-4 text-info" />
+                    <span className="font-medium text-sm">
+                      {language === 'he' ? 'מחזור אחד נוסף (ברירת מחדל)' : 'One Extra Cycle (Default)'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {language === 'he' 
+                      ? 'אפשר להתחיל מחזור אחד שירוץ בלילה'
+                      : 'Allow starting one cycle that runs overnight'}
+                  </p>
+                </div>
+              </label>
+
+              <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                afterHoursBehavior === 'FULL_AUTOMATION' ? 'bg-primary/5 border-primary' : 'bg-muted/30 border-border hover:border-primary/40'
+              }`}>
+                <RadioGroupItem value="FULL_AUTOMATION" id="full_auto" className="mt-1" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-success" />
+                    <span className="font-medium text-sm">
+                      {language === 'he' ? 'אוטומציה מלאה' : 'Full Automation'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {language === 'he' 
+                      ? 'מדפסות עם הרשאה יכולות להתחיל מחזורים חדשים בלילה ובסופ״ש'
+                      : 'Enabled printers can start new cycles at night and weekends'}
+                  </p>
+                </div>
+              </label>
+            </RadioGroup>
           </div>
 
           {/* Info Note */}
