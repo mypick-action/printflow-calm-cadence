@@ -40,6 +40,7 @@ import {
 } from '@/services/storage';
 import { WorkScheduleSection } from './WorkScheduleSection';
 import { CloudDebugPanel } from '@/components/debug/CloudDebugPanel';
+import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 
 export const SettingsPage: React.FC = () => {
   const { language } = useLanguage();
@@ -352,6 +353,9 @@ export const SettingsPage: React.FC = () => {
           </AlertDialog>
         </CardContent>
       </Card>
+
+      {/* Feature Flags Panel - Development */}
+      <FeatureFlagsPanel />
 
       {/* Debug Panel - Development */}
       <CloudDebugPanel />
