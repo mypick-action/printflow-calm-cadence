@@ -175,6 +175,7 @@ export const PrintersPage: React.FC = () => {
       mounted_spool_id: editingPrinter.mountedSpoolId ?? null,
       notes: (editingPrinter as any).notes ?? null,
       physical_plate_capacity: editingPrinter.physicalPlateCapacity ?? 999,
+      can_start_new_cycles_after_hours: editingPrinter.canStartNewCyclesAfterHours ?? false,
     });
     
     // Also update local storage for spools/slot states (which aren't in cloud schema)
@@ -1176,6 +1177,27 @@ export const PrintersPage: React.FC = () => {
                     ? 'מגביל מחזורים רצופים "מוכנים" בלילה/סופ"ש'
                     : 'Limits consecutive "ready" cycles during night/weekend'}
                 </p>
+              </div>
+
+              {/* Night/Weekend Operation Toggle */}
+              <div className="space-y-2 p-4 border rounded-lg bg-muted/30">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1 flex-1">
+                    <Label>{language === 'he' ? 'מאפשר התחלת מחזורים בלילה' : 'Allow starting new cycles after hours'}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'he' 
+                        ? 'במצב FULL_AUTOMATION: מאפשר לפתוח פלטה חדשה ולהתחיל מחזור בלילה/סופ"ש ללא מגע אדם'
+                        : 'In FULL_AUTOMATION mode: allows opening new plate and starting cycle during night/weekend without human touch'}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={editingPrinter.canStartNewCyclesAfterHours ?? false}
+                    onCheckedChange={(v) => setEditingPrinter({ 
+                      ...editingPrinter, 
+                      canStartNewCyclesAfterHours: v 
+                    })}
+                  />
+                </div>
               </div>
 
               {/* Save Button */}
