@@ -55,6 +55,7 @@ export const WorkScheduleSection: React.FC = () => {
   const { workspaceId } = useAuth();
   const [schedule, setSchedule] = useState<WeeklySchedule>(getDefaultWeeklySchedule());
   const [afterHoursBehavior, setAfterHoursBehavior] = useState<AfterHoursBehavior>('ONE_CYCLE_END_OF_DAY');
+  const [materialLeadTimeHours, setMaterialLeadTimeHours] = useState(48);
   const [hasChanges, setHasChanges] = useState(false);
   const [showRecalculateModal, setShowRecalculateModal] = useState(false);
   const [showRecalculateButton, setShowRecalculateButton] = useState(false);
@@ -67,6 +68,9 @@ export const WorkScheduleSection: React.FC = () => {
     }
     if (settings?.afterHoursBehavior) {
       setAfterHoursBehavior(settings.afterHoursBehavior);
+    }
+    if (settings?.materialLeadTimeHours !== undefined) {
+      setMaterialLeadTimeHours(settings.materialLeadTimeHours);
     }
   }, []);
 
@@ -115,7 +119,8 @@ export const WorkScheduleSection: React.FC = () => {
         const updatedSettings = {
           ...settings,
           weeklySchedule: schedule,
-          afterHoursBehavior: afterHoursBehavior
+          afterHoursBehavior: afterHoursBehavior,
+          materialLeadTimeHours: materialLeadTimeHours
         };
         saveFactorySettings(updatedSettings);
         
@@ -317,6 +322,36 @@ export const WorkScheduleSection: React.FC = () => {
                 </div>
               </label>
             </RadioGroup>
+          </div>
+
+          {/* Material Lead Time Section */}
+          <div className="pt-4 border-t">
+            <div className="flex items-center gap-2 mb-3">
+              <Clock className="w-4 h-4 text-primary" />
+              <span className="font-medium text-sm">
+                {language === 'he' ? 'Lead Time להזמנת חומרים' : 'Material Lead Time'}
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              <Input
+                type="number"
+                min={12}
+                max={168}
+                value={materialLeadTimeHours}
+                onChange={(e) => {
+                  setMaterialLeadTimeHours(parseInt(e.target.value) || 48);
+                  setHasChanges(true);
+                }}
+                className="w-24 text-center"
+              />
+              <span className="text-sm text-muted-foreground">
+                {language === 'he' ? 'שעות' : 'hours'}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                ({language === 'he' ? 'זמן אספקה מההזמנה' : 'delivery time from order'})
+              </span>
+            </div>
           </div>
 
           {/* Info Note */}
