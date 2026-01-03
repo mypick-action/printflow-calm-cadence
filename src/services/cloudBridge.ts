@@ -768,14 +768,28 @@ export async function migrateLocalProductsToCloud(
     return { products: 0, presets: 0, updated: 0, errors: 0 };
   }
 
+  const MIGRATION_KEY = `printflow_products_migrated_${workspaceId}`;
+
+  // Check if already migrated for this workspace
+  if (localStorage.getItem(MIGRATION_KEY) === 'true') {
+    console.log('[CloudBridge] Products already migrated for workspace, skipping');
+    return { products: 0, presets: 0, updated: 0, errors: 0 };
+  }
+
   console.log('[CloudBridge] Starting products migration for workspace:', workspaceId);
 
   // Get local products from localStorage
   const localProducts = safeJsonParse<LocalProduct[]>(localStorage.getItem(KEYS.PRODUCTS)) || [];
   if (localProducts.length === 0) {
     console.log('[CloudBridge] No local products to migrate');
+    // Mark as done even if empty (nothing to migrate)
+    localStorage.setItem(MIGRATION_KEY, 'true');
     return { products: 0, presets: 0, updated: 0, errors: 0 };
   }
+
+  // Log products being migrated
+  console.log('[CloudBridge] Migration running - local product IDs:', 
+    localProducts.map(p => ({ id: p.id, name: p.name })));
 
   let products = 0;
   let presets = 0;
@@ -842,6 +856,15 @@ export async function migrateLocalProductsToCloud(
       console.error(`[CloudBridge] Product migration error for ${product.name}:`, e);
       errors++;
     }
+  }
+
+  // Only mark migration as done + clear local if NO errors
+  if (errors === 0) {
+    localStorage.setItem(MIGRATION_KEY, 'true');
+    localStorage.removeItem(KEYS.PRODUCTS);
+    console.log('[CloudBridge] Migration successful - cleared local products, set migration flag');
+  } else {
+    console.warn('[CloudBridge] Migration had errors - keeping local products for retry');
   }
 
   console.log('[CloudBridge] Products migration complete:', { products, presets, updated, errors });

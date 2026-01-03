@@ -193,17 +193,25 @@ export const updateProduct = async (id: string, updates: Partial<DbProduct>): Pr
   return data;
 };
 
-export const deleteProduct = async (id: string): Promise<boolean> => {
-  const { error } = await supabase
+export const deleteProduct = async (id: string, workspaceId?: string): Promise<boolean> => {
+  let query = supabase
     .from('products')
     .delete()
     .eq('id', id);
   
-  if (error) {
-    console.error('Error deleting product:', error);
-    return false;
+  // Add workspace filter if provided (for extra safety + debugging)
+  if (workspaceId) {
+    query = query.eq('workspace_id', workspaceId);
   }
   
+  const { error } = await query;
+  
+  if (error) {
+    console.error('[cloudStorage.deleteProduct] Error:', error);
+    throw new Error(`Failed to delete product: ${error.message}`);
+  }
+  
+  console.log('[cloudStorage.deleteProduct] Deleted:', id);
   return true;
 };
 
