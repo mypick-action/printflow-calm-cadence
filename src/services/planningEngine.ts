@@ -965,12 +965,103 @@ const scheduleCyclesForDay = (
 // Post-processing step to limit consecutive "ready" cycles per printer
 // for night/weekend operations based on physicalPlateCapacity
 
+/**
+ * Check if a cycle can start autonomously (without operator intervention)
+ * Uses the exact same 3-level control as the main planning logic:
+ * 1. Factory: afterHoursBehavior === 'FULL_AUTOMATION'
+ * 2. Printer: canStartNewCyclesAfterHours === true
+ * 3. Preset: allowedForNightCycle !== false
+ * 
+ * Additionally, the cycle must start after the workday ends.
+ */
+const canCycleRunAutonomously = (
+  cycleStartTime: Date,
+  printerId: string,
+  presetId: string | undefined,
+  printers: Printer[],
+  settings: FactorySettings,
+  products: Product[]
+): boolean => {
+  // Level 1: Factory must allow full automation
+  if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
+    return false;
+  }
+  
+  // Level 2: Printer must allow night starts
+  const printer = printers.find(p => p.id === printerId);
+  if (!printer?.canStartNewCyclesAfterHours) {
+    return false;
+  }
+  
+  // Level 3: Preset must allow night cycles (default true if not set)
+  if (presetId) {
+    // Find preset across all products
+    for (const product of products) {
+      const preset = product.platePresets.find(p => p.id === presetId);
+      if (preset) {
+        if (preset.allowedForNightCycle === false) {
+          return false;
+        }
+        break;
+      }
+    }
+  }
+  
+  // Check if the cycle starts after work hours
+  const cycleDate = new Date(cycleStartTime);
+  cycleDate.setHours(0, 0, 0, 0);
+  const schedule = getDayScheduleForDate(cycleDate, settings, []);
+  
+  if (!schedule?.enabled) {
+    // Non-working day - any cycle that passes the 3-level check is autonomous
+    return true;
+  }
+  
+  // Check if cycle starts after end of workday
+  const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+  const endOfDay = new Date(cycleStartTime);
+  endOfDay.setHours(endHour, endMinute, 0, 0);
+  
+  return cycleStartTime >= endOfDay;
+};
+
+/**
+ * Check if a cycle is within work hours (operator available to reload plates)
+ */
+const isCycleWithinWorkHours = (
+  cycleStartTime: Date,
+  settings: FactorySettings
+): boolean => {
+  const cycleDate = new Date(cycleStartTime);
+  cycleDate.setHours(0, 0, 0, 0);
+  const schedule = getDayScheduleForDate(cycleDate, settings, []);
+  
+  if (!schedule?.enabled) {
+    // Non-working day - not within work hours
+    return false;
+  }
+  
+  const [startHour, startMinute] = schedule.startTime.split(':').map(Number);
+  const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+  
+  const workStart = new Date(cycleStartTime);
+  workStart.setHours(startHour, startMinute, 0, 0);
+  
+  const workEnd = new Date(cycleStartTime);
+  workEnd.setHours(endHour, endMinute, 0, 0);
+  
+  return cycleStartTime >= workStart && cycleStartTime < workEnd;
+};
+
 const applyPhysicalPlateLimit = (
   cycles: PlannedCycle[],
   printers: Printer[],
   settings: FactorySettings
 ): void => {
-  // Create lookup for printer capacity
+  // Get products for preset lookup
+  const products = getProducts();
+  
+  // Create lookup for printer capacity and names
   const printerCapacity = new Map<string, number>();
   const printerNames = new Map<string, string>();
   for (const printer of printers) {
@@ -979,7 +1070,7 @@ const applyPhysicalPlateLimit = (
     printerNames.set(printer.id, printer.name);
   }
   
-  // Group cycles by printer and sort by start time
+  // Group cycles by printer
   const cyclesByPrinter = new Map<string, PlannedCycle[]>();
   for (const cycle of cycles) {
     if (!cyclesByPrinter.has(cycle.printerId)) {
@@ -988,8 +1079,9 @@ const applyPhysicalPlateLimit = (
     cyclesByPrinter.get(cycle.printerId)!.push(cycle);
   }
   
-  // Sort each printer's cycles by start time
+  // Process each printer
   for (const [printerId, printerCycles] of cyclesByPrinter) {
+    // Sort by start time
     printerCycles.sort((a, b) => 
       new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
     );
@@ -1000,38 +1092,30 @@ const applyPhysicalPlateLimit = (
     // Skip printers with unlimited capacity
     if (capacity >= 999) continue;
     
-    // Find consecutive "autonomous" cycles (night/weekend, canStartAtNight = true)
-    // For simplicity, we consider cycles starting after work hours as autonomous
-    // A cycle is "autonomous" if it could run without operator intervention
-    
-    // Process cycles to find runs of "ready" cycles that are after-hours
+    // Count consecutive autonomous ready cycles
     let autonomousReadyCount = 0;
-    let lastCycleEndTime: Date | null = null;
     
     for (const cycle of printerCycles) {
       const cycleStart = new Date(cycle.startTime);
-      const cycleDate = new Date(cycleStart);
-      cycleDate.setHours(0, 0, 0, 0);
       
-      // Get schedule for this day
-      const schedule = getDayScheduleForDate(cycleDate, settings, []);
-      
-      // Determine if this is an after-hours cycle
-      const isAfterHours = !schedule?.enabled || isTimeAfterWorkday(cycleStart, schedule);
-      
-      // Check if this is a continuation from the previous cycle (same printer, sequential)
-      const isSequential = lastCycleEndTime && 
-        (cycleStart.getTime() - lastCycleEndTime.getTime()) < 2 * 60 * 60 * 1000; // Within 2 hours
-      
-      if (!isSequential) {
-        // New sequence starts - reset counter
+      // Check if this cycle is within work hours - reset counter
+      if (isCycleWithinWorkHours(cycleStart, settings)) {
         autonomousReadyCount = 0;
+        continue;
       }
       
-      lastCycleEndTime = new Date(cycle.endTime);
+      // Check if this cycle can run autonomously using the 3-level policy
+      const isAutonomous = canCycleRunAutonomously(
+        cycleStart,
+        cycle.printerId,
+        cycle.presetId,
+        printers,
+        settings,
+        products
+      );
       
-      // Only apply limit to after-hours cycles that are currently "ready"
-      if (isAfterHours && cycle.readinessState === 'ready') {
+      // Only count cycles that are ready AND can run autonomously
+      if (isAutonomous && cycle.readinessState === 'ready') {
         autonomousReadyCount++;
         
         if (autonomousReadyCount > capacity) {
@@ -1048,27 +1132,15 @@ const applyPhysicalPlateLimit = (
             presetId: cycle.presetId,
             presetName: cycle.presetName,
             details: `Cycle #${autonomousReadyCount} exceeds physical plate capacity of ${capacity}`,
-            scheduledDate: cycleDate.toISOString().split('T')[0],
+            scheduledDate: cycleStart.toISOString().split('T')[0],
             cycleHours: (new Date(cycle.endTime).getTime() - cycleStart.getTime()) / (1000 * 60 * 60),
           });
         }
-      } else if (!isAfterHours) {
-        // During work hours - reset the counter (operator can reload)
-        autonomousReadyCount = 0;
       }
+      // Note: If not autonomous (policy blocks it), don't count toward plate limit
+      // These cycles would be blocked by policy anyway
     }
   }
-};
-
-// Helper to check if a time is after the workday ends
-const isTimeAfterWorkday = (time: Date, schedule: DaySchedule): boolean => {
-  if (!schedule.enabled) return true;
-  
-  const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
-  const endOfDay = new Date(time);
-  endOfDay.setHours(endHour, endMinute, 0, 0);
-  
-  return time >= endOfDay;
 };
 
 // ============= MAIN PLANNING FUNCTION =============
