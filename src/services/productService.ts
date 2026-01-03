@@ -212,15 +212,18 @@ export const updateProductCloudFirst = async (
 /**
  * Delete a product from the cloud and local cache
  */
-export const deleteProductCloudFirst = async (productId: string): Promise<boolean> => {
-  // 1. Delete from cloud (plate_presets will cascade or need separate delete)
-  const success = await cloudStorage.deleteProduct(productId);
+export const deleteProductCloudFirst = async (productId: string, workspaceId?: string): Promise<boolean> => {
+  console.log('[ProductService] Deleting product from cloud:', productId, 'workspace:', workspaceId);
   
-  if (!success) {
-    throw new Error('Failed to delete product from cloud');
+  try {
+    // 1. Delete from cloud - now throws on error
+    await cloudStorage.deleteProduct(productId, workspaceId);
+  } catch (error) {
+    console.error('[ProductService] Cloud delete failed:', error);
+    throw error; // Re-throw to caller
   }
   
-  // 2. Remove from local cache
+  // 2. Remove from local cache only after cloud success
   removeFromLocalCache(productId);
   
   console.log('[ProductService] Deleted product:', productId);

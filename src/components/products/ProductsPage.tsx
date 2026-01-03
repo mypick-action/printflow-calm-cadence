@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,17 +25,17 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Plus, Package, Pencil, Star, Check, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { Product, getGramsPerCycle } from '@/services/storage';
 import { 
-  getProducts, 
-  Product, 
-  getGramsPerCycle,
-  deleteProduct,
-  deleteProducts,
-} from '@/services/storage';
+  deleteProductCloudFirst, 
+  hydrateProductsFromCloud, 
+  getProductsCached 
+} from '@/services/productService';
 import { ProductEditorModal } from './ProductEditorModal';
 
 export const ProductsPage: React.FC = () => {
   const { language } = useLanguage();
+  const { workspaceId } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -42,9 +43,10 @@ export const ProductsPage: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    setProducts(getProducts());
+    setProducts(getProductsCached());
   }, []);
 
   const handleOpenDialog = (product?: Product) => {
@@ -53,7 +55,7 @@ export const ProductsPage: React.FC = () => {
   };
 
   const handleProductSaved = () => {
-    setProducts(getProducts());
+    setProducts(getProductsCached());
     setEditingProduct(null);
   };
 
@@ -85,26 +87,59 @@ export const ProductsPage: React.FC = () => {
     setDeleteDialogOpen(true);
   };
 
-  const confirmDelete = () => {
-    if (productToDelete) {
-      // Single delete
-      deleteProduct(productToDelete.id);
-      toast({
-        title: language === 'he' ? 'המוצר נמחק' : 'Product deleted',
-        description: productToDelete.name,
+  const confirmDelete = async () => {
+    if (!workspaceId) {
+      toast({ 
+        title: language === 'he' ? 'שגיאה' : 'Error', 
+        description: 'No workspace', 
+        variant: 'destructive' 
       });
-    } else {
-      // Batch delete
-      const count = deleteProducts(Array.from(selectedIds));
-      toast({
-        title: language === 'he' ? 'מוצרים נמחקו' : 'Products deleted',
-        description: language === 'he' ? `${count} מוצרים נמחקו` : `${count} products deleted`,
-      });
-      setSelectedIds(new Set());
+      return;
     }
-    setProducts(getProducts());
-    setDeleteDialogOpen(false);
-    setProductToDelete(null);
+    
+    setIsDeleting(true);
+    
+    try {
+      if (productToDelete) {
+        // Single delete - cloud first
+        await deleteProductCloudFirst(productToDelete.id, workspaceId);
+        toast({
+          title: language === 'he' ? 'המוצר נמחק' : 'Product deleted',
+          description: productToDelete.name,
+        });
+      } else if (selectedIds.size > 0) {
+        // Batch delete - delete each from cloud
+        let deleted = 0;
+        for (const id of selectedIds) {
+          try {
+            await deleteProductCloudFirst(id, workspaceId);
+            deleted++;
+          } catch (e) {
+            console.error(`Failed to delete product ${id}:`, e);
+          }
+        }
+        toast({
+          title: language === 'he' ? 'מוצרים נמחקו' : 'Products deleted',
+          description: `${deleted} ${language === 'he' ? 'מוצרים' : 'products'}`,
+        });
+        setSelectedIds(new Set());
+      }
+      
+      // Hydrate from cloud to ensure sync (not getProducts which is local-only)
+      await hydrateProductsFromCloud(workspaceId);
+      setProducts(getProductsCached());
+    } catch (error) {
+      console.error('Delete failed:', error);
+      toast({
+        title: language === 'he' ? 'שגיאה במחיקה' : 'Delete failed',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsDeleting(false);
+      setDeleteDialogOpen(false);
+      setProductToDelete(null);
+    }
   };
 
   const getRiskBadge = (level: 'low' | 'medium' | 'high') => {
@@ -205,11 +240,18 @@ export const ProductsPage: React.FC = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>
               {language === 'he' ? 'ביטול' : 'Cancel'}
             </AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {language === 'he' ? 'מחק' : 'Delete'}
+            <AlertDialogAction 
+              onClick={confirmDelete} 
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting 
+                ? (language === 'he' ? 'מוחק...' : 'Deleting...') 
+                : (language === 'he' ? 'מחק' : 'Delete')
+              }
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
