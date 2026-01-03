@@ -562,7 +562,21 @@ const scheduleCyclesForDay = (
   planningStartTime?: Date, // NEW: When replanning starts (from recalculatePlan)
   isAutonomousDay: boolean = false // true for non-working days with FULL_AUTOMATION
 ): { dayPlan: DayPlan; updatedProjectStates: ProjectPlanningState[]; updatedMaterialTracker: Map<string, number>; updatedSpoolAssignments: Map<string, Set<string>> } => {
-  const dayStart = isAutonomousDay 
+  
+  // ============= DEBUG: Night scheduling input diagnostic =============
+  console.log('[NightScheduling] ⚡ scheduleCyclesForDay input:', {
+    date: formatDateString(date),
+    isAutonomousDay,
+    afterHoursBehavior: settings.afterHoursBehavior,
+    printerNightConfig: printers.map(p => ({
+      id: p.id,
+      name: p.name,
+      canStartNewCyclesAfterHours: p.canStartNewCyclesAfterHours,
+      status: p.status,
+    })),
+  });
+  
+  const dayStart = isAutonomousDay
     ? createDateWithTime(date, '00:00') 
     : createDateWithTime(date, schedule.startTime);
   
@@ -761,6 +775,24 @@ const scheduleCyclesForDay = (
             settings.afterHoursBehavior === 'FULL_AUTOMATION' &&
             printer?.canStartNewCyclesAfterHours === true &&
             activePreset.allowedForNightCycle !== false; // Default true if not explicitly set to false
+          
+          // ============= DEBUG: Night permission check =============
+          if (isNightSlot) {
+            console.log('[NightScheduling] 🌙 Night slot permission check:', {
+              printer: slot.printerName,
+              printerId: slot.printerId,
+              currentTime: slot.currentTime.toISOString(),
+              endOfWorkHours: slot.endOfWorkHours.toISOString(),
+              isNightSlot,
+              canStartAtNight,
+              conditions: {
+                afterHoursBehavior: settings.afterHoursBehavior,
+                isFULL_AUTOMATION: settings.afterHoursBehavior === 'FULL_AUTOMATION',
+                printerCanStartNewCyclesAfterHours: printer?.canStartNewCyclesAfterHours,
+                presetAllowedForNightCycle: activePreset.allowedForNightCycle,
+              },
+            });
+          }
           
           // Use endOfWorkHours for the night check (not endOfDayTime which is extended)
           if (isNightSlot && !canStartAtNight) {
