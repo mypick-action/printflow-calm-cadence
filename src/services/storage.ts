@@ -258,6 +258,8 @@ export interface FactorySettings {
   schedulingStrategy?: SchedulingStrategy;
   // Planning horizon for material reservation (default 24 hours)
   planningHorizonHours?: number;
+  // Lead time for material procurement in hours (default 48)
+  materialLeadTimeHours?: number;
 }
 
 export interface TemporaryScheduleOverride {

@@ -108,6 +108,7 @@ export type Database = {
           factory_name: string
           id: string
           last_plan_day: string | null
+          material_lead_time_hours: number
           transition_minutes: number
           updated_at: string
           weekly_work_hours: Json
@@ -119,6 +120,7 @@ export type Database = {
           factory_name?: string
           id?: string
           last_plan_day?: string | null
+          material_lead_time_hours?: number
           transition_minutes?: number
           updated_at?: string
           weekly_work_hours?: Json
@@ -130,6 +132,7 @@ export type Database = {
           factory_name?: string
           id?: string
           last_plan_day?: string | null
+          material_lead_time_hours?: number
           transition_minutes?: number
           updated_at?: string
           weekly_work_hours?: Json

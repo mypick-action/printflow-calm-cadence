@@ -44,6 +44,7 @@ import { RecalculateButton } from '@/components/planning/RecalculateButton';
 import { RecalculateModal } from '@/components/planning/RecalculateModal';
 import { CapacityChangeBanner } from '@/components/planning/CapacityChangeBanner';
 // LoadedSpoolsModal removed - spool loading happens at print start, not during planning
+import { MaterialPurchasingPanel } from './MaterialPurchasingPanel';
 // NOTE: migrateLocalProjectsToCloud import removed - migration should only run once during onboarding
 
 import { PlanningDebugPanel } from './PlanningDebugPanel';
@@ -486,6 +487,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
             {warningAttentionItems.map((item, idx) => renderAttentionItem(item, idx + errorAttentionItems.length))}
           </div>
         </div>
+      )}
+
+      {/* Material Purchasing Panel - shows shortfalls for 14-day horizon */}
+      {todayPlan.isWorkday && (
+        <MaterialPurchasingPanel planningHorizonDays={14} />
       )}
 
       {/* Summary stats */}

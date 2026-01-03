@@ -201,11 +201,17 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
   // Filter cycles for today - only show active cycles (planned or in_progress)
   // Completed/failed/cancelled cycles should not appear in the dashboard
   // IMPORTANT: Dashboard works with LOCAL data - no UUID validation required
+  // FILTER: Don't show blocked_inventory in Today view - only ready + waiting_for_spool
   const todayCycles = plannedCycles.filter(cycle => {
     const cycleDate = new Date(cycle.startTime);
     const isToday = isSameLocalDay(cycleDate, targetDate);
     const isActiveStatus = cycle.status === 'planned' || cycle.status === 'in_progress';
-    return isToday && isActiveStatus;
+    // Only show cycles that are ready or just need spool loading
+    // blocked_inventory = future planning only, not Today's dashboard
+    const isShowableReadiness = !cycle.readinessState || 
+      cycle.readinessState === 'ready' || 
+      cycle.readinessState === 'waiting_for_spool';
+    return isToday && isActiveStatus && isShowableReadiness;
   });
   
   // DEBUG: Detailed logging to understand why cycles might not show
