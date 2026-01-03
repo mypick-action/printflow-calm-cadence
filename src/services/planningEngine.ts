@@ -919,10 +919,16 @@ const scheduleCyclesForDay = (
           }
           
           // ============= DETERMINE READINESS STATE =============
-          // Per PRD: blocked_inventory NEVER used - always waiting_for_spool for soft blocking
-          // All material/spool issues are soft constraints resolved at execution time
+          // Priority order:
+          // 1. blocked_inventory - ONLY for real material shortage (grams)
+          // 2. waiting_for_spool - for spool issues (no spools, parallel limit, need to load)
+          // 3. ready - correct color already mounted
           
-          if (isCorrectColorMounted) {
+          if (!hasEnoughInventory) {
+            // REAL material shortage - blocked_inventory (will be filtered from Today dashboard)
+            readinessState = 'blocked_inventory';
+            readinessDetails = `חסר ${state.project.color}: צריך ${gramsThisCycle}g, זמין ${Math.floor(availableMaterial)}g`;
+          } else if (isCorrectColorMounted) {
             // Correct color already mounted - ready to print
             readinessState = 'ready';
             readinessDetails = undefined;
@@ -932,14 +938,11 @@ const scheduleCyclesForDay = (
             
             // Build detailed message based on situation
             if (totalSpoolCount === 0) {
-              // No spools registered for this color at all
+              // No spools registered for this color at all - soft, not blocking
               readinessDetails = `אין גלילים רשומים ל-${state.project.color} - הוסף גלילים למלאי`;
             } else if (!hasSpoolCapacity) {
               // All spools of this color are in use on other printers (soft warning)
               readinessDetails = `כל ${totalSpoolCount} הגלילים ל-${state.project.color} בשימוש. המתן לפינוי או הוסף גליל.`;
-            } else if (!hasEnoughInventory) {
-              // Not enough material - but still create cycle (soft constraint)
-              readinessDetails = `טען גליל ${state.project.color} - חסר חומר (${Math.floor(availableMaterial)}g זמין, צריך ${gramsThisCycle}g)`;
             } else if (currentMountedColor && normalizeColor(currentMountedColor) !== colorKey) {
               readinessDetails = `טען גליל ${state.project.color} על ${slot.printerName} (כרגע: ${currentMountedColor})`;
             } else {
