@@ -918,23 +918,29 @@ const scheduleCyclesForDay = (
             currentMountedColor = printer?.mountedColor;
           }
           
-          // Determine readiness state - priority: blocked_inventory > waiting_for_spool > ready
-          if (!hasEnoughInventory) {
-            // Not enough material in inventory - blocked
-            readinessState = 'blocked_inventory';
-            readinessDetails = `חסר ${state.project.color}: צריך ${gramsThisCycle}g, זמין ${Math.floor(availableMaterial)}g`;
-          } else if (!hasSpoolCapacity) {
-            // All spools of this color are in use on other printers
-            readinessState = 'blocked_inventory';
-            readinessDetails = `אין גליל פנוי ל-${state.project.color}: ${printersUsingColor.size} מדפסות משתמשות ב-${totalSpoolCount} גלילים`;
-          } else if (isCorrectColorMounted) {
-            // Correct color already mounted
+          // ============= DETERMINE READINESS STATE =============
+          // Per PRD: blocked_inventory NEVER used - always waiting_for_spool for soft blocking
+          // All material/spool issues are soft constraints resolved at execution time
+          
+          if (isCorrectColorMounted) {
+            // Correct color already mounted - ready to print
             readinessState = 'ready';
             readinessDetails = undefined;
           } else {
-            // Need to load spool - include info about currently mounted color
+            // Need to load spool - this is always waiting_for_spool (SOFT constraint)
             readinessState = 'waiting_for_spool';
-            if (currentMountedColor && normalizeColor(currentMountedColor) !== colorKey) {
+            
+            // Build detailed message based on situation
+            if (totalSpoolCount === 0) {
+              // No spools registered for this color at all
+              readinessDetails = `אין גלילים רשומים ל-${state.project.color} - הוסף גלילים למלאי`;
+            } else if (!hasSpoolCapacity) {
+              // All spools of this color are in use on other printers (soft warning)
+              readinessDetails = `כל ${totalSpoolCount} הגלילים ל-${state.project.color} בשימוש. המתן לפינוי או הוסף גליל.`;
+            } else if (!hasEnoughInventory) {
+              // Not enough material - but still create cycle (soft constraint)
+              readinessDetails = `טען גליל ${state.project.color} - חסר חומר (${Math.floor(availableMaterial)}g זמין, צריך ${gramsThisCycle}g)`;
+            } else if (currentMountedColor && normalizeColor(currentMountedColor) !== colorKey) {
               readinessDetails = `טען גליל ${state.project.color} על ${slot.printerName} (כרגע: ${currentMountedColor})`;
             } else {
               readinessDetails = `טען גליל ${state.project.color} על ${slot.printerName}`;
@@ -1506,6 +1512,35 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   const totalUnitsPlanned = days.reduce((sum, d) => sum + d.totalUnits, 0);
   const totalCyclesPlanned = days.reduce((sum, d) => sum + d.totalCycles, 0);
   const unusedCapacityHours = days.reduce((sum, d) => sum + d.unusedCapacityHours, 0);
+  
+  // ============= DEBUG LOG: Planning summary =============
+  const cyclesByPrinter = new Map<string, number>();
+  const skippedReasons = new Map<string, number>();
+  
+  for (const cycle of allCycles) {
+    cyclesByPrinter.set(cycle.printerId, (cyclesByPrinter.get(cycle.printerId) || 0) + 1);
+  }
+  
+  // Count unscheduled projects
+  const unscheduledCount = workingProjectStates.filter(s => s.remainingUnits > 0).length;
+  for (const state of workingProjectStates.filter(s => s.remainingUnits > 0)) {
+    const reason = `project_${state.project.name}_remaining_${state.remainingUnits}`;
+    skippedReasons.set(reason, 1);
+  }
+  
+  console.log('[Plan] 📊 Planning Summary:', {
+    printerSlots: printers.map(p => p.id),
+    printerSlotsCount: printers.length,
+    assignedByPrinter: Object.fromEntries(cyclesByPrinter),
+    totalCyclesPlanned,
+    unscheduledProjects: unscheduledCount,
+    skippedReasons: Object.fromEntries(skippedReasons),
+    readinessBreakdown: {
+      ready: allCycles.filter(c => c.readinessState === 'ready').length,
+      waiting_for_spool: allCycles.filter(c => c.readinessState === 'waiting_for_spool').length,
+      blocked_inventory: allCycles.filter(c => c.readinessState === 'blocked_inventory').length,
+    }
+  });
   
   return {
     success: blockingIssues.length === 0,
