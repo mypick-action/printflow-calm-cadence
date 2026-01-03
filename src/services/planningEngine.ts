@@ -976,6 +976,31 @@ const scheduleCyclesForDay = (
     if (workingStates.length === 0) break;
   }
   
+  // ============= DEBUG: Night scheduling diagnostic =============
+  if (settings.afterHoursBehavior === 'FULL_AUTOMATION') {
+    const statesWithRemaining = workingStates.filter(s => s.remainingUnits > 0);
+    console.log('[NightScheduling] End of scheduleCyclesForDay diagnostic:', {
+      date: dateString,
+      isAutonomousDay,
+      printerSlots: printerSlots.map(slot => ({
+        printer: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        endOfDayTime: slot.endOfDayTime.toISOString(),
+        cyclesScheduled: slot.cyclesScheduled.length,
+        isInNightWindow: slot.currentTime >= slot.endOfWorkHours,
+        hasTimeRemaining: slot.currentTime < slot.endOfDayTime,
+      })),
+      statesWithRemainingUnits: statesWithRemaining.length,
+      remainingProjects: statesWithRemaining.map(s => ({
+        name: s.project.name,
+        remaining: s.remainingUnits,
+        color: s.project.color,
+      })),
+      totalCyclesScheduled: printerSlots.reduce((sum, s) => sum + s.cyclesScheduled.length, 0),
+    });
+  }
+  
   // Build day plan
   const printerPlans: PrinterDayPlan[] = printerSlots.map(slot => {
     const totalHours = slot.cyclesScheduled.reduce((sum, c) => {
