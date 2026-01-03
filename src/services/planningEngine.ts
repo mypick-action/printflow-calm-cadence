@@ -33,11 +33,13 @@ import {
   getColorInventory,
   getColorInventoryItem,
   getTotalGrams,
+  CycleReadinessState,
 } from './storage';
 import { normalizeColor } from './colorNormalization';
 import { getAvailableGramsByColor } from './materialAdapter';
 import { formatDateStringLocal } from './dateUtils';
 import { logCycleBlock } from './cycleBlockLogger';
+import { isFeatureEnabled } from './featureFlags';
 
 // ============= TYPES =============
 
@@ -959,6 +961,116 @@ const scheduleCyclesForDay = (
   };
 };
 
+// ============= PHYSICAL PLATE LIMIT =============
+// Post-processing step to limit consecutive "ready" cycles per printer
+// for night/weekend operations based on physicalPlateCapacity
+
+const applyPhysicalPlateLimit = (
+  cycles: PlannedCycle[],
+  printers: Printer[],
+  settings: FactorySettings
+): void => {
+  // Create lookup for printer capacity
+  const printerCapacity = new Map<string, number>();
+  const printerNames = new Map<string, string>();
+  for (const printer of printers) {
+    // Default to 999 (unlimited) if not set
+    printerCapacity.set(printer.id, printer.physicalPlateCapacity ?? 999);
+    printerNames.set(printer.id, printer.name);
+  }
+  
+  // Group cycles by printer and sort by start time
+  const cyclesByPrinter = new Map<string, PlannedCycle[]>();
+  for (const cycle of cycles) {
+    if (!cyclesByPrinter.has(cycle.printerId)) {
+      cyclesByPrinter.set(cycle.printerId, []);
+    }
+    cyclesByPrinter.get(cycle.printerId)!.push(cycle);
+  }
+  
+  // Sort each printer's cycles by start time
+  for (const [printerId, printerCycles] of cyclesByPrinter) {
+    printerCycles.sort((a, b) => 
+      new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+    );
+    
+    const capacity = printerCapacity.get(printerId) ?? 999;
+    const printerName = printerNames.get(printerId) ?? printerId;
+    
+    // Skip printers with unlimited capacity
+    if (capacity >= 999) continue;
+    
+    // Find consecutive "autonomous" cycles (night/weekend, canStartAtNight = true)
+    // For simplicity, we consider cycles starting after work hours as autonomous
+    // A cycle is "autonomous" if it could run without operator intervention
+    
+    // Process cycles to find runs of "ready" cycles that are after-hours
+    let autonomousReadyCount = 0;
+    let lastCycleEndTime: Date | null = null;
+    
+    for (const cycle of printerCycles) {
+      const cycleStart = new Date(cycle.startTime);
+      const cycleDate = new Date(cycleStart);
+      cycleDate.setHours(0, 0, 0, 0);
+      
+      // Get schedule for this day
+      const schedule = getDayScheduleForDate(cycleDate, settings, []);
+      
+      // Determine if this is an after-hours cycle
+      const isAfterHours = !schedule?.enabled || isTimeAfterWorkday(cycleStart, schedule);
+      
+      // Check if this is a continuation from the previous cycle (same printer, sequential)
+      const isSequential = lastCycleEndTime && 
+        (cycleStart.getTime() - lastCycleEndTime.getTime()) < 2 * 60 * 60 * 1000; // Within 2 hours
+      
+      if (!isSequential) {
+        // New sequence starts - reset counter
+        autonomousReadyCount = 0;
+      }
+      
+      lastCycleEndTime = new Date(cycle.endTime);
+      
+      // Only apply limit to after-hours cycles that are currently "ready"
+      if (isAfterHours && cycle.readinessState === 'ready') {
+        autonomousReadyCount++;
+        
+        if (autonomousReadyCount > capacity) {
+          // Exceeded plate limit - mark as waiting_for_plate_reload
+          cycle.readinessState = 'waiting_for_plate_reload';
+          cycle.readinessDetails = `הגעת למגבלת ${capacity} פלטות פיזיות. נדרשת טעינה ידנית.`;
+          
+          // Log the block
+          logCycleBlock({
+            reason: 'plates_limit',
+            projectId: cycle.projectId,
+            printerId: cycle.printerId,
+            printerName,
+            presetId: cycle.presetId,
+            presetName: cycle.presetName,
+            details: `Cycle #${autonomousReadyCount} exceeds physical plate capacity of ${capacity}`,
+            scheduledDate: cycleDate.toISOString().split('T')[0],
+            cycleHours: (new Date(cycle.endTime).getTime() - cycleStart.getTime()) / (1000 * 60 * 60),
+          });
+        }
+      } else if (!isAfterHours) {
+        // During work hours - reset the counter (operator can reload)
+        autonomousReadyCount = 0;
+      }
+    }
+  }
+};
+
+// Helper to check if a time is after the workday ends
+const isTimeAfterWorkday = (time: Date, schedule: DaySchedule): boolean => {
+  if (!schedule.enabled) return true;
+  
+  const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+  const endOfDay = new Date(time);
+  endOfDay.setHours(endHour, endMinute, 0, 0);
+  
+  return time >= endOfDay;
+};
+
 // ============= MAIN PLANNING FUNCTION =============
 
 export interface PlanningOptions {
@@ -1181,6 +1293,13 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
         });
       }
     }
+  }
+  
+  // ============= POST-PROCESSING: Apply Physical Plate Limit =============
+  // Under feature flag PHYSICAL_PLATES_LIMIT, limit consecutive "ready" cycles
+  // per printer during night/weekend to physicalPlateCapacity
+  if (isFeatureEnabled('PHYSICAL_PLATES_LIMIT')) {
+    applyPhysicalPlateLimit(allCycles, printers, settings);
   }
   
   // Calculate totals

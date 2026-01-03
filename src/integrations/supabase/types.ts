@@ -351,6 +351,7 @@ export type Database = {
           mounted_spool_id: string | null
           name: string
           notes: string | null
+          physical_plate_capacity: number
           status: string
           updated_at: string
           workspace_id: string
@@ -370,6 +371,7 @@ export type Database = {
           mounted_spool_id?: string | null
           name: string
           notes?: string | null
+          physical_plate_capacity?: number
           status?: string
           updated_at?: string
           workspace_id: string
@@ -389,6 +391,7 @@ export type Database = {
           mounted_spool_id?: string | null
           name?: string
           notes?: string | null
+          physical_plate_capacity?: number
           status?: string
           updated_at?: string
           workspace_id?: string

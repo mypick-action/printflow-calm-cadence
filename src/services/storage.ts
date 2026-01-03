@@ -92,6 +92,9 @@ export interface Printer {
   // If true + FULL_AUTOMATION: printer can START new cycles after hours (belt printer, auto plate swap)
   // If false: printer can only CONTINUE running cycles after hours, not start new ones
   canStartNewCyclesAfterHours?: boolean;
+  // Physical plate capacity for autonomous/overnight cycles
+  // Default 999 = unlimited, typical values: 3-8
+  physicalPlateCapacity?: number;
   // Loaded spools state (for non-AMS printers)
   // NOTE: In v2, mountedSpoolId is REQUIRED for "ready" state
   mountedSpoolId?: string | null; // Required for ready - must reference inventory spool
@@ -137,7 +140,7 @@ export interface WeeklySchedule {
 }
 
 // Cycle readiness state - indicates what's needed before execution
-export type CycleReadinessState = 'ready' | 'waiting_for_spool' | 'blocked_inventory';
+export type CycleReadinessState = 'ready' | 'waiting_for_spool' | 'blocked_inventory' | 'waiting_for_plate_reload';
 
 export interface PlannedCycle {
   id: string;

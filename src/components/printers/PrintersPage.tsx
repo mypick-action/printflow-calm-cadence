@@ -174,6 +174,7 @@ export const PrintersPage: React.FC = () => {
       ams_multi_color: editingPrinter.amsModes?.multiColor ?? editingPrinter.amsMode === 'multi_color',
       mounted_spool_id: editingPrinter.mountedSpoolId ?? null,
       notes: (editingPrinter as any).notes ?? null,
+      physical_plate_capacity: editingPrinter.physicalPlateCapacity ?? 999,
     });
     
     // Also update local storage for spools/slot states (which aren't in cloud schema)
@@ -1149,6 +1150,32 @@ export const PrintersPage: React.FC = () => {
                     <SelectItem value="5000">5kg</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Physical Plate Capacity (for autonomous/overnight cycles) */}
+              <div className="space-y-2">
+                <Label>{language === 'he' ? 'מספר פלטות פיזיות' : 'Physical Plate Capacity'}</Label>
+                <Select 
+                  value={String(editingPrinter.physicalPlateCapacity || 999)} 
+                  onValueChange={(v) => setEditingPrinter({ ...editingPrinter, physicalPlateCapacity: parseInt(v) })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-background border shadow-lg">
+                    <SelectItem value="3">3 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
+                    <SelectItem value="4">4 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
+                    <SelectItem value="5">5 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
+                    <SelectItem value="6">6 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
+                    <SelectItem value="8">8 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
+                    <SelectItem value="999">{language === 'he' ? 'ללא הגבלה' : 'Unlimited'}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {language === 'he' 
+                    ? 'מגביל מחזורים רצופים "מוכנים" בלילה/סופ"ש'
+                    : 'Limits consecutive "ready" cycles during night/weekend'}
+                </p>
               </div>
 
               {/* Save Button */}

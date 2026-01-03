@@ -7,7 +7,7 @@ const MAX_LOG_ENTRIES = 100;
 
 // Block reason types
 export type CycleBlockReason =
-  | 'plates_limit'           // Physical plate count exceeded
+  | 'plates_limit'           // Physical plate count exceeded for autonomous cycles
   | 'material_insufficient'  // Not enough material (grams)
   | 'spool_parallel_limit'   // Too many printers need same color
   | 'after_hours_policy'     // After-hours policy prevents cycle
