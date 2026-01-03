@@ -112,10 +112,19 @@ export const WorkScheduleSection: React.FC = () => {
       // Save to localStorage first
       const settings = getFactorySettings();
       if (settings) {
-        saveFactorySettings({
+        const updatedSettings = {
           ...settings,
           weeklySchedule: schedule,
           afterHoursBehavior: afterHoursBehavior
+        };
+        saveFactorySettings(updatedSettings);
+        
+        // ============= HARD DEBUG: Verify localStorage write =============
+        const verifySettings = getFactorySettings();
+        console.log('[WorkSchedule] VERIFY localStorage after save:', {
+          savedValue: afterHoursBehavior,
+          readBackValue: verifySettings?.afterHoursBehavior,
+          match: verifySettings?.afterHoursBehavior === afterHoursBehavior
         });
       }
 

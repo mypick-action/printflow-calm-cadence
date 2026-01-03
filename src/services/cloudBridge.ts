@@ -300,6 +300,14 @@ export async function hydrateLocalFromCloud(
   const transitionMinutes = (cloudSettings?.transition_minutes ?? 
     existingSettings?.transitionMinutes ?? 10) as number;
 
+  // ============= HARD DEBUG: Cloud Hydration =============
+  console.log('[CloudBridge] FACTORY SETTINGS HYDRATION:', {
+    cloudValue: cloudSettings?.after_hours_behavior,
+    existingLocalValue: existingSettings?.afterHoursBehavior,
+    finalValue: afterHoursBehavior,
+    source: cloudSettings?.after_hours_behavior ? 'CLOUD' : (existingSettings?.afterHoursBehavior ? 'LOCAL' : 'DEFAULT')
+  });
+
   // CRITICAL: Don't invent data that doesn't exist
   // Use existing local values or empty/minimal defaults
   const localFactorySettings: FactorySettings = {

@@ -69,6 +69,14 @@ export const recalculatePlan = async (
   const settings = getFactorySettings();
   const printers = getActivePrinters();
   
+  // ============= HARD DEBUG: Factory Settings State =============
+  console.log('[FACTORY SETTINGS USED IN PLANNING]', {
+    afterHoursBehavior: settings?.afterHoursBehavior,
+    transitionMinutes: settings?.transitionMinutes,
+    fullSettingsKeys: settings ? Object.keys(settings) : 'null',
+    source: 'getFactorySettings() from localStorage'
+  });
+  
   pdebug('Replan start', { scope, lockStarted, reason, cyclesCount: cycles.length, printersCount: printers.length });
   
   if (!settings || printers.length === 0) {
