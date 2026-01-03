@@ -183,6 +183,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
                   AMS
                 </Badge>
               )}
+              {/* Readiness state badges */}
+              {cycle.readinessState === 'blocked_inventory' && (
+                <Badge variant="destructive" className="gap-1">
+                  <Package className="w-3 h-3" />
+                  {language === 'he' ? 'דורש חומר' : 'Material needed'}
+                </Badge>
+              )}
+              {cycle.readinessState === 'waiting_for_spool' && (
+                <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-600 border-amber-500/20">
+                  <Package className="w-3 h-3" />
+                  {language === 'he' ? 'טען גליל' : 'Load spool'}
+                </Badge>
+              )}
               {isActive && (
                 <Badge className="bg-success text-success-foreground">
                   {language === 'he' ? 'פעיל' : 'Active'}
@@ -195,6 +208,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
             <div className="text-xs text-muted-foreground">
               {cycle.productName} • {cycle.color}
             </div>
+            {/* Show readiness details when not ready */}
+            {cycle.readinessDetails && cycle.readinessState !== 'ready' && (
+              <div className="text-xs text-amber-600 mt-1 font-medium">
+                {cycle.readinessDetails}
+              </div>
+            )}
           </div>
           <div className="text-center flex-shrink-0">
             <div className="text-lg font-bold text-foreground">{cycle.units}</div>
