@@ -687,13 +687,73 @@ function estimateProjectFinishTime(
       continue;
     }
     
+    // ============= PLATE CONSTRAINT CHECK (Dry-Run V2) =============
+    const isWithinWorkHoursSim = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
+    
+    // Simulate plate release during work hours
+    if (isWithinWorkHoursSim && (slot as any).platesInUse) {
+      (slot as any).platesInUse = (slot as any).platesInUse.filter((p: any) => p.releaseTime > slot.currentTime);
+    }
+    
+    const simPlatesInUse = (slot as any).platesInUse?.length ?? 0;
+    const simPlateCapacity = (slot as any).physicalPlateCapacity ?? 4;
+    const simPlatesAvailable = simPlateCapacity - simPlatesInUse;
+    
+    if (simPlatesAvailable <= 0) {
+      if (isWithinWorkHoursSim && (slot as any).platesInUse?.length > 0) {
+        const nearestRelease = Math.min(...(slot as any).platesInUse.map((p: any) => p.releaseTime.getTime()));
+        if (nearestRelease < slot.endOfWorkHours.getTime()) {
+          slot.currentTime = new Date(nearestRelease);
+          (slot as any).platesInUse = (slot as any).platesInUse.filter((p: any) => p.releaseTime > slot.currentTime);
+          heap.push(slot.currentTime.getTime(), slot);
+          continue;
+        }
+      }
+      // No plates - advance to next workday
+      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+      if (!nextStart || nextStart > maxSimulationTime) continue;
+      slot.currentTime = nextStart;
+      updateSlotBoundsForDay(slot, nextStart, settings);
+      (slot as any).platesInUse = [];
+      heap.push(slot.currentTime.getTime(), slot);
+      continue;
+    }
+    
     // Schedule one cycle
     const cycleEndTime = new Date(slot.currentTime.getTime() + cycleHours * 60 * 60 * 1000);
+    
+    // ============= SECONDARY NIGHT VALIDATION (Dry-Run V2) =============
+    const isNightSlotSim = slot.currentTime >= slot.endOfWorkHours;
+    if (!isNightSlotSim && cycleEndTime > slot.endOfWorkHours) {
+      // Cycle extends into night - check if allowed
+      const canRunAutonomous = 
+        settings.afterHoursBehavior === 'FULL_AUTOMATION' &&
+        (printer?.canStartNewCyclesAfterHours ?? false) &&
+        project.preset.allowedForNightCycle !== false;
+      
+      if (!canRunAutonomous) {
+        const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+        if (!nextStart || nextStart > maxSimulationTime) continue;
+        slot.currentTime = nextStart;
+        updateSlotBoundsForDay(slot, nextStart, settings);
+        heap.push(slot.currentTime.getTime(), slot);
+        continue;
+      }
+    }
+    
     lastFinishTime = cycleEndTime;
     
     const unitsThisCycle = Math.min(unitsPerCycle, remainingUnits);
     remainingUnits -= unitsThisCycle;
     cycleCount++;
+    
+    // Track plate usage in simulation
+    const PLATE_CLEANUP_SIM = 10;
+    if (!(slot as any).platesInUse) (slot as any).platesInUse = [];
+    (slot as any).platesInUse.push({
+      releaseTime: new Date(cycleEndTime.getTime() + PLATE_CLEANUP_SIM * 60 * 1000),
+      cycleId: `sim-${cycleCount}`,
+    });
     
     // Advance printer time (including transition)
     slot.currentTime = new Date(cycleEndTime.getTime() + transitionMs);
@@ -851,8 +911,8 @@ function scheduleProjectOnPrinters(
     printerMap.set(p.id, p);
   }
   
-  // Get available material
-  const availableMaterial = workingMaterial.get(colorKey) ?? 0;
+  // Track consumed material during scheduling (for accurate hasMaterial check)
+  let consumedMaterial = 0;
   
   while (remainingUnits > 0 && !heap.isEmpty()) {
     const entry = heap.pop();
@@ -869,6 +929,40 @@ function scheduleProjectOnPrinters(
       
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
+      heap.push(slot.currentTime.getTime(), slot);
+      continue;
+    }
+    
+    // ============= PLATE CONSTRAINT CHECK (V2) =============
+    // Check plate availability - same logic as Legacy
+    const isWithinWorkHoursNow = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
+    
+    // Release plates during work hours
+    if (isWithinWorkHoursNow && slot.platesInUse) {
+      slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+    }
+    
+    const platesInUseCount = slot.platesInUse?.length ?? 0;
+    const platesAvailable = slot.physicalPlateCapacity - platesInUseCount;
+    
+    if (platesAvailable <= 0) {
+      if (isWithinWorkHoursNow && slot.platesInUse && slot.platesInUse.length > 0) {
+        // Wait for nearest plate release during work hours
+        const nearestRelease = Math.min(...slot.platesInUse.map(p => p.releaseTime.getTime()));
+        if (nearestRelease < slot.endOfWorkHours.getTime()) {
+          slot.currentTime = new Date(nearestRelease);
+          slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+          heap.push(slot.currentTime.getTime(), slot);
+          continue;
+        }
+      }
+      // No plates available - advance to next workday
+      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+      if (!nextStart) continue;
+      slot.currentTime = nextStart;
+      updateSlotBoundsForDay(slot, nextStart, settings);
+      // Reset plates on new day
+      slot.platesInUse = [];
       heap.push(slot.currentTime.getTime(), slot);
       continue;
     }
@@ -908,12 +1002,50 @@ function scheduleProjectOnPrinters(
       continue;
     }
     
+    // ============= SECONDARY NIGHT VALIDATION (V2) =============
+    // If cycle starts during work hours but ends after - validate autonomous operation
+    const isNightSlot = isNightTime(slot.currentTime, slot.endOfWorkHours);
+    if (!isNightSlot && cycleEndTime > slot.endOfWorkHours) {
+      // Cycle extends into night - check if allowed
+      const canRunAutonomous = 
+        settings.afterHoursBehavior === 'FULL_AUTOMATION' &&
+        (printer?.canStartNewCyclesAfterHours ?? false) &&
+        project.preset.allowedForNightCycle !== false;
+      
+      if (!canRunAutonomous) {
+        // Cannot extend into night - advance to next workday
+        const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+        if (!nextStart) continue;
+        
+        slot.currentTime = nextStart;
+        updateSlotBoundsForDay(slot, nextStart, settings);
+        heap.push(slot.currentTime.getTime(), slot);
+        continue;
+      }
+      
+      // ============= NON-AMS COLOR LOCK FOR NIGHT EXTENSION =============
+      if (!slot.hasAMS && slot.lastScheduledColor) {
+        const slotColorKey = normalizeColor(slot.lastScheduledColor);
+        if (slotColorKey !== colorKey) {
+          // Non-AMS printer locked to different color - cannot extend into night
+          const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+          if (!nextStart) continue;
+          
+          slot.currentTime = nextStart;
+          updateSlotBoundsForDay(slot, nextStart, settings);
+          heap.push(slot.currentTime.getTime(), slot);
+          continue;
+        }
+      }
+    }
+    
     // Calculate units and grams
     const unitsThisCycle = Math.min(project.preset.unitsPerPlate, remainingUnits);
     const gramsThisCycle = unitsThisCycle * project.product.gramsPerUnit;
     
-    // Determine readiness state
-    const hasMaterial = availableMaterial >= gramsThisCycle;
+    // ============= FIX #1: Check material with consumed tracking =============
+    const availableMaterialNow = (workingMaterial.get(colorKey) ?? 0) - consumedMaterial;
+    const hasMaterial = availableMaterialNow >= gramsThisCycle;
     let readinessState: CycleReadinessState = 'waiting_for_spool';
     let readinessDetails: string | undefined;
     
@@ -927,8 +1059,7 @@ function scheduleProjectOnPrinters(
       readinessDetails = `טען גליל ${project.project.color} על ${slot.printerName}`;
     }
     
-    // Determine if night slot
-    const isNightSlot = isNightTime(slot.currentTime, slot.endOfWorkHours);
+    // Calculate remaining day hours for end-of-day detection
     const remainingDayHours = (slot.endOfDayTime.getTime() - cycleEndTime.getTime()) / (1000 * 60 * 60);
     const isEndOfDayCycle = remainingDayHours < 2;
     
@@ -963,6 +1094,16 @@ function scheduleProjectOnPrinters(
     
     scheduledCycles.push(cycle);
     remainingUnits -= unitsThisCycle;
+    
+    // ============= FIX #1: Track consumed material =============
+    consumedMaterial += gramsThisCycle;
+    
+    // ============= FIX #2: Update plate tracking =============
+    if (!slot.platesInUse) slot.platesInUse = [];
+    slot.platesInUse.push({
+      releaseTime: plateReleaseTime,
+      cycleId: cycle.id,
+    });
     
     // Update slot
     slot.cyclesScheduled = slot.cyclesScheduled || [];
