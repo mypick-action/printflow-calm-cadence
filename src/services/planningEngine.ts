@@ -1701,11 +1701,17 @@ const scheduleCyclesForDay = (
       endOfDayTimeReason = `extended to ${dayEnd.toISOString()}`;
     }
     
+    // FIX: Calculate printer-specific endOfDayTime based on the source we computed
+    // This ensures endOfDayTime matches endOfDayTimeSource (was always using dayEnd before)
+    const printerEndOfDayTime = endOfDayTimeSource === 'nextWorkdayStart'
+      ? new Date(dayEnd)
+      : new Date(endOfRegularWorkday);
+    
     return {
       printerId: p.id,
       printerName: p.name,
       currentTime: new Date(startTime),
-      endOfDayTime: new Date(dayEnd),
+      endOfDayTime: printerEndOfDayTime,  // FIX: per-printer calculation
       endOfWorkHours: new Date(endOfRegularWorkday),
       workDayStart: new Date(dayStart),
       cyclesScheduled: [],
