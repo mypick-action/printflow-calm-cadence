@@ -59,6 +59,15 @@ import {
   PrinterScoreDetails,
 } from './planningDecisionLog';
 
+// ============= MODULE-SCOPED ADVANCE REASON TRACKER =============
+// Set by generatePlan, used by scheduling functions during the same sync call
+// Safer than globalThis since it's scoped to this module
+let _advanceReasonTracker: ((reason: string) => void) | null = null;
+
+const trackAdvanceReasonGlobal = (reason: string) => {
+  _advanceReasonTracker?.(reason);
+};
+
 // ============= TYPES =============
 
 export interface DailySlot {
@@ -1044,7 +1053,7 @@ function scheduleProjectOnPrinters(
       });
       
       // Track reason for summary
-      (globalThis as any).__trackAdvanceReason?.('past_endOfDayTime');
+      trackAdvanceReasonGlobal('past_endOfDayTime');
       
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1102,7 +1111,7 @@ function scheduleProjectOnPrinters(
       });
       
       // Track reason for summary
-      (globalThis as any).__trackAdvanceReason?.('no_plates_available');
+      trackAdvanceReasonGlobal('no_plates_available');
       
       // No plates available - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1147,7 +1156,7 @@ function scheduleProjectOnPrinters(
       });
       
       // Track reason for summary
-      (globalThis as any).__trackAdvanceReason?.('canStartCycleAt_false');
+      trackAdvanceReasonGlobal('canStartCycleAt_false');
       
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1189,7 +1198,7 @@ function scheduleProjectOnPrinters(
       });
       
       // Track reason for summary
-      (globalThis as any).__trackAdvanceReason?.('cycle_exceeds_endOfDayTime');
+      trackAdvanceReasonGlobal('cycle_exceeds_endOfDayTime');
       
       // Doesn't fit - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1235,7 +1244,7 @@ function scheduleProjectOnPrinters(
         });
         
         // Track reason for summary
-        (globalThis as any).__trackAdvanceReason?.('cycle_extends_night_not_allowed');
+        trackAdvanceReasonGlobal('cycle_extends_night_not_allowed');
         
         // Cannot extend into night - advance to next workday
         const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1275,7 +1284,7 @@ function scheduleProjectOnPrinters(
           });
           
           // Track reason for summary
-          (globalThis as any).__trackAdvanceReason?.('non_ams_color_lock');
+          trackAdvanceReasonGlobal('non_ams_color_lock');
           
           // Non-AMS printer locked to different color - cannot extend into night
           const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -2727,18 +2736,11 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   
   // ============= ADVANCE REASONS TRACKER =============
   // Track why slots advance to next day - for debugging "holes" in schedule
+  // Using module-scoped tracker for safety with parallel/StrictMode runs
   const advanceReasonCounts = new Map<string, number>();
-  const trackAdvanceReason = (reason: string) => {
+  _advanceReasonTracker = (reason: string) => {
     advanceReasonCounts.set(reason, (advanceReasonCounts.get(reason) || 0) + 1);
   };
-  // Export for use in scheduling functions
-  (globalThis as any).__trackAdvanceReason = trackAdvanceReason;
-  
-  // ============= FIX: Track planning window coverage to prevent duplicates =============
-  // When a working day's night window extends into subsequent non-working days,
-  // those days are already "covered" and should not be planned separately.
-  // E.g., Thursday 17:30 → Sunday 08:30 covers Friday and Saturday entirely.
-  let coveredUntil: Date | null = null;
   
   for (let dayOffset = 0; dayOffset < daysToPlane; dayOffset++) {
     // CRITICAL FIX: Reset spool assignments at the START of each day
@@ -2754,36 +2756,6 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     // Check if this is a non-working day
     const isNonWorkingDay = !schedule || !schedule.enabled;
     
-    // ============= FIX: Skip days already covered by previous planning window =============
-    // If a previous day's night window already covers this day, don't plan it again
-    if (coveredUntil && planDate < coveredUntil) {
-      console.log('[Plan] ⏭️ Skipping day already covered by previous planning window:', {
-        date: formatDateString(planDate),
-        isNonWorkingDay,
-        coveredUntil: coveredUntil.toISOString(),
-      });
-      
-      // Add empty day plan to maintain structure
-      days.push({
-        date: planDate,
-        dateString: formatDateString(planDate),
-        isWorkday: !isNonWorkingDay,
-        workStart: schedule?.startTime ?? '',
-        workEnd: schedule?.endTime ?? '',
-        printerPlans: printers.map(p => ({
-          printerId: p.id,
-          printerName: p.name,
-          cycles: [],
-          totalUnits: 0,
-          totalHours: 0,
-          capacityUsedPercent: 0,
-        })),
-        totalUnits: 0,
-        totalCycles: 0,
-        unusedCapacityHours: 0,
-      });
-      continue;
-    }
     
     // Determine if we should plan autonomously on non-working days
     const shouldPlanAutonomous = isNonWorkingDay && settings.afterHoursBehavior === 'FULL_AUTOMATION';
@@ -2817,28 +2789,10 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
       ? { enabled: true, startTime: '00:00', endTime: '23:59' }
       : schedule!;
     
-    // ============= Calculate dayEnd to update coveredUntil =============
-    // This mirrors the logic in scheduleCyclesForDay to know when this day's window ends
-    let dayEndForCoverage: Date;
-    if (isNonWorkingDay) {
-      // Autonomous day: window extends until next working day start
-      const nextWorkDayStart = findNextWorkDayStart(planDate, settings, 7);
-      dayEndForCoverage = nextWorkDayStart ?? addDays(planDate, 1);
-    } else if (settings.afterHoursBehavior === 'FULL_AUTOMATION') {
-      // Working day with FULL_AUTOMATION: extends to next working day's start
-      const nextWorkDayStart = findNextWorkDayStart(planDate, settings, 7);
-      dayEndForCoverage = nextWorkDayStart ?? addDays(planDate, 1);
-    } else {
-      // Normal working day: ends at work hours end
-      dayEndForCoverage = createDateWithTime(planDate, schedule!.endTime);
-    }
-    
     console.log('[Plan] 📅 Planning day:', {
       date: formatDateString(planDate),
       isNonWorkingDay,
       shouldPlanAutonomous,
-      dayEndForCoverage: dayEndForCoverage.toISOString(),
-      previousCoveredUntil: coveredUntil?.toISOString() ?? 'none',
     });
     
     // Schedule cycles for this day
@@ -2863,10 +2817,6 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     workingMaterialTracker = updatedMaterialTracker;
     // NOTE: workingSpoolAssignments NOT carried over - reset fresh each day (line 709)
     
-    // ============= FIX: Update coveredUntil to prevent duplicate planning =============
-    if (!coveredUntil || dayEndForCoverage > coveredUntil) {
-      coveredUntil = dayEndForCoverage;
-    }
     
     // If all projects are scheduled, no need to continue
     if (workingProjectStates.length === 0) break;
@@ -3024,8 +2974,9 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     });
   }
   
-  // Cleanup global tracker
-  delete (globalThis as any).__trackAdvanceReason;
+  // Cleanup module-scoped tracker
+  _advanceReasonTracker = null;
+  
   return {
     success: blockingIssues.length === 0,
     days,
