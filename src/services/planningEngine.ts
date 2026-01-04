@@ -71,6 +71,9 @@ export interface ScheduledCycle {
   presetId?: string;
   presetName?: string;
   presetSelectionReason?: string;
+  // Plate constraint fields
+  plateIndex?: number;        // Which plate (1..4) this cycle uses
+  plateReleaseTime?: Date;    // When this plate will be available again
 }
 
 export interface DayPlan {
@@ -332,14 +335,30 @@ export const selectOptimalPreset = (
       score += 10;
     }
     
-    // ============= WEEKEND OPTIMIZATION =============
+    // ============= WEEKEND OPTIMIZATION (DETERMINISTIC) =============
     // Before weekend (Thu afternoon), prefer LONG cycles to maximize plate utilization
-    // Goal: 4 long cycles should cover Thu 17:30 → Sun 08:30
+    // Goal: 4 long cycles should cover Thu 17:30 → Sun 08:30 (~63 hours)
+    // This is NOT a preference - it's a hard requirement for operational efficiency
     if (isPreWeekend) {
-      // Invert the "shorter is better" logic - longer is better before weekend
-      score += (p.cycleHours / maxHours) * 30; // Up to 30 bonus points for longest cycle
-      // Reset the shorter-is-better penalty we added earlier
-      score += (p.cycleHours / maxHours) * 20; // Cancel out the -20 for long cycles
+      // Strong bonus for longer cycles - this should be decisive
+      const longestHours = Math.max(...validPresets.map(pr => pr.cycleHours));
+      const shortestHours = Math.min(...validPresets.map(pr => pr.cycleHours));
+      const range = longestHours - shortestHours;
+      
+      if (range > 0) {
+        // Normalize cycle length to 0-1 range, then give up to 100 bonus points
+        // This overwhelms all other scoring factors for weekend scheduling
+        const normalizedLength = (p.cycleHours - shortestHours) / range;
+        score += normalizedLength * 100; // Decisive bonus for longest cycles
+      }
+      
+      console.log('[WeekendOptimization] 📅 Pre-weekend preset scoring:', {
+        preset: p.name,
+        cycleHours: p.cycleHours,
+        longestHours,
+        bonusPoints: range > 0 ? ((p.cycleHours - shortestHours) / range) * 100 : 0,
+        totalScore: score,
+      });
     }
     
     return { preset: p, score };
@@ -552,19 +571,24 @@ const validateTimeConstraints = (
 
 // ============= CYCLE SCHEDULING =============
 
+interface PlateReleaseInfo {
+  releaseTime: Date;  // When this plate becomes available again
+  cycleId: string;    // Which cycle is using this plate
+}
+
 interface PrinterTimeSlot {
   printerId: string;
   printerName: string;
   currentTime: Date;
   endOfDayTime: Date;  // Extended end (includes night window for FULL_AUTOMATION)
   endOfWorkHours: Date; // Regular work end (for determining if cycle is "night")
+  workDayStart: Date;   // Start of this work day (for work hours check)
   cyclesScheduled: ScheduledCycle[];
   // ============= PLATE CONSTRAINT FIELDS =============
-  platesAvailable: number;        // 0..4 physical plates available
-  lastReloadTime: Date;           // When plates were last reset
+  physicalPlateCapacity: number;  // From printer settings (default 4)
+  platesInUse: PlateReleaseInfo[];  // Plates currently in use with release times
   lastScheduledColor?: string;    // For non-AMS printers: locked color after hours
   hasAMS: boolean;                // Cache of printer.hasAMS
-  physicalPlateCapacity: number;  // From printer settings (default 4)
 }
 
 const scheduleCyclesForDay = (
@@ -709,16 +733,21 @@ const scheduleCyclesForDay = (
       : effectiveStart;
     
     // ============= PLATE CONSTRAINT INITIALIZATION =============
-    // Each printer has physical_plate_capacity plates
-    // Plates are reloaded ONLY at start of work day (08:30)
+    // NEW MODEL: Plates are a parallel resource (capacity = 4)
+    // - During work hours: plates recycle after cycle ends + 10min cleanup
+    // - Outside work hours: plates don't recycle, hard stop after capacity exhausted
     // Default to 4 if not set, or if set to 999 (legacy "unlimited")
     const rawCapacity = p.physicalPlateCapacity ?? 4;
     const plateCapacity = rawCapacity >= 999 ? 4 : rawCapacity; // Treat 999 as "use default 4"
     
-    // Count locked cycles for this printer on this day to reduce available plates
+    // Initialize plates in use from locked cycles
+    // Each locked cycle "holds" a plate until its end time + cleanup delay
     const lockedCyclesForPrinter = lockedCyclesForDay.filter(c => c.printerId === p.id);
-    const platesUsed = lockedCyclesForPrinter.length;
-    const platesAvailable = Math.max(0, plateCapacity - platesUsed);
+    const PLATE_CLEANUP_MINUTES = 10;
+    const platesInUse: PlateReleaseInfo[] = lockedCyclesForPrinter.map(c => ({
+      releaseTime: new Date(new Date(c.endTime).getTime() + PLATE_CLEANUP_MINUTES * 60_000),
+      cycleId: c.id,
+    }));
     
     // Get the last scheduled color from locked cycles (for non-AMS color lock)
     const lastLockedCycle = lockedCyclesForPrinter
@@ -731,13 +760,13 @@ const scheduleCyclesForDay = (
       currentTime: new Date(startTime),
       endOfDayTime: new Date(dayEnd),
       endOfWorkHours: new Date(endOfRegularWorkday),
+      workDayStart: new Date(dayStart),
       cyclesScheduled: [],
       // Plate constraint fields
-      platesAvailable,
-      lastReloadTime: new Date(dayStart), // Plates reloaded at work day start
+      physicalPlateCapacity: plateCapacity,
+      platesInUse,
       lastScheduledColor,
       hasAMS: p.hasAMS ?? false,
-      physicalPlateCapacity: plateCapacity,
     };
   });
   
@@ -745,7 +774,7 @@ const scheduleCyclesForDay = (
     printer: s.printerName,
     printerId: s.printerId,
     slotStart: s.currentTime.toISOString(),
-    platesAvailable: s.platesAvailable,
+    platesInUse: s.platesInUse.length,
     physicalPlateCapacity: s.physicalPlateCapacity,
     hasAMS: s.hasAMS,
     lastScheduledColor: s.lastScheduledColor,
@@ -780,31 +809,73 @@ const scheduleCyclesForDay = (
       if (slot.currentTime >= slot.endOfDayTime) continue;
       
       // ============= PLATE CONSTRAINT CHECK =============
-      // CRITICAL: Plates are reloaded ONLY at work day START (08:30), NOT during work hours
-      // When plates = 0 outside reload window: advance currentTime to next reload window
+      // NEW MODEL: Plates recycle during work hours, but NOT outside
+      // - Release plates that have finished recycling (during work hours only)
+      // - Check if all plates are in use
+      // - If no plates available outside work hours: advance to next work day start
       
-      if (slot.platesAvailable <= 0) {
-        // No plates available - find next reload opportunity
-        // Reload happens ONLY at start of NEXT work day (not during current day)
-        const nextReloadTime = findNextWorkDayStart(date, settings, 7);
-        
-        if (nextReloadTime) {
-          console.log('[PlateConstraint] 🛑 Printer out of plates - advancing to next reload:', {
-            printer: slot.printerName,
-            platesAvailable: slot.platesAvailable,
-            currentTime: slot.currentTime.toISOString(),
-            nextReloadTime: nextReloadTime.toISOString(),
-          });
+      const PLATE_CLEANUP_MINUTES = 10;
+      const isWithinWorkHours = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
+      
+      // During work hours: release plates whose cleanup time has passed
+      if (isWithinWorkHours) {
+        slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+      }
+      // Outside work hours: plates are never released (no cleanup possible)
+      
+      const platesAvailable = slot.physicalPlateCapacity - slot.platesInUse.length;
+      
+      if (platesAvailable <= 0) {
+        // All plates in use - check if we can wait for one to be released
+        if (isWithinWorkHours) {
+          // During work hours: wait for nearest plate release
+          const nearestRelease = slot.platesInUse
+            .map(p => p.releaseTime.getTime())
+            .sort((a, b) => a - b)[0];
           
-          // Advance slot to next reload window - this day is done for this printer
-          // The cycle will be scheduled on the next day when generatePlan processes that day
-          slot.currentTime = new Date(slot.endOfDayTime); // Mark as exhausted for this day
+          if (nearestRelease && nearestRelease < slot.endOfWorkHours.getTime()) {
+            console.log('[PlateConstraint] ⏳ Waiting for plate cleanup during work hours:', {
+              printer: slot.printerName,
+              currentTime: slot.currentTime.toISOString(),
+              nearestRelease: new Date(nearestRelease).toISOString(),
+            });
+            slot.currentTime = new Date(nearestRelease);
+            // Re-release plates after advancing time
+            slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+            // Continue with scheduling attempt (don't skip)
+          } else {
+            // Work hours end before plate releases - advance to next day
+            const nextWorkDayStart = findNextWorkDayStart(date, settings, 7);
+            console.log('[PlateConstraint] 🛑 No plate release before work ends:', {
+              printer: slot.printerName,
+              currentTime: slot.currentTime.toISOString(),
+              endOfWorkHours: slot.endOfWorkHours.toISOString(),
+              nextWorkDayStart: nextWorkDayStart?.toISOString(),
+            });
+            slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted for this day
+            continue;
+          }
         } else {
-          console.log('[PlateConstraint] 🛑 No reload window found within 7 days:', {
-            printer: slot.printerName,
-          });
+          // Outside work hours: no plate cleanup possible
+          // Advance to next work day start
+          const nextWorkDayStart = findNextWorkDayStart(date, settings, 7);
+          
+          if (nextWorkDayStart) {
+            console.log('[PlateConstraint] 🛑 Plates exhausted outside work hours - advancing to next work day:', {
+              printer: slot.printerName,
+              platesInUse: slot.platesInUse.length,
+              currentTime: slot.currentTime.toISOString(),
+              nextWorkDayStart: nextWorkDayStart.toISOString(),
+            });
+            slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted for this day's window
+          } else {
+            console.log('[PlateConstraint] 🛑 No next work day found within 7 days:', {
+              printer: slot.printerName,
+            });
+            slot.currentTime = new Date(slot.endOfDayTime);
+          }
+          continue; // Skip to next printer
         }
-        continue; // Skip to next printer
       }
       
       // Find highest priority project that can be scheduled on THIS printer
@@ -1063,6 +1134,11 @@ const scheduleCyclesForDay = (
           }
         }
         
+        // ============= CALCULATE PLATE INDEX BEFORE CREATING CYCLE =============
+        const PLATE_CLEANUP_MINUTES = 10;
+        const plateReleaseTime = new Date(cycleEndTime.getTime() + PLATE_CLEANUP_MINUTES * 60_000);
+        const plateIndex = slot.platesInUse.length + 1; // 1-based for display
+        
         // Create the scheduled cycle (ALWAYS create it, per PRD - planning is separate from execution)
         const scheduledCycle: ScheduledCycle = {
           id: generateId(),
@@ -1084,22 +1160,33 @@ const scheduleCyclesForDay = (
           presetId: activePreset.id,
           presetName: activePreset.name,
           presetSelectionReason: presetReason,
+          // Plate constraint fields
+          plateIndex,
+          plateReleaseTime,
         };
         
         // Update slot
         slot.cyclesScheduled.push(scheduledCycle);
         slot.currentTime = addHours(cycleEndTime, transitionMinutes / 60);
         
-        // ============= PLATE CONSTRAINT: DECREMENT PLATES =============
-        slot.platesAvailable--;
+        // ============= PLATE CONSTRAINT: ADD PLATE TO IN-USE LIST =============
+        slot.platesInUse.push({
+          releaseTime: plateReleaseTime,
+          cycleId: scheduledCycle.id,
+        });
         slot.lastScheduledColor = state.project.color; // Track for non-AMS color lock
+        
+        const platesRemaining = slot.physicalPlateCapacity - slot.platesInUse.length;
         
         console.log('[PlateConstraint] 📋 Plate used:', {
           printer: slot.printerName,
-          platesRemaining: slot.platesAvailable,
+          plateIndex: `${plateIndex}/${slot.physicalPlateCapacity}`,
+          platesRemaining,
           color: state.project.color,
           cycleEnd: cycleEndTime.toISOString(),
+          plateReleaseTime: plateReleaseTime.toISOString(),
           isNightSlot,
+          isWithinWorkHours: slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours,
         });
         
         // Update project state
@@ -1615,6 +1702,9 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
           presetId: cycle.presetId,
           presetName: cycle.presetName,
           presetSelectionReason: cycle.presetSelectionReason,
+          // Plate constraint fields
+          plateIndex: cycle.plateIndex,
+          plateReleaseTime: cycle.plateReleaseTime?.toISOString(),
         });
       }
     }
@@ -1654,6 +1744,21 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     cyclesByDay.set(dayStr, (cyclesByDay.get(dayStr) || 0) + 1);
   }
   
+  // ============= PLATE CONSTRAINT DEBUG: Per-printer plate timeline =============
+  const plateDebugByPrinter = new Map<string, { cycles: Array<{ plateIndex: number; start: string; end: string; releaseTime: string; color: string }> }>();
+  for (const cycle of allCycles) {
+    if (!plateDebugByPrinter.has(cycle.printerId)) {
+      plateDebugByPrinter.set(cycle.printerId, { cycles: [] });
+    }
+    plateDebugByPrinter.get(cycle.printerId)!.cycles.push({
+      plateIndex: cycle.plateIndex ?? 0,
+      start: cycle.startTime,
+      end: cycle.endTime,
+      releaseTime: cycle.plateReleaseTime ?? 'N/A',
+      color: cycle.requiredColor ?? 'unknown',
+    });
+  }
+  
   console.log('[Plan] 📊 Planning Summary:', {
     printerSlots: printers.map(p => p.id),
     printerSlotsCount: printers.length,
@@ -1670,7 +1775,13 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     },
     plateConstraintInfo: {
       physicalPlateCapacity: printers.map(p => ({ id: p.id, name: p.name, capacity: p.physicalPlateCapacity ?? 4 })),
-      note: 'Plates reload ONLY at work day start (08:30). Max 4 cycles per printer between reloads.',
+      plateUsageByPrinter: Object.fromEntries(
+        Array.from(plateDebugByPrinter.entries()).map(([pid, data]) => [
+          printers.find(p => p.id === pid)?.name ?? pid,
+          data.cycles.map(c => `P${c.plateIndex}: ${c.start.split('T')[1]?.substring(0, 5) ?? c.start}-${c.end.split('T')[1]?.substring(0, 5) ?? c.end} (${c.color})`)
+        ])
+      ),
+      note: 'Plates recycle during work hours after 10min cleanup. Outside work hours: no cleanup, max 4 cycles until next work day.',
     }
   });
   
