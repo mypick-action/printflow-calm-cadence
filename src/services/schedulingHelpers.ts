@@ -16,13 +16,11 @@ export interface PlateReleaseInfo {
 }
 
 // ============= END OF DAY SOURCE =============
-// Explains why endOfDayTime was set to its value
+// Time source - ONLY 'endOfWorkHours' or 'nextWorkdayStart'
+// The reason for that source is stored separately in endOfDayTimeReason
 export type EndOfDayTimeSource = 
   | 'endOfWorkHours'           // Day ends at regular work hours (no night extension)
-  | 'nextWorkdayStart'         // Day extends to next workday (FULL_AUTOMATION enabled)
-  | 'afterHours_disabled'      // Factory doesn't allow after-hours
-  | 'printer_night_disabled'   // Printer can't start cycles after hours
-  | 'day_not_enabled';         // Non-working day
+  | 'nextWorkdayStart';        // Day extends to next workday (FULL_AUTOMATION enabled)
 
 // ============= TIME SLOT INTERFACE =============
 // Represents a printer's current scheduling state
@@ -130,16 +128,18 @@ export function updateSlotBoundsForDay(
   }
   
   // Set endOfDayTime based on automation mode - with explicit source tracking
+  // Determine endOfDayTime: source is ONLY 'endOfWorkHours' or 'nextWorkdayStart'
+  // The REASON for that choice is stored in endOfDayTimeReason
   if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
     // Factory doesn't allow after-hours operation
     slot.endOfDayTime = new Date(slot.endOfWorkHours);
-    slot.endOfDayTimeSource = 'afterHours_disabled';
-    slot.endOfDayTimeReason = `afterHoursBehavior=${settings.afterHoursBehavior}`;
+    slot.endOfDayTimeSource = 'endOfWorkHours';
+    slot.endOfDayTimeReason = `afterHours_disabled: afterHoursBehavior=${settings.afterHoursBehavior}`;
   } else if (!slot.canStartNewCyclesAfterHours) {
     // Printer can't start cycles after hours
     slot.endOfDayTime = new Date(slot.endOfWorkHours);
-    slot.endOfDayTimeSource = 'printer_night_disabled';
-    slot.endOfDayTimeReason = `canStartNewCyclesAfterHours=false`;
+    slot.endOfDayTimeSource = 'endOfWorkHours';
+    slot.endOfDayTimeReason = `printer_night_disabled: canStartNewCyclesAfterHours=false`;
   } else {
     // FULL_AUTOMATION enabled and printer allows night - extend to next workday start
     const nextWorkday = advanceToNextWorkdayStart(dayStart, settings);
@@ -150,7 +150,7 @@ export function updateSlotBoundsForDay(
     } else {
       slot.endOfDayTime = new Date(slot.endOfWorkHours);
       slot.endOfDayTimeSource = 'endOfWorkHours';
-      slot.endOfDayTimeReason = 'no next workday found';
+      slot.endOfDayTimeReason = 'no_next_workday: could not find next working day';
     }
   }
 }
@@ -215,7 +215,7 @@ export function isWithinWorkWindow(
  */
 export function canStartCycleAt(
   time: Date,
-  printer: { canStartNewCyclesAfterHours: boolean },
+  printer: Printer | { canStartNewCyclesAfterHours?: boolean } | null | undefined,
   preset: PlatePreset | null | undefined,
   settings: FactorySettings,
   workDayStart: Date,
@@ -235,8 +235,8 @@ export function canStartCycleAt(
     return false;
   }
   
-  // Level 2: Printer must allow night starts
-  if (!printer.canStartNewCyclesAfterHours) {
+  // Level 2: Printer must allow night starts (default to false if not set)
+  if (!printer?.canStartNewCyclesAfterHours) {
     return false;
   }
   
