@@ -50,6 +50,7 @@ import {
   isNightTime,
   hoursBetween,
   PrinterTimeSlot as SchedulingSlot,
+  PlateReleaseInfo,
 } from './schedulingHelpers';
 import {
   logPlanningDecision,
@@ -607,7 +608,7 @@ function estimateProjectFinishTime(
   const maxSimulationTime = new Date(planningStartTime);
   maxSimulationTime.setDate(maxSimulationTime.getDate() + maxSimulationDays);
   
-  // Create simulation slots (clones)
+  // Create simulation slots (clones) - deep clone dates and platesInUse
   const simSlots = printerSlots
     .filter(s => printerIds.includes(s.printerId))
     .map(s => ({
@@ -616,6 +617,12 @@ function estimateProjectFinishTime(
       endOfDayTime: new Date(s.endOfDayTime),
       endOfWorkHours: new Date(s.endOfWorkHours),
       workDayStart: new Date(s.workDayStart),
+      // FIX #2: Deep clone platesInUse array with dates
+      platesInUse: (s.platesInUse || []).map(p => ({
+        releaseTime: new Date(p.releaseTime),
+        cycleId: p.cycleId,
+      })),
+      physicalPlateCapacity: s.physicalPlateCapacity,
     }));
   
   if (simSlots.length === 0) {
@@ -690,21 +697,21 @@ function estimateProjectFinishTime(
     // ============= PLATE CONSTRAINT CHECK (Dry-Run V2) =============
     const isWithinWorkHoursSim = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
     
-    // Simulate plate release during work hours
-    if (isWithinWorkHoursSim && (slot as any).platesInUse) {
-      (slot as any).platesInUse = (slot as any).platesInUse.filter((p: any) => p.releaseTime > slot.currentTime);
+    // Simulate plate release during work hours - use properly typed slot
+    if (isWithinWorkHoursSim && slot.platesInUse) {
+      slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
     }
     
-    const simPlatesInUse = (slot as any).platesInUse?.length ?? 0;
-    const simPlateCapacity = (slot as any).physicalPlateCapacity ?? 4;
+    const simPlatesInUse = slot.platesInUse?.length ?? 0;
+    const simPlateCapacity = slot.physicalPlateCapacity ?? 4;
     const simPlatesAvailable = simPlateCapacity - simPlatesInUse;
     
     if (simPlatesAvailable <= 0) {
-      if (isWithinWorkHoursSim && (slot as any).platesInUse?.length > 0) {
-        const nearestRelease = Math.min(...(slot as any).platesInUse.map((p: any) => p.releaseTime.getTime()));
+      if (isWithinWorkHoursSim && slot.platesInUse?.length > 0) {
+        const nearestRelease = Math.min(...slot.platesInUse.map(p => p.releaseTime.getTime()));
         if (nearestRelease < slot.endOfWorkHours.getTime()) {
           slot.currentTime = new Date(nearestRelease);
-          (slot as any).platesInUse = (slot as any).platesInUse.filter((p: any) => p.releaseTime > slot.currentTime);
+          slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
           heap.push(slot.currentTime.getTime(), slot);
           continue;
         }
@@ -714,7 +721,8 @@ function estimateProjectFinishTime(
       if (!nextStart || nextStart > maxSimulationTime) continue;
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
-      (slot as any).platesInUse = [];
+      // FIX #1: Do NOT reset plates - filter by releaseTime at new day start
+      slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
       heap.push(slot.currentTime.getTime(), slot);
       continue;
     }
@@ -747,10 +755,10 @@ function estimateProjectFinishTime(
     remainingUnits -= unitsThisCycle;
     cycleCount++;
     
-    // Track plate usage in simulation
+    // Track plate usage in simulation - use properly typed slot
     const PLATE_CLEANUP_SIM = 10;
-    if (!(slot as any).platesInUse) (slot as any).platesInUse = [];
-    (slot as any).platesInUse.push({
+    if (!slot.platesInUse) slot.platesInUse = [];
+    slot.platesInUse.push({
       releaseTime: new Date(cycleEndTime.getTime() + PLATE_CLEANUP_SIM * 60 * 1000),
       cycleId: `sim-${cycleCount}`,
     });
@@ -961,8 +969,8 @@ function scheduleProjectOnPrinters(
       if (!nextStart) continue;
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
-      // Reset plates on new day
-      slot.platesInUse = [];
+      // FIX #1: Do NOT reset plates - filter by releaseTime at new day start
+      slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
       heap.push(slot.currentTime.getTime(), slot);
       continue;
     }
@@ -1238,10 +1246,7 @@ const validateTimeConstraints = (
 
 // ============= CYCLE SCHEDULING =============
 
-interface PlateReleaseInfo {
-  releaseTime: Date;  // When this plate becomes available again
-  cycleId: string;    // Which cycle is using this plate
-}
+// PlateReleaseInfo imported from schedulingHelpers
 
 interface PrinterTimeSlot {
   printerId: string;

@@ -9,6 +9,12 @@ import {
   PlatePreset
 } from './storage';
 
+// ============= PLATE RELEASE INFO =============
+export interface PlateReleaseInfo {
+  releaseTime: Date;
+  cycleId: string;
+}
+
 // ============= TIME SLOT INTERFACE =============
 // Represents a printer's current scheduling state
 export interface PrinterTimeSlot {
@@ -21,6 +27,8 @@ export interface PrinterTimeSlot {
   hasAMS: boolean;
   canStartNewCyclesAfterHours: boolean;
   physicalPlateCapacity: number;
+  platesInUse: PlateReleaseInfo[];  // Plates currently in use with release times
+  cyclesScheduled?: any[];  // Track cycles for plate index calculation
   lastScheduledColor?: string;
 }
 
