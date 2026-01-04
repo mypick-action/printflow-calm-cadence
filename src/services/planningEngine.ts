@@ -59,16 +59,10 @@ import {
   PrinterScoreDetails,
 } from './planningDecisionLog';
 
-// ============= MODULE-SCOPED ADVANCE REASON TRACKER =============
-// Set by generatePlan, used by scheduling functions during the same sync call
-// Safer than globalThis since it's scoped to this module
-let _advanceReasonTracker: ((reason: string) => void) | null = null;
-
-const trackAdvanceReasonGlobal = (reason: string) => {
-  _advanceReasonTracker?.(reason);
-};
-
 // ============= TYPES =============
+
+// Type for advance reason tracking callback
+type AdvanceReasonTracker = (reason: string) => void;
 
 export interface DailySlot {
   startTime: Date;
@@ -607,7 +601,8 @@ function estimateProjectFinishTime(
   printerIds: string[],
   planningStartTime: Date,
   settings: FactorySettings,
-  printers: Printer[]
+  printers: Printer[],
+  trackAdvanceReason?: AdvanceReasonTracker
 ): {
   finishTime: Date | null;
   cycleCount: number;
@@ -897,7 +892,8 @@ function selectMinimumPrintersForDeadline(
   planningStartTime: Date,
   settings: FactorySettings,
   printers: Printer[],
-  lastProjectByPrinter: Map<string, string>
+  lastProjectByPrinter: Map<string, string>,
+  trackAdvanceReason?: AdvanceReasonTracker
 ): {
   selectedPrinterIds: string[];
   printerScores: PrinterScoreDetails[];
@@ -950,7 +946,8 @@ function selectMinimumPrintersForDeadline(
       selectedIds,
       planningStartTime,
       settings,
-      printers
+      printers,
+      trackAdvanceReason
     );
     
     if (estimation.meetsDeadline || numPrinters === scoredPrinters.length) {
@@ -994,7 +991,8 @@ function scheduleProjectOnPrinters(
   printers: Printer[],
   dateString: string,
   workingMaterial: Map<string, number>,
-  workingSpoolAssignments: Map<string, Set<string>>
+  workingSpoolAssignments: Map<string, Set<string>>,
+  trackAdvanceReason?: AdvanceReasonTracker
 ): ScheduledCycle[] {
   const scheduledCycles: ScheduledCycle[] = [];
   const transitionMs = (settings.transitionMinutes ?? 0) * 60 * 1000;
@@ -1053,7 +1051,7 @@ function scheduleProjectOnPrinters(
       });
       
       // Track reason for summary
-      trackAdvanceReasonGlobal('past_endOfDayTime');
+      trackAdvanceReason?.('past_endOfDayTime');
       
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1111,7 +1109,7 @@ function scheduleProjectOnPrinters(
       });
       
       // Track reason for summary
-      trackAdvanceReasonGlobal('no_plates_available');
+      trackAdvanceReason?.('no_plates_available');
       
       // No plates available - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1156,7 +1154,7 @@ function scheduleProjectOnPrinters(
       });
       
       // Track reason for summary
-      trackAdvanceReasonGlobal('canStartCycleAt_false');
+      trackAdvanceReason?.('canStartCycleAt_false');
       
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1198,7 +1196,7 @@ function scheduleProjectOnPrinters(
       });
       
       // Track reason for summary
-      trackAdvanceReasonGlobal('cycle_exceeds_endOfDayTime');
+      trackAdvanceReason?.('cycle_exceeds_endOfDayTime');
       
       // Doesn't fit - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1244,7 +1242,7 @@ function scheduleProjectOnPrinters(
         });
         
         // Track reason for summary
-        trackAdvanceReasonGlobal('cycle_extends_night_not_allowed');
+        trackAdvanceReason?.('cycle_extends_night_not_allowed');
         
         // Cannot extend into night - advance to next workday
         const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1284,7 +1282,7 @@ function scheduleProjectOnPrinters(
           });
           
           // Track reason for summary
-          trackAdvanceReasonGlobal('non_ams_color_lock');
+          trackAdvanceReason?.('non_ams_color_lock');
           
           // Non-AMS printer locked to different color - cannot extend into night
           const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1529,7 +1527,8 @@ const scheduleCyclesForDay = (
   spoolAssignmentTracker: Map<string, Set<string>>, // tracks which spools are assigned to which printers
   allowCrossMidnight: boolean = false, // allow cycles to cross midnight
   planningStartTime?: Date, // NEW: When replanning starts (from recalculatePlan)
-  isAutonomousDay: boolean = false // true for non-working days with FULL_AUTOMATION
+  isAutonomousDay: boolean = false, // true for non-working days with FULL_AUTOMATION
+  trackAdvanceReason?: AdvanceReasonTracker
 ): { dayPlan: DayPlan; updatedProjectStates: ProjectPlanningState[]; updatedMaterialTracker: Map<string, number>; updatedSpoolAssignments: Map<string, Set<string>> } => {
   
   // ============= DEBUG: Night scheduling input diagnostic =============
@@ -1768,7 +1767,8 @@ const scheduleCyclesForDay = (
         planningStartTime,
         settings,
         printers,
-        lastProjectByPrinter
+        lastProjectByPrinter,
+        trackAdvanceReason
       );
       
       // ============= ACCEPTANCE LOG: Project Decision =============
@@ -1828,7 +1828,8 @@ const scheduleCyclesForDay = (
           printers,
           dateString,
           workingMaterial,
-          workingSpoolAssignments
+          workingSpoolAssignments,
+          trackAdvanceReason
         );
         
         // Add cycles to printer slots
@@ -2736,9 +2737,9 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   
   // ============= ADVANCE REASONS TRACKER =============
   // Track why slots advance to next day - for debugging "holes" in schedule
-  // Using module-scoped tracker for safety with parallel/StrictMode runs
+  // Passed as closure through the function chain (no global state)
   const advanceReasonCounts = new Map<string, number>();
-  _advanceReasonTracker = (reason: string) => {
+  const trackAdvanceReason: AdvanceReasonTracker = (reason: string) => {
     advanceReasonCounts.set(reason, (advanceReasonCounts.get(reason) || 0) + 1);
   };
   
@@ -2809,7 +2810,8 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
       workingSpoolAssignments,
       false,            // allowCrossMidnight
       startDate,        // planningStartTime - prevents scheduling before this time
-      shouldPlanAutonomous  // isAutonomousDay - indicates this is a non-working day with FULL_AUTOMATION
+      shouldPlanAutonomous,  // isAutonomousDay - indicates this is a non-working day with FULL_AUTOMATION
+      trackAdvanceReason    // Pass the tracker through the chain
     );
     
     days.push(dayPlan);
@@ -2973,9 +2975,6 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
       all: Object.fromEntries(sortedReasons),
     });
   }
-  
-  // Cleanup module-scoped tracker
-  _advanceReasonTracker = null;
   
   return {
     success: blockingIssues.length === 0,
