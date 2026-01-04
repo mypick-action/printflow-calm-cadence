@@ -40,6 +40,22 @@ import { getAvailableGramsByColor } from './materialAdapter';
 import { formatDateStringLocal } from './dateUtils';
 import { logCycleBlock } from './cycleBlockLogger';
 import { isFeatureEnabled } from './featureFlags';
+import { MinHeap } from './minHeap';
+import {
+  advanceToNextWorkdayStart,
+  updateSlotBoundsForDay,
+  getEffectiveAvailability,
+  isWithinWorkWindow,
+  canStartCycleAt,
+  isNightTime,
+  hoursBetween,
+  PrinterTimeSlot as SchedulingSlot,
+} from './schedulingHelpers';
+import {
+  logPlanningDecision,
+  clearDecisionLog,
+  PrinterScoreDetails,
+} from './planningDecisionLog';
 
 // ============= TYPES =============
 
@@ -461,7 +477,517 @@ const prioritizeProjects = (projects: Project[], products: Product[], fromDate: 
   return projectStates;
 };
 
+// ============= PROJECT-CENTRIC SCHEDULING FUNCTIONS =============
+
+// Scoring weights for printer selection
+const SCORING_WEIGHTS = {
+  AVAILABILITY: 40,    // 0-40 points based on wait time
+  COLOR_MATCH: 30,     // 0-30 points for color matching
+  SWITCH_COST: 5,      // 0-5 points for avoiding color switch
+  CONTINUITY: 15,      // 0-15 points for project continuity
+};
+
+/**
+ * Score a printer for a specific project.
+ * Returns detailed scoring breakdown for debugging.
+ * 
+ * @param slot - Printer time slot
+ * @param projectColor - Color required by project
+ * @param planningStartTime - Reference time for wait calculation
+ * @param effectiveAvailabilityTime - When printer is actually available
+ * @param lastProjectId - ID of last project scheduled on this printer
+ * @param currentProjectId - ID of project being scored for
+ * @param settings - Factory settings
+ */
+function scorePrinterForProject(
+  slot: PrinterTimeSlot,
+  projectColor: string,
+  planningStartTime: Date,
+  effectiveAvailabilityTime: Date,
+  lastProjectId: string | undefined,
+  currentProjectId: string,
+  settings: FactorySettings
+): PrinterScoreDetails {
+  const reasons: string[] = [];
+  const scores = {
+    availability: 0,
+    colorMatch: 0,
+    switchCost: 0,
+    projectContinuity: 0,
+    total: 0,
+  };
+  
+  // Calculate wait hours from planning start
+  const waitHours = hoursBetween(planningStartTime, effectiveAvailabilityTime);
+  const isNextDay = effectiveAvailabilityTime.getTime() > slot.endOfDayTime.getTime();
+  
+  // 1. Availability Score (0-40)
+  // Less wait = higher score
+  // 0 hours wait = 40 points, 24+ hours wait = 0 points
+  const maxWaitHours = 24;
+  scores.availability = Math.max(0, SCORING_WEIGHTS.AVAILABILITY * (1 - Math.min(waitHours, maxWaitHours) / maxWaitHours));
+  if (waitHours <= 0.5) {
+    reasons.push('זמינה מיידית');
+  } else if (isNextDay) {
+    reasons.push(`זמינה ביום הבא (${waitHours.toFixed(1)} שעות)`);
+  } else {
+    reasons.push(`המתנה ${waitHours.toFixed(1)} שעות`);
+  }
+  
+  // 2. Color Match Score (0-30)
+  const normalizedProjectColor = normalizeColor(projectColor);
+  const normalizedPrinterColor = slot.lastScheduledColor ? normalizeColor(slot.lastScheduledColor) : null;
+  
+  if (normalizedPrinterColor === normalizedProjectColor) {
+    scores.colorMatch = SCORING_WEIGHTS.COLOR_MATCH;
+    reasons.push(`צבע תואם (${projectColor})`);
+  } else if (!normalizedPrinterColor) {
+    // Neutral - no color loaded
+    scores.colorMatch = SCORING_WEIGHTS.COLOR_MATCH / 2;
+    reasons.push('אין צבע טעון');
+  } else {
+    // Different color
+    scores.colorMatch = 0;
+    reasons.push(`צריך החלפת צבע (${slot.lastScheduledColor} → ${projectColor})`);
+  }
+  
+  // 3. Switch Cost Score (0-5)
+  // Binary: matching color = 5, different = 0
+  if (normalizedPrinterColor === normalizedProjectColor) {
+    scores.switchCost = SCORING_WEIGHTS.SWITCH_COST;
+  } else {
+    scores.switchCost = 0;
+  }
+  
+  // 4. Project Continuity Score (0-15)
+  // Bonus for continuing same project on same printer
+  if (lastProjectId === currentProjectId) {
+    scores.projectContinuity = SCORING_WEIGHTS.CONTINUITY;
+    reasons.push('המשכיות פרויקט');
+  } else {
+    scores.projectContinuity = 0;
+  }
+  
+  // Calculate total
+  scores.total = scores.availability + scores.colorMatch + scores.switchCost + scores.projectContinuity;
+  
+  return {
+    printerId: slot.printerId,
+    printerName: slot.printerName,
+    currentTime: new Date(slot.currentTime),
+    effectiveAvailabilityTime: new Date(effectiveAvailabilityTime),
+    waitHours,
+    isNextDay,
+    scores,
+    reasons,
+  };
+}
+
+/**
+ * Dry-run simulation to estimate project finish time.
+ * Uses MinHeap for efficient printer selection.
+ * Shares logic with actual scheduling via schedulingHelpers.
+ * 
+ * @returns Estimated finish time, cycles needed, and deadline status
+ */
+function estimateProjectFinishTime(
+  project: ProjectPlanningState,
+  printerSlots: PrinterTimeSlot[],
+  printerIds: string[],
+  planningStartTime: Date,
+  settings: FactorySettings,
+  printers: Printer[]
+): {
+  finishTime: Date | null;
+  cycleCount: number;
+  meetsDeadline: boolean;
+  marginHours: number;
+} {
+  const maxSimulationDays = 30;
+  const maxSimulationTime = new Date(planningStartTime);
+  maxSimulationTime.setDate(maxSimulationTime.getDate() + maxSimulationDays);
+  
+  // Create simulation slots (clones)
+  const simSlots = printerSlots
+    .filter(s => printerIds.includes(s.printerId))
+    .map(s => ({
+      ...s,
+      currentTime: new Date(s.currentTime),
+      endOfDayTime: new Date(s.endOfDayTime),
+      endOfWorkHours: new Date(s.endOfWorkHours),
+      workDayStart: new Date(s.workDayStart),
+    }));
+  
+  if (simSlots.length === 0) {
+    return { finishTime: null, cycleCount: 0, meetsDeadline: false, marginHours: 0 };
+  }
+  
+  // Initialize MinHeap with printer availability
+  const heap = new MinHeap<typeof simSlots[0]>();
+  for (const slot of simSlots) {
+    heap.push(slot.currentTime.getTime(), slot);
+  }
+  
+  let remainingUnits = project.remainingUnits;
+  let cycleCount = 0;
+  let lastFinishTime: Date | null = null;
+  const cycleHours = project.preset.cycleHours;
+  const unitsPerCycle = project.preset.unitsPerPlate;
+  const transitionMs = (settings.transitionMinutes ?? 0) * 60 * 1000;
+  
+  // Find printer object for canStartCycleAt check
+  const printerMap = new Map<string, Printer>();
+  for (const p of printers) {
+    printerMap.set(p.id, p);
+  }
+  
+  while (remainingUnits > 0 && !heap.isEmpty()) {
+    const entry = heap.pop();
+    if (!entry) break;
+    
+    const slot = entry.data;
+    
+    // Safety: stop if simulation goes too far
+    if (slot.currentTime > maxSimulationTime) {
+      break;
+    }
+    
+    // Check if we're past end of day
+    if (slot.currentTime >= slot.endOfDayTime) {
+      // Advance to next workday
+      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+      if (!nextStart || nextStart > maxSimulationTime) {
+        continue; // No more workdays in simulation window
+      }
+      
+      slot.currentTime = nextStart;
+      updateSlotBoundsForDay(slot, nextStart, settings);
+      heap.push(slot.currentTime.getTime(), slot);
+      continue;
+    }
+    
+    // Check if cycle can start (3-level control)
+    const printer = printerMap.get(slot.printerId);
+    if (!canStartCycleAt(
+      slot.currentTime,
+      { canStartNewCyclesAfterHours: printer?.canStartNewCyclesAfterHours ?? false },
+      project.preset,
+      settings,
+      slot.workDayStart,
+      slot.endOfWorkHours
+    )) {
+      // Cannot start here - advance to next workday
+      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+      if (!nextStart || nextStart > maxSimulationTime) {
+        continue;
+      }
+      slot.currentTime = nextStart;
+      updateSlotBoundsForDay(slot, nextStart, settings);
+      heap.push(slot.currentTime.getTime(), slot);
+      continue;
+    }
+    
+    // Schedule one cycle
+    const cycleEndTime = new Date(slot.currentTime.getTime() + cycleHours * 60 * 60 * 1000);
+    lastFinishTime = cycleEndTime;
+    
+    const unitsThisCycle = Math.min(unitsPerCycle, remainingUnits);
+    remainingUnits -= unitsThisCycle;
+    cycleCount++;
+    
+    // Advance printer time (including transition)
+    slot.currentTime = new Date(cycleEndTime.getTime() + transitionMs);
+    
+    // Push back to heap for potential next cycle
+    heap.push(slot.currentTime.getTime(), slot);
+  }
+  
+  // Calculate deadline margin
+  const deadlineDate = new Date(project.project.dueDate);
+  const meetsDeadline = lastFinishTime !== null && lastFinishTime <= deadlineDate;
+  const marginHours = lastFinishTime 
+    ? (deadlineDate.getTime() - lastFinishTime.getTime()) / (1000 * 60 * 60)
+    : -Infinity;
+  
+  return {
+    finishTime: lastFinishTime,
+    cycleCount,
+    meetsDeadline,
+    marginHours,
+  };
+}
+
+/**
+ * Select minimum number of printers needed to meet deadline.
+ * Uses scoring to pick best printers, then validates with dry-run.
+ * 
+ * @returns Array of selected printer IDs with score details
+ */
+function selectMinimumPrintersForDeadline(
+  project: ProjectPlanningState,
+  printerSlots: PrinterTimeSlot[],
+  planningStartTime: Date,
+  settings: FactorySettings,
+  printers: Printer[],
+  lastProjectByPrinter: Map<string, string>
+): {
+  selectedPrinterIds: string[];
+  printerScores: PrinterScoreDetails[];
+  estimationResult: {
+    estimatedFinishTime: Date | null;
+    meetsDeadline: boolean;
+    marginHours: number;
+    cycleCount: number;
+  };
+} {
+  // Score all printers
+  const scoredPrinters: PrinterScoreDetails[] = [];
+  
+  for (const slot of printerSlots) {
+    const effectiveTime = getEffectiveAvailability(slot, settings);
+    const lastProjectId = lastProjectByPrinter.get(slot.printerId);
+    
+    const scoreDetails = scorePrinterForProject(
+      slot,
+      project.project.color,
+      planningStartTime,
+      effectiveTime,
+      lastProjectId,
+      project.project.id,
+      settings
+    );
+    
+    scoredPrinters.push(scoreDetails);
+    
+    // Debug log
+    console.log(`[Scoring] ${slot.printerName}:`, {
+      currentTime: slot.currentTime.toISOString(),
+      effectiveTime: effectiveTime.toISOString(),
+      waitHours: scoreDetails.waitHours.toFixed(2),
+      isNextDay: scoreDetails.isNextDay,
+      totalScore: scoreDetails.scores.total,
+    });
+  }
+  
+  // Sort by score (highest first)
+  scoredPrinters.sort((a, b) => b.scores.total - a.scores.total);
+  
+  // Try with increasing number of printers until deadline is met
+  for (let numPrinters = 1; numPrinters <= scoredPrinters.length; numPrinters++) {
+    const selectedIds = scoredPrinters.slice(0, numPrinters).map(p => p.printerId);
+    
+    const estimation = estimateProjectFinishTime(
+      project,
+      printerSlots,
+      selectedIds,
+      planningStartTime,
+      settings,
+      printers
+    );
+    
+    if (estimation.meetsDeadline || numPrinters === scoredPrinters.length) {
+      return {
+        selectedPrinterIds: selectedIds,
+        printerScores: scoredPrinters.slice(0, numPrinters),
+        estimationResult: {
+          estimatedFinishTime: estimation.finishTime,
+          meetsDeadline: estimation.meetsDeadline,
+          marginHours: estimation.marginHours,
+          cycleCount: estimation.cycleCount,
+        },
+      };
+    }
+  }
+  
+  // Fallback: use all printers
+  return {
+    selectedPrinterIds: scoredPrinters.map(p => p.printerId),
+    printerScores: scoredPrinters,
+    estimationResult: {
+      estimatedFinishTime: null,
+      meetsDeadline: false,
+      marginHours: -Infinity,
+      cycleCount: 0,
+    },
+  };
+}
+
+/**
+ * Schedule all cycles for a project on selected printers.
+ * Uses MinHeap for earliest-available scheduling.
+ * 
+ * @returns Array of scheduled cycles and updated printer slots
+ */
+function scheduleProjectOnPrinters(
+  project: ProjectPlanningState,
+  printerSlots: PrinterTimeSlot[],
+  selectedPrinterIds: string[],
+  settings: FactorySettings,
+  printers: Printer[],
+  dateString: string,
+  workingMaterial: Map<string, number>,
+  workingSpoolAssignments: Map<string, Set<string>>
+): ScheduledCycle[] {
+  const scheduledCycles: ScheduledCycle[] = [];
+  const transitionMs = (settings.transitionMinutes ?? 0) * 60 * 1000;
+  const PLATE_CLEANUP_MINUTES = 10;
+  
+  // Get selected slots
+  const selectedSlots = printerSlots.filter(s => selectedPrinterIds.includes(s.printerId));
+  if (selectedSlots.length === 0) return [];
+  
+  // Initialize MinHeap
+  const heap = new MinHeap<PrinterTimeSlot>();
+  for (const slot of selectedSlots) {
+    heap.push(slot.currentTime.getTime(), slot);
+  }
+  
+  let remainingUnits = project.remainingUnits;
+  const colorKey = normalizeColor(project.project.color);
+  
+  // Find printer objects for checks
+  const printerMap = new Map<string, Printer>();
+  for (const p of printers) {
+    printerMap.set(p.id, p);
+  }
+  
+  // Get available material
+  const availableMaterial = workingMaterial.get(colorKey) ?? 0;
+  
+  while (remainingUnits > 0 && !heap.isEmpty()) {
+    const entry = heap.pop();
+    if (!entry) break;
+    
+    const slot = entry.data;
+    const printer = printerMap.get(slot.printerId);
+    
+    // Check if past end of day
+    if (slot.currentTime >= slot.endOfDayTime) {
+      // Advance to next workday
+      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+      if (!nextStart) continue;
+      
+      slot.currentTime = nextStart;
+      updateSlotBoundsForDay(slot, nextStart, settings);
+      heap.push(slot.currentTime.getTime(), slot);
+      continue;
+    }
+    
+    // Check if can start cycle here (3-level control)
+    if (!canStartCycleAt(
+      slot.currentTime,
+      { canStartNewCyclesAfterHours: printer?.canStartNewCyclesAfterHours ?? false },
+      project.preset,
+      settings,
+      slot.workDayStart,
+      slot.endOfWorkHours
+    )) {
+      // Advance to next workday
+      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+      if (!nextStart) continue;
+      
+      slot.currentTime = nextStart;
+      updateSlotBoundsForDay(slot, nextStart, settings);
+      heap.push(slot.currentTime.getTime(), slot);
+      continue;
+    }
+    
+    // Calculate cycle timing
+    const cycleHours = project.preset.cycleHours;
+    const cycleEndTime = new Date(slot.currentTime.getTime() + cycleHours * 60 * 60 * 1000);
+    
+    // Check if cycle fits in available window
+    if (cycleEndTime > slot.endOfDayTime) {
+      // Doesn't fit - advance to next workday
+      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+      if (!nextStart) continue;
+      
+      slot.currentTime = nextStart;
+      updateSlotBoundsForDay(slot, nextStart, settings);
+      heap.push(slot.currentTime.getTime(), slot);
+      continue;
+    }
+    
+    // Calculate units and grams
+    const unitsThisCycle = Math.min(project.preset.unitsPerPlate, remainingUnits);
+    const gramsThisCycle = unitsThisCycle * project.product.gramsPerUnit;
+    
+    // Determine readiness state
+    const hasMaterial = availableMaterial >= gramsThisCycle;
+    let readinessState: CycleReadinessState = 'waiting_for_spool';
+    let readinessDetails: string | undefined;
+    
+    if (!hasMaterial) {
+      readinessState = 'blocked_inventory';
+      readinessDetails = `חסר ${project.project.color}: צריך ${gramsThisCycle}g`;
+    } else if (normalizeColor(slot.lastScheduledColor || '') === colorKey) {
+      readinessState = 'ready';
+    } else {
+      readinessState = 'waiting_for_spool';
+      readinessDetails = `טען גליל ${project.project.color} על ${slot.printerName}`;
+    }
+    
+    // Determine if night slot
+    const isNightSlot = isNightTime(slot.currentTime, slot.endOfWorkHours);
+    const remainingDayHours = (slot.endOfDayTime.getTime() - cycleEndTime.getTime()) / (1000 * 60 * 60);
+    const isEndOfDayCycle = remainingDayHours < 2;
+    
+    // Plate tracking
+    const plateReleaseTime = new Date(cycleEndTime.getTime() + PLATE_CLEANUP_MINUTES * 60 * 1000);
+    const plateIndex = (slot.cyclesScheduled?.length ?? 0) + 1;
+    
+    // Create cycle
+    const cycle: ScheduledCycle = {
+      id: generateId(),
+      projectId: project.project.id,
+      printerId: slot.printerId,
+      unitsPlanned: unitsThisCycle,
+      gramsPlanned: gramsThisCycle,
+      startTime: new Date(slot.currentTime),
+      endTime: cycleEndTime,
+      plateType: unitsThisCycle < project.preset.unitsPerPlate 
+        ? (remainingUnits <= unitsThisCycle ? 'closeout' : 'reduced')
+        : 'full',
+      shift: isEndOfDayCycle ? 'end_of_day' : 'day',
+      isEndOfDayCycle,
+      readinessState,
+      readinessDetails,
+      requiredColor: project.project.color,
+      requiredGrams: gramsThisCycle,
+      presetId: project.preset.id,
+      presetName: project.preset.name,
+      presetSelectionReason: 'Selected by planning engine',
+      plateIndex,
+      plateReleaseTime,
+    };
+    
+    scheduledCycles.push(cycle);
+    remainingUnits -= unitsThisCycle;
+    
+    // Update slot
+    slot.cyclesScheduled = slot.cyclesScheduled || [];
+    slot.cyclesScheduled.push(cycle);
+    slot.currentTime = new Date(cycleEndTime.getTime() + transitionMs);
+    slot.lastScheduledColor = project.project.color;
+    
+    // Track spool assignment
+    if (!workingSpoolAssignments.has(colorKey)) {
+      workingSpoolAssignments.set(colorKey, new Set());
+    }
+    workingSpoolAssignments.get(colorKey)!.add(slot.printerId);
+    
+    // Push back to heap
+    heap.push(slot.currentTime.getTime(), slot);
+  }
+  
+  // Update project remaining units
+  project.remainingUnits = remainingUnits;
+  
+  return scheduledCycles;
+}
+
 // ============= CONSTRAINT VALIDATION =============
+
 
 const validateMaterialConstraints = (
   projectStates: ProjectPlanningState[],
@@ -589,6 +1115,7 @@ interface PrinterTimeSlot {
   platesInUse: PlateReleaseInfo[];  // Plates currently in use with release times
   lastScheduledColor?: string;    // For non-AMS printers: locked color after hours
   hasAMS: boolean;                // Cache of printer.hasAMS
+  canStartNewCyclesAfterHours: boolean;  // Cache of printer.canStartNewCyclesAfterHours
 }
 
 const scheduleCyclesForDay = (
@@ -767,6 +1294,7 @@ const scheduleCyclesForDay = (
       platesInUse,
       lastScheduledColor,
       hasAMS: p.hasAMS ?? false,
+      canStartNewCyclesAfterHours: p.canStartNewCyclesAfterHours ?? false,
     };
   });
   
