@@ -173,6 +173,9 @@ export interface PlannedCycle {
   presetId?: string; // Selected preset ID
   presetName?: string; // Preset name for display
   presetSelectionReason?: string; // Why this preset was chosen (for auto-selection)
+  // Physical plate constraint fields
+  plateIndex?: number; // Which plate (1..4) this cycle uses
+  plateReleaseTime?: string; // When this plate will be available again (ISO string)
 }
 
 // Load recommendation for operators
