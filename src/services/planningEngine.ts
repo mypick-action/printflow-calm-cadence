@@ -1591,6 +1591,12 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   let workingProjectStates = [...projectStates];
   let workingMaterialTracker = new Map(materialTracker);
   
+  // ============= FIX: Track planning window coverage to prevent duplicates =============
+  // When a working day's night window extends into subsequent non-working days,
+  // those days are already "covered" and should not be planned separately.
+  // E.g., Thursday 17:30 → Sunday 08:30 covers Friday and Saturday entirely.
+  let coveredUntil: Date | null = null;
+  
   for (let dayOffset = 0; dayOffset < daysToPlane; dayOffset++) {
     // CRITICAL FIX: Reset spool assignments at the START of each day
     // This ensures sequential cycles on same printer are allowed
@@ -1604,6 +1610,37 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     
     // Check if this is a non-working day
     const isNonWorkingDay = !schedule || !schedule.enabled;
+    
+    // ============= FIX: Skip days already covered by previous planning window =============
+    // If a previous day's night window already covers this day, don't plan it again
+    if (coveredUntil && planDate < coveredUntil) {
+      console.log('[Plan] ⏭️ Skipping day already covered by previous planning window:', {
+        date: formatDateString(planDate),
+        isNonWorkingDay,
+        coveredUntil: coveredUntil.toISOString(),
+      });
+      
+      // Add empty day plan to maintain structure
+      days.push({
+        date: planDate,
+        dateString: formatDateString(planDate),
+        isWorkday: !isNonWorkingDay,
+        workStart: schedule?.startTime ?? '',
+        workEnd: schedule?.endTime ?? '',
+        printerPlans: printers.map(p => ({
+          printerId: p.id,
+          printerName: p.name,
+          cycles: [],
+          totalUnits: 0,
+          totalHours: 0,
+          capacityUsedPercent: 0,
+        })),
+        totalUnits: 0,
+        totalCycles: 0,
+        unusedCapacityHours: 0,
+      });
+      continue;
+    }
     
     // Determine if we should plan autonomously on non-working days
     const shouldPlanAutonomous = isNonWorkingDay && settings.afterHoursBehavior === 'FULL_AUTOMATION';
@@ -1637,6 +1674,30 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
       ? { enabled: true, startTime: '00:00', endTime: '23:59' }
       : schedule!;
     
+    // ============= Calculate dayEnd to update coveredUntil =============
+    // This mirrors the logic in scheduleCyclesForDay to know when this day's window ends
+    let dayEndForCoverage: Date;
+    if (isNonWorkingDay) {
+      // Autonomous day: window extends until next working day start
+      const nextWorkDayStart = findNextWorkDayStart(planDate, settings, 7);
+      dayEndForCoverage = nextWorkDayStart ?? addDays(planDate, 1);
+    } else if (settings.afterHoursBehavior === 'FULL_AUTOMATION') {
+      // Working day with FULL_AUTOMATION: extends to next working day's start
+      const nextWorkDayStart = findNextWorkDayStart(planDate, settings, 7);
+      dayEndForCoverage = nextWorkDayStart ?? addDays(planDate, 1);
+    } else {
+      // Normal working day: ends at work hours end
+      dayEndForCoverage = createDateWithTime(planDate, schedule!.endTime);
+    }
+    
+    console.log('[Plan] 📅 Planning day:', {
+      date: formatDateString(planDate),
+      isNonWorkingDay,
+      shouldPlanAutonomous,
+      dayEndForCoverage: dayEndForCoverage.toISOString(),
+      previousCoveredUntil: coveredUntil?.toISOString() ?? 'none',
+    });
+    
     // Schedule cycles for this day
     // Pass spool assignment tracker to enforce 1 spool = 1 printer rule
     // Pass startDate as planningStartTime to prevent scheduling in the past
@@ -1658,6 +1719,11 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     workingProjectStates = updatedProjectStates;
     workingMaterialTracker = updatedMaterialTracker;
     // NOTE: workingSpoolAssignments NOT carried over - reset fresh each day (line 709)
+    
+    // ============= FIX: Update coveredUntil to prevent duplicate planning =============
+    if (!coveredUntil || dayEndForCoverage > coveredUntil) {
+      coveredUntil = dayEndForCoverage;
+    }
     
     // If all projects are scheduled, no need to continue
     if (workingProjectStates.length === 0) break;
@@ -1710,23 +1776,40 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     }
   }
   
+  // ============= SAFETY NET: Deduplicate cycles by printerId + startTime =============
+  // This prevents any edge case where the same cycle might be created twice
+  const uniqueCycleKeys = new Set<string>();
+  const deduplicatedCycles = allCycles.filter(cycle => {
+    const key = `${cycle.printerId}_${cycle.startTime}`;
+    if (uniqueCycleKeys.has(key)) {
+      console.warn('[Plan] ⚠️ Duplicate cycle filtered:', key);
+      return false;
+    }
+    uniqueCycleKeys.add(key);
+    return true;
+  });
+  
+  if (deduplicatedCycles.length < allCycles.length) {
+    console.log('[Plan] 🔄 Deduplication removed', allCycles.length - deduplicatedCycles.length, 'duplicate cycles');
+  }
+  
   // ============= POST-PROCESSING: Apply Physical Plate Limit =============
   // Under feature flag PHYSICAL_PLATES_LIMIT, limit consecutive "ready" cycles
   // per printer during night/weekend to physicalPlateCapacity
   if (isFeatureEnabled('PHYSICAL_PLATES_LIMIT')) {
-    applyPhysicalPlateLimit(allCycles, printers, settings);
+    applyPhysicalPlateLimit(deduplicatedCycles, printers, settings);
   }
   
-  // Calculate totals
-  const totalUnitsPlanned = days.reduce((sum, d) => sum + d.totalUnits, 0);
-  const totalCyclesPlanned = days.reduce((sum, d) => sum + d.totalCycles, 0);
+  // Calculate totals (use deduplicated cycles)
+  const totalUnitsPlanned = deduplicatedCycles.reduce((sum, c) => sum + c.unitsPlanned, 0);
+  const totalCyclesPlanned = deduplicatedCycles.length;
   const unusedCapacityHours = days.reduce((sum, d) => sum + d.unusedCapacityHours, 0);
   
   // ============= DEBUG LOG: Planning summary =============
   const cyclesByPrinter = new Map<string, number>();
   const skippedReasons = new Map<string, number>();
   
-  for (const cycle of allCycles) {
+  for (const cycle of deduplicatedCycles) {
     cyclesByPrinter.set(cycle.printerId, (cyclesByPrinter.get(cycle.printerId) || 0) + 1);
   }
   
@@ -1739,14 +1822,14 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   
   // Group cycles by day to see plate usage pattern
   const cyclesByDay = new Map<string, number>();
-  for (const cycle of allCycles) {
+  for (const cycle of deduplicatedCycles) {
     const dayStr = cycle.startTime.split('T')[0];
     cyclesByDay.set(dayStr, (cyclesByDay.get(dayStr) || 0) + 1);
   }
   
   // ============= PLATE CONSTRAINT DEBUG: Per-printer plate timeline =============
   const plateDebugByPrinter = new Map<string, { cycles: Array<{ plateIndex: number; start: string; end: string; releaseTime: string; color: string }> }>();
-  for (const cycle of allCycles) {
+  for (const cycle of deduplicatedCycles) {
     if (!plateDebugByPrinter.has(cycle.printerId)) {
       plateDebugByPrinter.set(cycle.printerId, { cycles: [] });
     }
@@ -1768,10 +1851,10 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     unscheduledProjects: unscheduledCount,
     skippedReasons: Object.fromEntries(skippedReasons),
     readinessBreakdown: {
-      ready: allCycles.filter(c => c.readinessState === 'ready').length,
-      waiting_for_spool: allCycles.filter(c => c.readinessState === 'waiting_for_spool').length,
-      blocked_inventory: allCycles.filter(c => c.readinessState === 'blocked_inventory').length,
-      waiting_for_plate_reload: allCycles.filter(c => c.readinessState === 'waiting_for_plate_reload').length,
+      ready: deduplicatedCycles.filter(c => c.readinessState === 'ready').length,
+      waiting_for_spool: deduplicatedCycles.filter(c => c.readinessState === 'waiting_for_spool').length,
+      blocked_inventory: deduplicatedCycles.filter(c => c.readinessState === 'blocked_inventory').length,
+      waiting_for_plate_reload: deduplicatedCycles.filter(c => c.readinessState === 'waiting_for_plate_reload').length,
     },
     plateConstraintInfo: {
       physicalPlateCapacity: printers.map(p => ({ id: p.id, name: p.name, capacity: p.physicalPlateCapacity ?? 4 })),
@@ -1793,7 +1876,7 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     unusedCapacityHours,
     warnings,
     blockingIssues,
-    cycles: allCycles,
+    cycles: deduplicatedCycles,
     generatedAt: new Date().toISOString(),
   };
 };
