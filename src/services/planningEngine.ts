@@ -702,7 +702,7 @@ function estimateProjectFinishTime(
     const printer = printerMap.get(slot.printerId);
     if (!canStartCycleAt(
       slot.currentTime,
-      { canStartNewCyclesAfterHours: printer?.canStartNewCyclesAfterHours ?? false },
+      printer,  // Pass full printer object
       project.preset,
       settings,
       slot.workDayStart,
@@ -1043,6 +1043,9 @@ function scheduleProjectOnPrinters(
         presetAllowedForNight: project.preset?.allowedForNightCycle,
       });
       
+      // Track reason for summary
+      (globalThis as any).__trackAdvanceReason?.('past_endOfDayTime');
+      
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
       if (!nextStart) continue;
@@ -1098,6 +1101,9 @@ function scheduleProjectOnPrinters(
         projectColor: project.project.color ?? 'none',
       });
       
+      // Track reason for summary
+      (globalThis as any).__trackAdvanceReason?.('no_plates_available');
+      
       // No plates available - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
       if (!nextStart) continue;
@@ -1112,7 +1118,7 @@ function scheduleProjectOnPrinters(
     // Check if can start cycle here (3-level control)
     if (!canStartCycleAt(
       slot.currentTime,
-      { canStartNewCyclesAfterHours: printer?.canStartNewCyclesAfterHours ?? false },
+      printer,  // Pass full printer object
       project.preset,
       settings,
       slot.workDayStart,
@@ -1139,6 +1145,9 @@ function scheduleProjectOnPrinters(
         projectColor: project.project.color ?? 'none',
         presetAllowedForNight: project.preset?.allowedForNightCycle,
       });
+      
+      // Track reason for summary
+      (globalThis as any).__trackAdvanceReason?.('canStartCycleAt_false');
       
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1178,6 +1187,9 @@ function scheduleProjectOnPrinters(
         projectColor: project.project.color ?? 'none',
         presetAllowedForNight: project.preset?.allowedForNightCycle,
       });
+      
+      // Track reason for summary
+      (globalThis as any).__trackAdvanceReason?.('cycle_exceeds_endOfDayTime');
       
       // Doesn't fit - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1222,6 +1234,9 @@ function scheduleProjectOnPrinters(
           presetAllowedForNight: project.preset?.allowedForNightCycle,
         });
         
+        // Track reason for summary
+        (globalThis as any).__trackAdvanceReason?.('cycle_extends_night_not_allowed');
+        
         // Cannot extend into night - advance to next workday
         const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
         if (!nextStart) continue;
@@ -1258,6 +1273,9 @@ function scheduleProjectOnPrinters(
             slotColorKey,
             projectColorKey: colorKey,
           });
+          
+          // Track reason for summary
+          (globalThis as any).__trackAdvanceReason?.('non_ams_color_lock');
           
           // Non-AMS printer locked to different color - cannot extend into night
           const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1655,18 +1673,19 @@ const scheduleCyclesForDay = (
     const lastScheduledColor = lastLockedCycle?.requiredColor;
     
     // ============= COMPUTE endOfDayTimeSource for debugging =============
+    // Source is ONLY 'endOfWorkHours' or 'nextWorkdayStart', reason explains why
     let endOfDayTimeSource: EndOfDayTimeSource = 'endOfWorkHours';
     let endOfDayTimeReason = '';
     
     if (isAutonomousDay) {
       endOfDayTimeSource = 'nextWorkdayStart';
-      endOfDayTimeReason = 'autonomous day - extends to next workday';
+      endOfDayTimeReason = 'autonomous_day: extends to next workday';
     } else if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
-      endOfDayTimeSource = 'afterHours_disabled';
-      endOfDayTimeReason = `afterHoursBehavior=${settings.afterHoursBehavior}`;
+      endOfDayTimeSource = 'endOfWorkHours';
+      endOfDayTimeReason = `afterHours_disabled: afterHoursBehavior=${settings.afterHoursBehavior}`;
     } else if (!p.canStartNewCyclesAfterHours) {
-      endOfDayTimeSource = 'printer_night_disabled';
-      endOfDayTimeReason = `printer canStartNewCyclesAfterHours=false`;
+      endOfDayTimeSource = 'endOfWorkHours';
+      endOfDayTimeReason = `printer_night_disabled: canStartNewCyclesAfterHours=false`;
     } else {
       // FULL_AUTOMATION enabled and printer allows night
       endOfDayTimeSource = 'nextWorkdayStart';
@@ -2706,6 +2725,15 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   let workingProjectStates = [...projectStates];
   let workingMaterialTracker = new Map(materialTracker);
   
+  // ============= ADVANCE REASONS TRACKER =============
+  // Track why slots advance to next day - for debugging "holes" in schedule
+  const advanceReasonCounts = new Map<string, number>();
+  const trackAdvanceReason = (reason: string) => {
+    advanceReasonCounts.set(reason, (advanceReasonCounts.get(reason) || 0) + 1);
+  };
+  // Export for use in scheduling functions
+  (globalThis as any).__trackAdvanceReason = trackAdvanceReason;
+  
   // ============= FIX: Track planning window coverage to prevent duplicates =============
   // When a working day's night window extends into subsequent non-working days,
   // those days are already "covered" and should not be planned separately.
@@ -2983,6 +3011,21 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
     }
   });
   
+  // ============= ADVANCE REASONS SUMMARY =============
+  // Top-3 reasons why slots advanced to next day (causing "holes")
+  const sortedReasons = Array.from(advanceReasonCounts.entries())
+    .sort((a, b) => b[1] - a[1]);
+  
+  if (sortedReasons.length > 0) {
+    console.log('[Plan] 🔍 Advance Reasons Summary (why slots jumped to next day):', {
+      total: sortedReasons.reduce((sum, [, count]) => sum + count, 0),
+      top3: sortedReasons.slice(0, 3).map(([reason, count]) => ({ reason, count })),
+      all: Object.fromEntries(sortedReasons),
+    });
+  }
+  
+  // Cleanup global tracker
+  delete (globalThis as any).__trackAdvanceReason;
   return {
     success: blockingIssues.length === 0,
     days,
