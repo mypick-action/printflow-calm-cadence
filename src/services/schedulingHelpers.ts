@@ -15,6 +15,15 @@ export interface PlateReleaseInfo {
   cycleId: string;
 }
 
+// ============= END OF DAY SOURCE =============
+// Explains why endOfDayTime was set to its value
+export type EndOfDayTimeSource = 
+  | 'endOfWorkHours'           // Day ends at regular work hours (no night extension)
+  | 'nextWorkdayStart'         // Day extends to next workday (FULL_AUTOMATION enabled)
+  | 'afterHours_disabled'      // Factory doesn't allow after-hours
+  | 'printer_night_disabled'   // Printer can't start cycles after hours
+  | 'day_not_enabled';         // Non-working day
+
 // ============= TIME SLOT INTERFACE =============
 // Represents a printer's current scheduling state
 export interface PrinterTimeSlot {
@@ -30,6 +39,9 @@ export interface PrinterTimeSlot {
   platesInUse: PlateReleaseInfo[];  // Plates currently in use with release times
   cyclesScheduled?: any[];  // Track cycles for plate index calculation
   lastScheduledColor?: string;
+  // NEW: Debug field - explains why endOfDayTime was set
+  endOfDayTimeSource?: EndOfDayTimeSource;
+  endOfDayTimeReason?: string;  // Additional human-readable reason
 }
 
 // ============= HELPER: Parse time string =============
@@ -117,13 +129,29 @@ export function updateSlotBoundsForDay(
     slot.endOfWorkHours = new Date(slot.endOfWorkHours.getTime() + 24 * 60 * 60 * 1000);
   }
   
-  // Set endOfDayTime based on automation mode
-  if (settings.afterHoursBehavior === 'FULL_AUTOMATION' && slot.canStartNewCyclesAfterHours) {
-    // Extend to next workday start
-    const nextWorkday = advanceToNextWorkdayStart(dayStart, settings);
-    slot.endOfDayTime = nextWorkday ?? new Date(slot.endOfWorkHours);
-  } else {
+  // Set endOfDayTime based on automation mode - with explicit source tracking
+  if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
+    // Factory doesn't allow after-hours operation
     slot.endOfDayTime = new Date(slot.endOfWorkHours);
+    slot.endOfDayTimeSource = 'afterHours_disabled';
+    slot.endOfDayTimeReason = `afterHoursBehavior=${settings.afterHoursBehavior}`;
+  } else if (!slot.canStartNewCyclesAfterHours) {
+    // Printer can't start cycles after hours
+    slot.endOfDayTime = new Date(slot.endOfWorkHours);
+    slot.endOfDayTimeSource = 'printer_night_disabled';
+    slot.endOfDayTimeReason = `canStartNewCyclesAfterHours=false`;
+  } else {
+    // FULL_AUTOMATION enabled and printer allows night - extend to next workday start
+    const nextWorkday = advanceToNextWorkdayStart(dayStart, settings);
+    if (nextWorkday) {
+      slot.endOfDayTime = nextWorkday;
+      slot.endOfDayTimeSource = 'nextWorkdayStart';
+      slot.endOfDayTimeReason = `extended to ${nextWorkday.toISOString()}`;
+    } else {
+      slot.endOfDayTime = new Date(slot.endOfWorkHours);
+      slot.endOfDayTimeSource = 'endOfWorkHours';
+      slot.endOfDayTimeReason = 'no next workday found';
+    }
   }
 }
 

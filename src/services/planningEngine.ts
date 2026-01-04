@@ -51,6 +51,7 @@ import {
   hoursBetween,
   PrinterTimeSlot as SchedulingSlot,
   PlateReleaseInfo,
+  EndOfDayTimeSource,
 } from './schedulingHelpers';
 import {
   logPlanningDecision,
@@ -623,6 +624,9 @@ function estimateProjectFinishTime(
         cycleId: p.cycleId,
       })),
       physicalPlateCapacity: s.physicalPlateCapacity,
+      // Preserve debug fields
+      endOfDayTimeSource: s.endOfDayTimeSource,
+      endOfDayTimeReason: s.endOfDayTimeReason,
     }));
   
   if (simSlots.length === 0) {
@@ -661,6 +665,27 @@ function estimateProjectFinishTime(
     
     // Check if we're past end of day
     if (slot.currentTime >= slot.endOfDayTime) {
+      // ============= DEBUG LOG: Advance reason =============
+      console.log('[EstimateSim] ⏭️ Advancing to next day:', {
+        reason: 'past_endOfDayTime',
+        projectId: project.project.id,
+        projectName: project.project.name,
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        workDayStart: slot.workDayStart.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        endOfDayTime: slot.endOfDayTime.toISOString(),
+        endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+        endOfDayTimeReason: (slot as any).endOfDayTimeReason ?? '',
+        afterHoursBehavior: settings.afterHoursBehavior,
+        printerHasAMS: slot.hasAMS,
+        printerCanStartAfterHours: slot.canStartNewCyclesAfterHours,
+        lastScheduledColor: slot.lastScheduledColor ?? 'none',
+        projectColor: project.project.color ?? 'none',
+        presetAllowedForNight: project.preset?.allowedForNightCycle,
+      });
+      
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
       if (!nextStart || nextStart > maxSimulationTime) {
@@ -683,6 +708,28 @@ function estimateProjectFinishTime(
       slot.workDayStart,
       slot.endOfWorkHours
     )) {
+      // ============= DEBUG LOG: canStartCycleAt failed =============
+      console.log('[EstimateSim] ⏭️ Advancing to next day:', {
+        reason: 'canStartCycleAt_false',
+        projectId: project.project.id,
+        projectName: project.project.name,
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        workDayStart: slot.workDayStart.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        endOfDayTime: slot.endOfDayTime.toISOString(),
+        endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+        endOfDayTimeReason: (slot as any).endOfDayTimeReason ?? '',
+        isWithinWorkHours: slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours,
+        afterHoursBehavior: settings.afterHoursBehavior,
+        printerHasAMS: slot.hasAMS,
+        printerCanStartAfterHours: printer?.canStartNewCyclesAfterHours,
+        lastScheduledColor: slot.lastScheduledColor ?? 'none',
+        projectColor: project.project.color ?? 'none',
+        presetAllowedForNight: project.preset?.allowedForNightCycle,
+      });
+      
       // Cannot start here - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
       if (!nextStart || nextStart > maxSimulationTime) {
@@ -716,6 +763,28 @@ function estimateProjectFinishTime(
           continue;
         }
       }
+      // ============= DEBUG LOG: No plates available =============
+      console.log('[EstimateSim] ⏭️ Advancing to next day:', {
+        reason: 'no_plates_available',
+        projectId: project.project.id,
+        projectName: project.project.name,
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        workDayStart: slot.workDayStart.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        endOfDayTime: slot.endOfDayTime.toISOString(),
+        endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+        isWithinWorkHours: isWithinWorkHoursSim,
+        platesInUse: simPlatesInUse,
+        plateCapacity: simPlateCapacity,
+        afterHoursBehavior: settings.afterHoursBehavior,
+        printerHasAMS: slot.hasAMS,
+        printerCanStartAfterHours: slot.canStartNewCyclesAfterHours,
+        lastScheduledColor: slot.lastScheduledColor ?? 'none',
+        projectColor: project.project.color ?? 'none',
+      });
+      
       // No plates - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
       if (!nextStart || nextStart > maxSimulationTime) continue;
@@ -740,6 +809,28 @@ function estimateProjectFinishTime(
         project.preset.allowedForNightCycle !== false;
       
       if (!canRunAutonomous) {
+        // ============= DEBUG LOG: Cycle extends to night not allowed =============
+        console.log('[EstimateSim] ⏭️ Advancing to next day:', {
+          reason: 'cycle_extends_night_not_allowed',
+          projectId: project.project.id,
+          projectName: project.project.name,
+          printerId: slot.printerId,
+          printerName: slot.printerName,
+          currentTime: slot.currentTime.toISOString(),
+          cycleEndTime: cycleEndTime.toISOString(),
+          cycleHours: cycleHours,
+          workDayStart: slot.workDayStart.toISOString(),
+          endOfWorkHours: slot.endOfWorkHours.toISOString(),
+          endOfDayTime: slot.endOfDayTime.toISOString(),
+          endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+          afterHoursBehavior: settings.afterHoursBehavior,
+          printerHasAMS: slot.hasAMS,
+          printerCanStartAfterHours: printer?.canStartNewCyclesAfterHours,
+          lastScheduledColor: slot.lastScheduledColor ?? 'none',
+          projectColor: project.project.color ?? 'none',
+          presetAllowedForNight: project.preset?.allowedForNightCycle,
+        });
+        
         const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
         if (!nextStart || nextStart > maxSimulationTime) continue;
         slot.currentTime = nextStart;
@@ -931,6 +1022,27 @@ function scheduleProjectOnPrinters(
     
     // Check if past end of day
     if (slot.currentTime >= slot.endOfDayTime) {
+      // ============= DEBUG LOG: Past endOfDayTime =============
+      console.log('[V2Schedule] ⏭️ Advancing to next day:', {
+        reason: 'past_endOfDayTime',
+        projectId: project.project.id,
+        projectName: project.project.name,
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        workDayStart: slot.workDayStart.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        endOfDayTime: slot.endOfDayTime.toISOString(),
+        endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+        endOfDayTimeReason: (slot as any).endOfDayTimeReason ?? '',
+        afterHoursBehavior: settings.afterHoursBehavior,
+        printerHasAMS: slot.hasAMS,
+        printerCanStartAfterHours: slot.canStartNewCyclesAfterHours,
+        lastScheduledColor: slot.lastScheduledColor ?? 'none',
+        projectColor: project.project.color ?? 'none',
+        presetAllowedForNight: project.preset?.allowedForNightCycle,
+      });
+      
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
       if (!nextStart) continue;
@@ -964,6 +1076,28 @@ function scheduleProjectOnPrinters(
           continue;
         }
       }
+      // ============= DEBUG LOG: No plates available =============
+      console.log('[V2Schedule] ⏭️ Advancing to next day:', {
+        reason: 'no_plates_available',
+        projectId: project.project.id,
+        projectName: project.project.name,
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        workDayStart: slot.workDayStart.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        endOfDayTime: slot.endOfDayTime.toISOString(),
+        endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+        isWithinWorkHours: isWithinWorkHoursNow,
+        platesInUse: platesInUseCount,
+        plateCapacity: slot.physicalPlateCapacity,
+        afterHoursBehavior: settings.afterHoursBehavior,
+        printerHasAMS: slot.hasAMS,
+        printerCanStartAfterHours: slot.canStartNewCyclesAfterHours,
+        lastScheduledColor: slot.lastScheduledColor ?? 'none',
+        projectColor: project.project.color ?? 'none',
+      });
+      
       // No plates available - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
       if (!nextStart) continue;
@@ -984,6 +1118,28 @@ function scheduleProjectOnPrinters(
       slot.workDayStart,
       slot.endOfWorkHours
     )) {
+      // ============= DEBUG LOG: canStartCycleAt failed =============
+      console.log('[V2Schedule] ⏭️ Advancing to next day:', {
+        reason: 'canStartCycleAt_false',
+        projectId: project.project.id,
+        projectName: project.project.name,
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        workDayStart: slot.workDayStart.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        endOfDayTime: slot.endOfDayTime.toISOString(),
+        endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+        endOfDayTimeReason: (slot as any).endOfDayTimeReason ?? '',
+        isWithinWorkHours: slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours,
+        afterHoursBehavior: settings.afterHoursBehavior,
+        printerHasAMS: slot.hasAMS,
+        printerCanStartAfterHours: printer?.canStartNewCyclesAfterHours,
+        lastScheduledColor: slot.lastScheduledColor ?? 'none',
+        projectColor: project.project.color ?? 'none',
+        presetAllowedForNight: project.preset?.allowedForNightCycle,
+      });
+      
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
       if (!nextStart) continue;
@@ -1000,6 +1156,29 @@ function scheduleProjectOnPrinters(
     
     // Check if cycle fits in available window
     if (cycleEndTime > slot.endOfDayTime) {
+      // ============= DEBUG LOG: Cycle exceeds endOfDayTime =============
+      console.log('[V2Schedule] ⏭️ Advancing to next day:', {
+        reason: 'cycle_exceeds_endOfDayTime',
+        projectId: project.project.id,
+        projectName: project.project.name,
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        cycleEndTime: cycleEndTime.toISOString(),
+        cycleHours: cycleHours,
+        workDayStart: slot.workDayStart.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        endOfDayTime: slot.endOfDayTime.toISOString(),
+        endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+        endOfDayTimeReason: (slot as any).endOfDayTimeReason ?? '',
+        afterHoursBehavior: settings.afterHoursBehavior,
+        printerHasAMS: slot.hasAMS,
+        printerCanStartAfterHours: slot.canStartNewCyclesAfterHours,
+        lastScheduledColor: slot.lastScheduledColor ?? 'none',
+        projectColor: project.project.color ?? 'none',
+        presetAllowedForNight: project.preset?.allowedForNightCycle,
+      });
+      
       // Doesn't fit - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
       if (!nextStart) continue;
@@ -1021,6 +1200,28 @@ function scheduleProjectOnPrinters(
         project.preset.allowedForNightCycle !== false;
       
       if (!canRunAutonomous) {
+        // ============= DEBUG LOG: Cycle extends to night not allowed =============
+        console.log('[V2Schedule] ⏭️ Advancing to next day:', {
+          reason: 'cycle_extends_night_not_allowed',
+          projectId: project.project.id,
+          projectName: project.project.name,
+          printerId: slot.printerId,
+          printerName: slot.printerName,
+          currentTime: slot.currentTime.toISOString(),
+          cycleEndTime: cycleEndTime.toISOString(),
+          cycleHours: cycleHours,
+          workDayStart: slot.workDayStart.toISOString(),
+          endOfWorkHours: slot.endOfWorkHours.toISOString(),
+          endOfDayTime: slot.endOfDayTime.toISOString(),
+          endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+          afterHoursBehavior: settings.afterHoursBehavior,
+          printerHasAMS: slot.hasAMS,
+          printerCanStartAfterHours: printer?.canStartNewCyclesAfterHours,
+          lastScheduledColor: slot.lastScheduledColor ?? 'none',
+          projectColor: project.project.color ?? 'none',
+          presetAllowedForNight: project.preset?.allowedForNightCycle,
+        });
+        
         // Cannot extend into night - advance to next workday
         const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
         if (!nextStart) continue;
@@ -1035,6 +1236,29 @@ function scheduleProjectOnPrinters(
       if (!slot.hasAMS && slot.lastScheduledColor) {
         const slotColorKey = normalizeColor(slot.lastScheduledColor);
         if (slotColorKey !== colorKey) {
+          // ============= DEBUG LOG: Non-AMS color lock =============
+          console.log('[V2Schedule] ⏭️ Advancing to next day:', {
+            reason: 'non_ams_color_lock',
+            projectId: project.project.id,
+            projectName: project.project.name,
+            printerId: slot.printerId,
+            printerName: slot.printerName,
+            currentTime: slot.currentTime.toISOString(),
+            cycleEndTime: cycleEndTime.toISOString(),
+            cycleHours: cycleHours,
+            workDayStart: slot.workDayStart.toISOString(),
+            endOfWorkHours: slot.endOfWorkHours.toISOString(),
+            endOfDayTime: slot.endOfDayTime.toISOString(),
+            endOfDayTimeSource: (slot as any).endOfDayTimeSource ?? 'unknown',
+            afterHoursBehavior: settings.afterHoursBehavior,
+            printerHasAMS: slot.hasAMS,
+            printerCanStartAfterHours: slot.canStartNewCyclesAfterHours,
+            lastScheduledColor: slot.lastScheduledColor ?? 'none',
+            projectColor: project.project.color ?? 'none',
+            slotColorKey,
+            projectColorKey: colorKey,
+          });
+          
           // Non-AMS printer locked to different color - cannot extend into night
           const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
           if (!nextStart) continue;
@@ -1262,6 +1486,9 @@ interface PrinterTimeSlot {
   lastScheduledColor?: string;    // For non-AMS printers: locked color after hours
   hasAMS: boolean;                // Cache of printer.hasAMS
   canStartNewCyclesAfterHours: boolean;  // Cache of printer.canStartNewCyclesAfterHours
+  // ============= DEBUG FIELDS =============
+  endOfDayTimeSource?: EndOfDayTimeSource;    // Why endOfDayTime was set to its value
+  endOfDayTimeReason?: string;    // Additional human-readable reason
 }
 
 const scheduleCyclesForDay = (
@@ -1427,6 +1654,25 @@ const scheduleCyclesForDay = (
       .sort((a, b) => new Date(b.endTime).getTime() - new Date(a.endTime).getTime())[0];
     const lastScheduledColor = lastLockedCycle?.requiredColor;
     
+    // ============= COMPUTE endOfDayTimeSource for debugging =============
+    let endOfDayTimeSource: EndOfDayTimeSource = 'endOfWorkHours';
+    let endOfDayTimeReason = '';
+    
+    if (isAutonomousDay) {
+      endOfDayTimeSource = 'nextWorkdayStart';
+      endOfDayTimeReason = 'autonomous day - extends to next workday';
+    } else if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
+      endOfDayTimeSource = 'afterHours_disabled';
+      endOfDayTimeReason = `afterHoursBehavior=${settings.afterHoursBehavior}`;
+    } else if (!p.canStartNewCyclesAfterHours) {
+      endOfDayTimeSource = 'printer_night_disabled';
+      endOfDayTimeReason = `printer canStartNewCyclesAfterHours=false`;
+    } else {
+      // FULL_AUTOMATION enabled and printer allows night
+      endOfDayTimeSource = 'nextWorkdayStart';
+      endOfDayTimeReason = `extended to ${dayEnd.toISOString()}`;
+    }
+    
     return {
       printerId: p.id,
       printerName: p.name,
@@ -1441,6 +1687,9 @@ const scheduleCyclesForDay = (
       lastScheduledColor,
       hasAMS: p.hasAMS ?? false,
       canStartNewCyclesAfterHours: p.canStartNewCyclesAfterHours ?? false,
+      // Debug fields
+      endOfDayTimeSource,
+      endOfDayTimeReason,
     };
   });
   
@@ -1448,6 +1697,8 @@ const scheduleCyclesForDay = (
     printer: s.printerName,
     printerId: s.printerId,
     slotStart: s.currentTime.toISOString(),
+    endOfDayTime: s.endOfDayTime.toISOString(),
+    endOfDayTimeSource: s.endOfDayTimeSource,
     platesInUse: s.platesInUse.length,
     physicalPlateCapacity: s.physicalPlateCapacity,
     hasAMS: s.hasAMS,

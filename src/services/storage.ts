@@ -243,6 +243,9 @@ export interface PriorityRules {
 
 export type SchedulingStrategy = 'compress' | 'balance';
 
+// Planning objective for printer selection
+export type PlanningObjective = 'MIN_PRINTERS' | 'HYBRID' | 'MAX_UTILIZATION';
+
 export interface FactorySettings {
   printerCount: number;
   weeklySchedule: WeeklySchedule;
@@ -263,6 +266,10 @@ export interface FactorySettings {
   planningHorizonHours?: number;
   // Lead time for material procurement in hours (default 48)
   materialLeadTimeHours?: number;
+  // Planning objective settings (used with PLANNING_HYBRID_OBJECTIVE FF)
+  planningObjective?: PlanningObjective;        // Default: MIN_PRINTERS
+  maxPrintersDuringWorkHours?: number;          // Default: 5
+  minImprovementThreshold?: number;             // Default: 0.05 (5%)
 }
 
 export interface TemporaryScheduleOverride {
