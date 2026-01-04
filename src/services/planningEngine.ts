@@ -790,20 +790,43 @@ const scheduleCyclesForDay = (
     workingSpoolAssignments.set(color, new Set(printerSet));
   }
   
-  // ============= ROUND-ROBIN SCHEDULING ALGORITHM =============
-  // Distribute cycles across ALL printers evenly, not greedy per-printer
-  // Each iteration: try to schedule ONE cycle on EACH printer, then repeat
-  // This ensures all 10 printers get work, not just the first one
+  // ============= MINIMUM PRINTER STRATEGY =============
+  // Goal: Concentrate work on minimum printers to reduce color changes
+  // 1. Fill one printer at a time until deadline pressure requires more
+  // 2. Maintain color continuity - keep same color on printer as long as there's work
+  // 3. Only spread to additional printers when needed for deadline
   
   let moreToSchedule = true;
   let iterationCount = 0;
   const maxIterations = 1000; // Safety limit
   
+  // Sort printer slots to prioritize already-used printers (color continuity)
+  const sortPrintersByUsage = () => {
+    printerSlots.sort((a, b) => {
+      // 1. Printers with cycles already scheduled come first
+      if (a.cyclesScheduled.length > 0 && b.cyclesScheduled.length === 0) return -1;
+      if (a.cyclesScheduled.length === 0 && b.cyclesScheduled.length > 0) return 1;
+      // 2. Among used printers, prefer those with matching color to pending projects
+      const aColor = a.lastScheduledColor ? normalizeColor(a.lastScheduledColor) : null;
+      const bColor = b.lastScheduledColor ? normalizeColor(b.lastScheduledColor) : null;
+      const nextProjectColor = workingStates[0] ? normalizeColor(workingStates[0].project.color) : null;
+      if (nextProjectColor) {
+        if (aColor === nextProjectColor && bColor !== nextProjectColor) return -1;
+        if (bColor === nextProjectColor && aColor !== nextProjectColor) return 1;
+      }
+      return 0;
+    });
+  };
+  
   while (moreToSchedule && iterationCount < maxIterations) {
     iterationCount++;
     moreToSchedule = false;
     
-    // Round-robin: try to schedule ONE cycle on EACH printer per iteration
+    // Re-sort printers to prioritize color continuity
+    sortPrintersByUsage();
+    
+    // Minimum Printer Strategy: try to schedule on FIRST available printer only
+    // Only move to next printer if current one is exhausted for this cycle
     for (const slot of printerSlots) {
       // Check if this printer still has time available
       if (slot.currentTime >= slot.endOfDayTime) continue;
@@ -1204,7 +1227,20 @@ const scheduleCyclesForDay = (
         workingSpoolAssignments.get(colorKey)!.add(slot.printerId);
         
         moreToSchedule = true;
-        break; // Scheduled ONE cycle on this printer, move to next printer (round-robin)
+        
+        // ============= MINIMUM PRINTER STRATEGY CHANGE =============
+        // DON'T break immediately! Stay on same printer to fill it up
+        // Only break if printer is out of time OR we need to switch colors
+        // This concentrates work on fewer printers
+        
+        // Check if we should continue on this printer
+        const canContinueOnPrinter = slot.currentTime < slot.endOfDayTime && 
+          workingStates.some(s => s.remainingUnits > 0);
+        
+        if (!canContinueOnPrinter) {
+          break; // This printer is exhausted, move to next
+        }
+        // Otherwise, loop again and schedule another cycle on SAME printer
       }
       
       // Remove completed projects between printers
