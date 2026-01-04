@@ -1318,471 +1318,625 @@ const scheduleCyclesForDay = (
     workingSpoolAssignments.set(color, new Set(printerSet));
   }
   
-  // ============= MINIMUM PRINTER STRATEGY =============
-  // Goal: Concentrate work on minimum printers to reduce color changes
-  // 1. Fill one printer at a time until deadline pressure requires more
-  // 2. Maintain color continuity - keep same color on printer as long as there's work
-  // 3. Only spread to additional printers when needed for deadline
+  // ============= ALGORITHM SELECTION VIA FEATURE FLAG =============
+  const useProjectCentric = isFeatureEnabled('PLANNER_V2_PROJECT_CENTRIC');
   
-  let moreToSchedule = true;
-  let iterationCount = 0;
-  const maxIterations = 1000; // Safety limit
-  
-  // Sort printer slots to prioritize already-used printers (color continuity)
-  const sortPrintersByUsage = () => {
-    printerSlots.sort((a, b) => {
-      // 1. Printers with cycles already scheduled come first
-      if (a.cyclesScheduled.length > 0 && b.cyclesScheduled.length === 0) return -1;
-      if (a.cyclesScheduled.length === 0 && b.cyclesScheduled.length > 0) return 1;
-      // 2. Among used printers, prefer those with matching color to pending projects
-      const aColor = a.lastScheduledColor ? normalizeColor(a.lastScheduledColor) : null;
-      const bColor = b.lastScheduledColor ? normalizeColor(b.lastScheduledColor) : null;
-      const nextProjectColor = workingStates[0] ? normalizeColor(workingStates[0].project.color) : null;
-      if (nextProjectColor) {
-        if (aColor === nextProjectColor && bColor !== nextProjectColor) return -1;
-        if (bColor === nextProjectColor && aColor !== nextProjectColor) return 1;
-      }
-      return 0;
-    });
-  };
-  
-  while (moreToSchedule && iterationCount < maxIterations) {
-    iterationCount++;
-    moreToSchedule = false;
+  if (useProjectCentric) {
+    // ============= NEW: PROJECT-CENTRIC ALGORITHM =============
+    // Process projects in priority order, selecting minimum printers for each
+    console.log('[PlannerV2] 🚀 Using Project-Centric algorithm');
+    clearDecisionLog();
     
-    // Re-sort printers to prioritize color continuity
-    sortPrintersByUsage();
+    // Track last project scheduled on each printer (for continuity scoring)
+    const lastProjectByPrinter = new Map<string, string>();
     
-    // Minimum Printer Strategy: try to schedule on FIRST available printer only
-    // Only move to next printer if current one is exhausted for this cycle
-    for (const slot of printerSlots) {
-      // Check if this printer still has time available
-      if (slot.currentTime >= slot.endOfDayTime) continue;
+    // Use effectiveStart as planning reference time
+    const planningStartTime = new Date(effectiveStart);
+    
+    for (const projectState of workingStates) {
+      if (projectState.remainingUnits <= 0) continue;
       
-      // ============= PLATE CONSTRAINT CHECK =============
-      // NEW MODEL: Plates recycle during work hours, but NOT outside
-      // - Release plates that have finished recycling (during work hours only)
-      // - Check if all plates are in use
-      // - If no plates available outside work hours: advance to next work day start
+      // Select minimum printers for this project
+      const selection = selectMinimumPrintersForDeadline(
+        projectState,
+        printerSlots,
+        planningStartTime,
+        settings,
+        printers,
+        lastProjectByPrinter
+      );
       
-      const PLATE_CLEANUP_MINUTES = 10;
-      const isWithinWorkHours = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
+      // ============= ACCEPTANCE LOG: Project Decision =============
+      console.log('[PlannerV2] 📋 Project Decision:', {
+        projectId: projectState.project.id,
+        projectName: projectState.project.name,
+        projectColor: projectState.project.color,
+        deadline: projectState.project.dueDate,
+        remainingUnits: projectState.remainingUnits,
+        selectedPrinters: selection.selectedPrinterIds.map(id => {
+          const slot = printerSlots.find(s => s.printerId === id);
+          return slot?.printerName ?? id;
+        }),
+        estimatedFinish: selection.estimationResult.estimatedFinishTime?.toISOString() ?? 'N/A',
+        meetsDeadline: selection.estimationResult.meetsDeadline,
+        marginHours: selection.estimationResult.marginHours.toFixed(1),
+        cyclesNeeded: selection.estimationResult.cycleCount,
+      });
       
-      // During work hours: release plates whose cleanup time has passed
-      if (isWithinWorkHours) {
-        slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+      // ============= ACCEPTANCE LOG: Per-printer details =============
+      for (const printerScore of selection.printerScores) {
+        console.log(`[PlannerV2] 📊 Printer "${printerScore.printerName}":`, {
+          currentTime: printerScore.currentTime.toISOString(),
+          effectiveAvailabilityTime: printerScore.effectiveAvailabilityTime.toISOString(),
+          waitHours: printerScore.waitHours.toFixed(2),
+          isNextDay: printerScore.isNextDay,
+          scores: printerScore.scores,
+          reasons: printerScore.reasons,
+        });
       }
-      // Outside work hours: plates are never released (no cleanup possible)
       
-      const platesAvailable = slot.physicalPlateCapacity - slot.platesInUse.length;
+      // Log planning decision
+      logPlanningDecision({
+        timestamp: new Date(),
+        projectId: projectState.project.id,
+        projectName: projectState.project.name,
+        projectColor: projectState.project.color,
+        deadline: projectState.project.dueDate,
+        remainingUnits: projectState.remainingUnits,
+        estimationResults: {
+          printersNeeded: selection.selectedPrinterIds.length,
+          estimatedFinishTime: selection.estimationResult.estimatedFinishTime,
+          meetsDeadline: selection.estimationResult.meetsDeadline,
+          marginHours: selection.estimationResult.marginHours,
+        },
+        selectedPrinters: selection.printerScores,
+        reasons: selection.printerScores.flatMap(p => p.reasons),
+      });
       
-      if (platesAvailable <= 0) {
-        // All plates in use - check if we can wait for one to be released
-        if (isWithinWorkHours) {
-          // During work hours: wait for nearest plate release
-          const nearestRelease = slot.platesInUse
-            .map(p => p.releaseTime.getTime())
-            .sort((a, b) => a - b)[0];
-          
-          if (nearestRelease && nearestRelease < slot.endOfWorkHours.getTime()) {
-            console.log('[PlateConstraint] ⏳ Waiting for plate cleanup during work hours:', {
-              printer: slot.printerName,
-              currentTime: slot.currentTime.toISOString(),
-              nearestRelease: new Date(nearestRelease).toISOString(),
-            });
-            slot.currentTime = new Date(nearestRelease);
-            // Re-release plates after advancing time
-            slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
-            // Continue with scheduling attempt (don't skip)
+      // Schedule cycles on selected printers
+      if (selection.selectedPrinterIds.length > 0) {
+        const scheduledCycles = scheduleProjectOnPrinters(
+          projectState,
+          printerSlots,
+          selection.selectedPrinterIds,
+          settings,
+          printers,
+          dateString,
+          workingMaterial,
+          workingSpoolAssignments
+        );
+        
+        // Add cycles to printer slots
+        for (const cycle of scheduledCycles) {
+          const slot = printerSlots.find(s => s.printerId === cycle.printerId);
+          if (slot) {
+            // Cycle already added in scheduleProjectOnPrinters
+            lastProjectByPrinter.set(slot.printerId, projectState.project.id);
+          }
+        }
+        
+        console.log(`[PlannerV2] ✅ Scheduled ${scheduledCycles.length} cycles for "${projectState.project.name}"`);
+      }
+    }
+    
+    // Filter completed projects
+    workingStates = workingStates.filter(s => s.remainingUnits > 0);
+    
+  } else {
+    // ============= LEGACY: MINIMUM PRINTER STRATEGY =============
+    // Goal: Concentrate work on minimum printers to reduce color changes
+    // 1. Fill one printer at a time until deadline pressure requires more
+    // 2. Maintain color continuity - keep same color on printer as long as there's work
+    // 3. Only spread to additional printers when needed for deadline
+    
+    let moreToSchedule = true;
+    let iterationCount = 0;
+    const maxIterations = 1000; // Safety limit
+    
+    // Sort printer slots to prioritize already-used printers (color continuity)
+    const sortPrintersByUsage = () => {
+      printerSlots.sort((a, b) => {
+        // 1. Printers with cycles already scheduled come first
+        if (a.cyclesScheduled.length > 0 && b.cyclesScheduled.length === 0) return -1;
+        if (a.cyclesScheduled.length === 0 && b.cyclesScheduled.length > 0) return 1;
+        // 2. Among used printers, prefer those with matching color to pending projects
+        const aColor = a.lastScheduledColor ? normalizeColor(a.lastScheduledColor) : null;
+        const bColor = b.lastScheduledColor ? normalizeColor(b.lastScheduledColor) : null;
+        const nextProjectColor = workingStates[0] ? normalizeColor(workingStates[0].project.color) : null;
+        if (nextProjectColor) {
+          if (aColor === nextProjectColor && bColor !== nextProjectColor) return -1;
+          if (bColor === nextProjectColor && aColor !== nextProjectColor) return 1;
+        }
+        return 0;
+      });
+    };
+    
+    while (moreToSchedule && iterationCount < maxIterations) {
+      iterationCount++;
+      moreToSchedule = false;
+      
+      // Re-sort printers to prioritize color continuity
+      sortPrintersByUsage();
+      
+      // Minimum Printer Strategy: try to schedule on FIRST available printer only
+      // Only move to next printer if current one is exhausted for this cycle
+      for (const slot of printerSlots) {
+        // Check if this printer still has time available
+        if (slot.currentTime >= slot.endOfDayTime) continue;
+        
+        // ============= PLATE CONSTRAINT CHECK =============
+        // NEW MODEL: Plates recycle during work hours, but NOT outside
+        // - Release plates that have finished recycling (during work hours only)
+        // - Check if all plates are in use
+        // - If no plates available outside work hours: advance to next work day start
+        
+        const PLATE_CLEANUP_MINUTES = 10;
+        const isWithinWorkHoursLocal = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
+        
+        // During work hours: release plates whose cleanup time has passed
+        if (isWithinWorkHoursLocal) {
+          slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+        }
+        // Outside work hours: plates are never released (no cleanup possible)
+        
+        const platesAvailable = slot.physicalPlateCapacity - slot.platesInUse.length;
+        
+        if (platesAvailable <= 0) {
+          // All plates in use - check if we can wait for one to be released
+          if (isWithinWorkHoursLocal) {
+            // During work hours: wait for nearest plate release
+            const nearestRelease = slot.platesInUse
+              .map(p => p.releaseTime.getTime())
+              .sort((a, b) => a - b)[0];
+            
+            if (nearestRelease && nearestRelease < slot.endOfWorkHours.getTime()) {
+              console.log('[PlateConstraint] ⏳ Waiting for plate cleanup during work hours:', {
+                printer: slot.printerName,
+                currentTime: slot.currentTime.toISOString(),
+                nearestRelease: new Date(nearestRelease).toISOString(),
+              });
+              slot.currentTime = new Date(nearestRelease);
+              // Re-release plates after advancing time
+              slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+              // Continue with scheduling attempt (don't skip)
+            } else {
+              // Work hours end before plate releases - advance to next day
+              const nextWorkDayStart = findNextWorkDayStart(date, settings, 7);
+              console.log('[PlateConstraint] 🛑 No plate release before work ends:', {
+                printer: slot.printerName,
+                currentTime: slot.currentTime.toISOString(),
+                endOfWorkHours: slot.endOfWorkHours.toISOString(),
+                nextWorkDayStart: nextWorkDayStart?.toISOString(),
+              });
+              slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted for this day
+              continue;
+            }
           } else {
-            // Work hours end before plate releases - advance to next day
+            // Outside work hours: no plate cleanup possible
+            // Advance to next work day start
             const nextWorkDayStart = findNextWorkDayStart(date, settings, 7);
-            console.log('[PlateConstraint] 🛑 No plate release before work ends:', {
-              printer: slot.printerName,
-              currentTime: slot.currentTime.toISOString(),
-              endOfWorkHours: slot.endOfWorkHours.toISOString(),
-              nextWorkDayStart: nextWorkDayStart?.toISOString(),
-            });
-            slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted for this day
+            
+            if (nextWorkDayStart) {
+              console.log('[PlateConstraint] 🛑 Plates exhausted outside work hours - advancing to next work day:', {
+                printer: slot.printerName,
+                platesInUse: slot.platesInUse.length,
+                currentTime: slot.currentTime.toISOString(),
+                nextWorkDayStart: nextWorkDayStart.toISOString(),
+              });
+              slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted for this day's window
+            } else {
+              console.log('[PlateConstraint] 🛑 No next work day found within 7 days:', {
+                printer: slot.printerName,
+              });
+              slot.currentTime = new Date(slot.endOfDayTime);
+            }
+            continue; // Skip to next printer
+          }
+        }
+        
+        // Find highest priority project that can be scheduled on THIS printer
+        for (const state of workingStates) {
+          if (state.remainingUnits <= 0) continue;
+          
+          // ============= DYNAMIC PRESET SELECTION =============
+          // Calculate available time in slot
+          const availableSlotHours = (slot.endOfDayTime.getTime() - slot.currentTime.getTime()) / (1000 * 60 * 60);
+          
+          // Calculate available material for this color
+          const colorKey = normalizeColor(state.project.color);
+          const availableMaterial = workingMaterial.get(colorKey) || 0;
+          
+          // Check if current time is in night slot
+          const isNightSlot = slot.currentTime >= slot.endOfWorkHours;
+          
+          // Get the printer object to check night capability
+          const printer = printers.find(p => p.id === slot.printerId);
+          
+          // Pre-weekend detection (Thursday after 14:00 going into weekend)
+          const currentDayOfWeek = slot.currentTime.getDay();
+          const currentHour = slot.currentTime.getHours();
+          const isPreWeekend = currentDayOfWeek === 4 && currentHour >= 14;
+          
+          // Select optimal preset dynamically
+          const presetResult = selectOptimalPreset(
+            state.product,
+            state.remainingUnits,
+            availableSlotHours,
+            availableMaterial,
+            isNightSlot,
+            state.project.preferredPresetId,
+            isPreWeekend
+          );
+          
+          if (!presetResult) {
+            console.log('[Planning] No valid preset found for project:', state.project.name);
             continue;
           }
-        } else {
-          // Outside work hours: no plate cleanup possible
-          // Advance to next work day start
-          const nextWorkDayStart = findNextWorkDayStart(date, settings, 7);
           
-          if (nextWorkDayStart) {
-            console.log('[PlateConstraint] 🛑 Plates exhausted outside work hours - advancing to next work day:', {
-              printer: slot.printerName,
-              platesInUse: slot.platesInUse.length,
-              currentTime: slot.currentTime.toISOString(),
-              nextWorkDayStart: nextWorkDayStart.toISOString(),
-            });
-            slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted for this day's window
-          } else {
-            console.log('[PlateConstraint] 🛑 No next work day found within 7 days:', {
-              printer: slot.printerName,
-            });
-            slot.currentTime = new Date(slot.endOfDayTime);
+          const activePreset = presetResult.preset;
+          const presetReason = presetResult.reasonHe;
+          
+          // Check cycle time fits
+          const cycleHours = activePreset.cycleHours;
+          const cycleEndTime = addHours(slot.currentTime, cycleHours);
+          
+          // Validate cycle fits in remaining slot
+          if (cycleEndTime > slot.endOfDayTime) {
+            continue;
           }
-          continue; // Skip to next printer
-        }
-      }
-      
-      // Find highest priority project that can be scheduled on THIS printer
-      for (const state of workingStates) {
-        if (state.remainingUnits <= 0) continue;
-        
-        // ============= DYNAMIC PRESET SELECTION =============
-        // Calculate available time in slot
-        const availableSlotHours = (slot.endOfDayTime.getTime() - slot.currentTime.getTime()) / (1000 * 60 * 60);
-        
-        // Check if it's a night slot (after end of work hours, NOT end of planning window)
-        const isNightSlot = slot.currentTime >= slot.endOfWorkHours;
-        
-        // ============= NON-AMS COLOR LOCK CONSTRAINT =============
-        // Non-AMS printers can ONLY switch colors:
-        // 1. During work hours (manual spool change possible)
-        // 2. At the start of a new work day (reload point)
-        // Color lock is SEPARATE from plate reload - you can reload plates but not change color overnight
-        const projectColorKey = normalizeColor(state.project.color);
-        const lastColorKey = slot.lastScheduledColor ? normalizeColor(slot.lastScheduledColor) : undefined;
-        
-        // Check if we're at the very start of work day (allows color change)
-        const isAtWorkDayStart = slot.currentTime.getTime() === dayStart.getTime();
-        const canChangeColor = !isNightSlot || isAtWorkDayStart;
-        
-        if (!slot.hasAMS && !canChangeColor && lastColorKey && lastColorKey !== projectColorKey) {
-          // Non-AMS printer is locked to previous color during night/weekend
-          console.log('[ColorLock] 🔒 Non-AMS printer color locked:', {
-            printer: slot.printerName,
-            lockedColor: slot.lastScheduledColor,
-            requestedColor: state.project.color,
-            isNightSlot,
-            isAtWorkDayStart,
-            canChangeColor,
-          });
-          continue; // Skip this project for this printer
-        }
-        
-        // Get available material for this color
-        const colorKey = projectColorKey;
-        const availableMaterial = workingMaterial.get(colorKey) || 0;
-        
-        // ============= WEEKEND OPTIMIZATION DETECTION =============
-        // Check if this is Thursday afternoon going into weekend
-        // Goal: prefer long cycles when cycle will run into Fri/Sat/Sun
-        const dayOfWeek = date.getDay(); // 0=Sun, 4=Thu, 5=Fri, 6=Sat
-        const isThursday = dayOfWeek === 4;
-        const currentHour = slot.currentTime.getHours();
-        const isAfternoon = currentHour >= 14; // After 14:00
-        const isPreWeekend = isThursday && isAfternoon;
-        
-        // Select optimal preset dynamically
-        const presetSelection = selectOptimalPreset(
-          state.product,
-          state.remainingUnits,
-          availableSlotHours > 0 ? availableSlotHours : 24, // If night slot, use full day
-          availableMaterial,
-          isNightSlot,
-          state.project.preferredPresetId,
-          isPreWeekend // Pass weekend optimization flag
-        );
-        
-        // Use dynamically selected preset or fall back to state.preset
-        const activePreset = presetSelection?.preset || state.preset;
-        const presetReason = presetSelection?.reason || 'Default preset';
-        
-        // Use custom cycle hours if set (for recovery projects), otherwise use preset default
-        const cycleHours = state.project.customCycleHours ?? activePreset.cycleHours;
-        const transitionMinutes = settings.transitionMinutes;
-        const cycleEndTime = addHours(slot.currentTime, cycleHours);
-        
-        // ============= RULE B: Night scheduling with 3-level control =============
-        const printer = printers.find(p => p.id === slot.printerId);
-        const canStartAtNight = 
-          settings.afterHoursBehavior === 'FULL_AUTOMATION' &&
-          printer?.canStartNewCyclesAfterHours === true &&
-          activePreset.allowedForNightCycle !== false;
-        
-        // ============= DEBUG: Night permission check =============
-        if (isNightSlot) {
-          console.log('[NightScheduling] 🌙 Night slot permission check:', {
-            printer: slot.printerName,
-            printerId: slot.printerId,
-            currentTime: slot.currentTime.toISOString(),
-            endOfWorkHours: slot.endOfWorkHours.toISOString(),
-            isNightSlot,
-            canStartAtNight,
-            conditions: {
-              afterHoursBehavior: settings.afterHoursBehavior,
-              isFULL_AUTOMATION: settings.afterHoursBehavior === 'FULL_AUTOMATION',
-              printerCanStartNewCyclesAfterHours: printer?.canStartNewCyclesAfterHours,
-              presetAllowedForNightCycle: activePreset.allowedForNightCycle,
-            },
-          });
-        }
-        
-        // Use endOfWorkHours for the night check (not endOfDayTime which is extended)
-        if (isNightSlot && !canStartAtNight) {
-          // Log block reason
-          const blockReason = !activePreset.allowedForNightCycle 
-            ? 'no_night_preset' 
-            : 'after_hours_policy';
-          logCycleBlock({
-            reason: blockReason,
+          
+          // ============= 3-LEVEL NIGHT CONTROL CHECK =============
+          // Level 1: Factory setting (afterHoursBehavior)
+          // Level 2: Printer setting (canStartNewCyclesAfterHours)
+          // Level 3: Preset setting (allowedForNightCycle)
+          
+          // Check if this is a night slot and if the cycle can start there
+          if (isNightSlot) {
+            // Level 1: Check factory allows automation
+            if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
+              // Log block reason
+              logCycleBlock({
+                reason: 'after_hours_policy',
+                projectId: state.project.id,
+                projectName: state.project.name,
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                presetId: activePreset.id,
+                presetName: activePreset.name,
+                details: `Factory afterHoursBehavior is ${settings.afterHoursBehavior}, not FULL_AUTOMATION`,
+                scheduledDate: dateString,
+                cycleHours: cycleHours,
+              });
+              continue;
+            }
+            
+            // Level 2: Check printer allows night starts
+            if (!printer?.canStartNewCyclesAfterHours) {
+              logCycleBlock({
+                reason: 'after_hours_policy',
+                projectId: state.project.id,
+                projectName: state.project.name,
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                presetId: activePreset.id,
+                presetName: activePreset.name,
+                details: `Printer "${slot.printerName}" has canStartNewCyclesAfterHours=false`,
+                scheduledDate: dateString,
+                cycleHours: cycleHours,
+              });
+              continue;
+            }
+            
+            // Level 3: Check preset allows night operation
+            if (!activePreset.allowedForNightCycle) {
+              logCycleBlock({
+                reason: 'no_night_preset',
+                projectId: state.project.id,
+                projectName: state.project.name,
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                presetId: activePreset.id,
+                presetName: activePreset.name,
+                details: `Preset "${activePreset.name}" has allowedForNightCycle=false`,
+                scheduledDate: dateString,
+                cycleHours: cycleHours,
+              });
+              continue;
+            }
+            
+            // ============= NON-AMS COLOR LOCK FOR NIGHT =============
+            // Non-AMS printers can only continue same color at night (no color change possible)
+            if (!slot.hasAMS && slot.lastScheduledColor) {
+              const slotColorKey = normalizeColor(slot.lastScheduledColor);
+              const projectColorKey = colorKey;
+              
+              if (slotColorKey !== projectColorKey) {
+                logCycleBlock({
+                  reason: 'color_lock_night',
+                  projectId: state.project.id,
+                  projectName: state.project.name,
+                  printerId: slot.printerId,
+                  printerName: slot.printerName,
+                  presetId: activePreset.id,
+                  presetName: activePreset.name,
+                  details: `Non-AMS printer locked to ${slot.lastScheduledColor} during night, project needs ${state.project.color}`,
+                  scheduledDate: dateString,
+                  cycleHours: cycleHours,
+                });
+                continue;
+              }
+            }
+          }
+          
+          // ============= SECONDARY NIGHT VALIDATION =============
+          // If cycle ends after work hours, apply additional validation
+          // to ensure the cycle meets autonomous operation requirements
+          if (!isNightSlot && cycleEndTime > slot.endOfWorkHours) {
+            // Cycle starts during work but ends after - check if it can run autonomously
+            if (settings.afterHoursBehavior !== 'FULL_AUTOMATION' || 
+                !printer?.canStartNewCyclesAfterHours ||
+                !activePreset.allowedForNightCycle) {
+              // Log block reason
+              const blockReason = !activePreset.allowedForNightCycle 
+                ? 'no_night_preset' 
+                : 'after_hours_policy';
+              logCycleBlock({
+                reason: blockReason,
+                projectId: state.project.id,
+                projectName: state.project.name,
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                presetId: activePreset.id,
+                presetName: activePreset.name,
+                details: blockReason === 'no_night_preset'
+                  ? `Preset "${activePreset.name}" not allowed for night cycle`
+                  : `After hours policy prevents start (behavior: ${settings.afterHoursBehavior}, printer night: ${printer?.canStartNewCyclesAfterHours})`,
+                scheduledDate: dateString,
+                cycleHours: cycleHours,
+              });
+              continue;
+            }
+          }
+          
+          // Calculate material needs using the active preset
+          const gramsNeeded = getGramsPerCycle(state.product, activePreset);
+          
+          // Determine units for this cycle
+          const unitsThisCycle = Math.min(activePreset.unitsPerPlate, state.remainingUnits);
+          const gramsThisCycle = unitsThisCycle * state.product.gramsPerUnit;
+          
+          // ============= CRITICAL: SPOOL-LIMITED SCHEDULING (PRD RULE) =============
+          // Check ColorInventory for material availability (primary source)
+          // Physical spools only used for parallel printer limit calculation
+          
+          // Get available material from ColorInventory (single source of truth)
+          const hasMaterial = availableMaterial >= gramsThisCycle;
+          
+          // ============= SOFT CONSTRAINT: Material availability =============
+          // DON'T block cycle creation - mark readiness state instead
+          // Planning creates cycles, execution handles material assignment
+          if (!hasMaterial) {
+            console.log('[Planning] Material insufficient - cycle will be created with blocked_inventory state', {
+              project: state.project.name,
+              color: state.project.color,
+              needed: gramsThisCycle,
+              available: Math.floor(availableMaterial)
+            });
+          }
+          
+          // For parallel scheduling, limit by REAL spool count (openSpoolCount + closedCount)
+          // NO virtual spool calculation - use actual physical spools
+          const colorItem = getColorInventoryItem(state.project.color, 'PLA');
+          const openSpoolCount = colorItem?.openSpoolCount || 0;
+          const closedSpoolCount = colorItem?.closedCount || 0;
+          
+          // Parallel capacity = existing open spools + closed spools we can open
+          const totalSpoolCount = openSpoolCount + closedSpoolCount;
+          
+          // Keep spools list for spool suggestions later
+          const allSpools = getSpools();
+          const availableSpoolsForColor = allSpools.filter(s => 
+            normalizeColor(s.color) === colorKey && 
+            s.state !== 'empty' &&
+            s.gramsRemainingEst > 0
+          );
+          
+          // Get how many DIFFERENT printers are assigned to this color currently
+          // Note: Same printer can do multiple sequential cycles with same color
+          const printersUsingColor = workingSpoolAssignments.get(colorKey) || new Set<string>();
+          
+          // Check if this printer already has this color assigned
+          const thisPrinterHasColor = printersUsingColor.has(slot.printerId);
+          
+          // ============= SOFT CONSTRAINT: Spool parallel limit =============
+          // Track capacity but DON'T block - at most a warning in readiness
+          const hasSpoolCapacity = thisPrinterHasColor || printersUsingColor.size < totalSpoolCount;
+          if (!hasSpoolCapacity) {
+            console.log('[Planning] Spool capacity exceeded - cycle will be created with warning', {
+              project: state.project.name,
+              color: state.project.color,
+              printersUsing: printersUsingColor.size,
+              totalSpools: totalSpoolCount
+            });
+          }
+          
+          // Determine plate type
+          let plateType: 'full' | 'reduced' | 'closeout' = 'full';
+          if (unitsThisCycle < state.preset.unitsPerPlate) {
+            plateType = state.remainingUnits <= unitsThisCycle ? 'closeout' : 'reduced';
+          }
+          
+          // Check if this is an end-of-day cycle
+          const remainingDayHours = (slot.endOfDayTime.getTime() - cycleEndTime.getTime()) / (1000 * 60 * 60);
+          const isEndOfDayCycle = remainingDayHours < 2;
+          
+          // Determine readiness state based on material availability and spool mounting
+          let readinessState: 'ready' | 'waiting_for_spool' | 'blocked_inventory' = 'waiting_for_spool';
+          let readinessDetails: string | undefined;
+          const suggestedSpoolIds: string[] = [];
+          
+          // Check if material is available in inventory at all
+          const hasEnoughInventory = availableMaterial >= gramsThisCycle;
+          
+          // Use existing printer variable from line 773 for mounted spool check
+          // (printer is already defined in this scope)
+          
+          // Check what color is currently mounted on this printer
+          let currentMountedColor: string | undefined;
+          let isCorrectColorMounted = false;
+          
+          if (printer?.hasAMS && printer.amsSlotStates) {
+            const matchingSlot = printer.amsSlotStates.find(s => 
+              normalizeColor(s.color) === colorKey && !!s.spoolId
+            );
+            isCorrectColorMounted = !!matchingSlot;
+            // Get first mounted color for display
+            const firstMounted = printer.amsSlotStates.find(s => !!s.spoolId && s.color);
+            currentMountedColor = firstMounted?.color;
+          } else {
+            isCorrectColorMounted = !!printer?.mountedSpoolId && 
+              normalizeColor(printer?.mountedColor) === colorKey;
+            currentMountedColor = printer?.mountedColor;
+          }
+          
+          // ============= DETERMINE READINESS STATE =============
+          // Priority order:
+          // 1. blocked_inventory - ONLY for real material shortage (grams)
+          // 2. waiting_for_spool - for spool issues (no spools, parallel limit, need to load)
+          // 3. ready - correct color already mounted
+          
+          if (!hasEnoughInventory) {
+            // REAL material shortage - blocked_inventory (will be filtered from Today dashboard)
+            readinessState = 'blocked_inventory';
+            readinessDetails = `חסר ${state.project.color}: צריך ${gramsThisCycle}g, זמין ${Math.floor(availableMaterial)}g`;
+          } else if (isCorrectColorMounted) {
+            // Correct color already mounted - ready to print
+            readinessState = 'ready';
+            readinessDetails = undefined;
+          } else {
+            // Need to load spool - this is always waiting_for_spool (SOFT constraint)
+            readinessState = 'waiting_for_spool';
+            
+            // Build detailed message based on situation
+            if (totalSpoolCount === 0) {
+              // No spools registered for this color at all - soft, not blocking
+              readinessDetails = `אין גלילים רשומים ל-${state.project.color} - הוסף גלילים למלאי`;
+            } else if (!hasSpoolCapacity) {
+              // All spools of this color are in use on other printers (soft warning)
+              readinessDetails = `כל ${totalSpoolCount} הגלילים ל-${state.project.color} בשימוש. המתן לפינוי או הוסף גליל.`;
+            } else if (currentMountedColor && normalizeColor(currentMountedColor) !== colorKey) {
+              readinessDetails = `טען גליל ${state.project.color} על ${slot.printerName} (כרגע: ${currentMountedColor})`;
+            } else {
+              readinessDetails = `טען גליל ${state.project.color} על ${slot.printerName}`;
+            }
+            
+            // Suggest matching spools
+            const matchingSpools = availableSpoolsForColor.filter(s => s.gramsRemainingEst >= gramsThisCycle);
+            for (const spool of matchingSpools.slice(0, 3)) {
+              suggestedSpoolIds.push(spool.id);
+            }
+          }
+          
+          // ============= CALCULATE PLATE INDEX BEFORE CREATING CYCLE =============
+          const plateReleaseTime = new Date(cycleEndTime.getTime() + PLATE_CLEANUP_MINUTES * 60_000);
+          const plateIndex = slot.platesInUse.length + 1; // 1-based for display
+          
+          const transitionMinutes = settings.transitionMinutes ?? 0;
+          
+          // Create the scheduled cycle (ALWAYS create it, per PRD - planning is separate from execution)
+          const scheduledCycle: ScheduledCycle = {
+            id: generateId(),
             projectId: state.project.id,
-            projectName: state.project.name,
             printerId: slot.printerId,
-            printerName: slot.printerName,
+            unitsPlanned: unitsThisCycle,
+            gramsPlanned: gramsThisCycle,
+            startTime: new Date(slot.currentTime),
+            endTime: cycleEndTime,
+            plateType,
+            shift: isEndOfDayCycle ? 'end_of_day' : 'day',
+            isEndOfDayCycle,
+            readinessState,
+            readinessDetails,
+            requiredColor: state.project.color,
+            requiredGrams: gramsThisCycle,
+            suggestedSpoolIds: suggestedSpoolIds.length > 0 ? suggestedSpoolIds : undefined,
+            // Preset selection fields
             presetId: activePreset.id,
             presetName: activePreset.name,
-            details: blockReason === 'no_night_preset'
-              ? `Preset "${activePreset.name}" not allowed for night cycle`
-              : `After hours policy prevents start (behavior: ${settings.afterHoursBehavior}, printer night: ${printer?.canStartNewCyclesAfterHours})`,
-            scheduledDate: dateString,
-            cycleHours: cycleHours,
-          });
-          continue;
-        }
-        
-        // Calculate material needs using the active preset
-        const gramsNeeded = getGramsPerCycle(state.product, activePreset);
-        
-        // Determine units for this cycle
-        const unitsThisCycle = Math.min(activePreset.unitsPerPlate, state.remainingUnits);
-        const gramsThisCycle = unitsThisCycle * state.product.gramsPerUnit;
-        
-        // ============= CRITICAL: SPOOL-LIMITED SCHEDULING (PRD RULE) =============
-        // Check ColorInventory for material availability (primary source)
-        // Physical spools only used for parallel printer limit calculation
-        
-        // Get available material from ColorInventory (single source of truth)
-        const hasMaterial = availableMaterial >= gramsThisCycle;
-        
-        // ============= SOFT CONSTRAINT: Material availability =============
-        // DON'T block cycle creation - mark readiness state instead
-        // Planning creates cycles, execution handles material assignment
-        if (!hasMaterial) {
-          console.log('[Planning] Material insufficient - cycle will be created with blocked_inventory state', {
-            project: state.project.name,
-            color: state.project.color,
-            needed: gramsThisCycle,
-            available: Math.floor(availableMaterial)
-          });
-        }
-        
-        // For parallel scheduling, limit by REAL spool count (openSpoolCount + closedCount)
-        // NO virtual spool calculation - use actual physical spools
-        const colorItem = getColorInventoryItem(state.project.color, 'PLA');
-        const openSpoolCount = colorItem?.openSpoolCount || 0;
-        const closedSpoolCount = colorItem?.closedCount || 0;
-        
-        // Parallel capacity = existing open spools + closed spools we can open
-        const totalSpoolCount = openSpoolCount + closedSpoolCount;
-        
-        // Keep spools list for spool suggestions later
-        const allSpools = getSpools();
-        const availableSpoolsForColor = allSpools.filter(s => 
-          normalizeColor(s.color) === colorKey && 
-          s.state !== 'empty' &&
-          s.gramsRemainingEst > 0
-        );
-        
-        // Get how many DIFFERENT printers are assigned to this color currently
-        // Note: Same printer can do multiple sequential cycles with same color
-        const printersUsingColor = workingSpoolAssignments.get(colorKey) || new Set<string>();
-        
-        // Check if this printer already has this color assigned
-        const thisPrinterHasColor = printersUsingColor.has(slot.printerId);
-        
-        // ============= SOFT CONSTRAINT: Spool parallel limit =============
-        // Track capacity but DON'T block - at most a warning in readiness
-        const hasSpoolCapacity = thisPrinterHasColor || printersUsingColor.size < totalSpoolCount;
-        if (!hasSpoolCapacity) {
-          console.log('[Planning] Spool capacity exceeded - cycle will be created with warning', {
-            project: state.project.name,
-            color: state.project.color,
-            printersUsing: printersUsingColor.size,
-            totalSpools: totalSpoolCount
-          });
-        }
-        
-        // Determine plate type
-        let plateType: 'full' | 'reduced' | 'closeout' = 'full';
-        if (unitsThisCycle < state.preset.unitsPerPlate) {
-          plateType = state.remainingUnits <= unitsThisCycle ? 'closeout' : 'reduced';
-        }
-        
-        // Check if this is an end-of-day cycle
-        const remainingDayHours = (slot.endOfDayTime.getTime() - cycleEndTime.getTime()) / (1000 * 60 * 60);
-        const isEndOfDayCycle = remainingDayHours < 2;
-        
-        // Determine readiness state based on material availability and spool mounting
-        let readinessState: 'ready' | 'waiting_for_spool' | 'blocked_inventory' = 'waiting_for_spool';
-        let readinessDetails: string | undefined;
-        const suggestedSpoolIds: string[] = [];
-        
-        // Check if material is available in inventory at all
-        const hasEnoughInventory = availableMaterial >= gramsThisCycle;
-        
-        // Use existing printer variable from line 773 for mounted spool check
-        // (printer is already defined in this scope)
-        
-        // Check what color is currently mounted on this printer
-        let currentMountedColor: string | undefined;
-        let isCorrectColorMounted = false;
-        
-        if (printer?.hasAMS && printer.amsSlotStates) {
-          const matchingSlot = printer.amsSlotStates.find(s => 
-            normalizeColor(s.color) === colorKey && !!s.spoolId
-          );
-          isCorrectColorMounted = !!matchingSlot;
-          // Get first mounted color for display
-          const firstMounted = printer.amsSlotStates.find(s => !!s.spoolId && s.color);
-          currentMountedColor = firstMounted?.color;
-        } else {
-          isCorrectColorMounted = !!printer?.mountedSpoolId && 
-            normalizeColor(printer?.mountedColor) === colorKey;
-          currentMountedColor = printer?.mountedColor;
-        }
-        
-        // ============= DETERMINE READINESS STATE =============
-        // Priority order:
-        // 1. blocked_inventory - ONLY for real material shortage (grams)
-        // 2. waiting_for_spool - for spool issues (no spools, parallel limit, need to load)
-        // 3. ready - correct color already mounted
-        
-        if (!hasEnoughInventory) {
-          // REAL material shortage - blocked_inventory (will be filtered from Today dashboard)
-          readinessState = 'blocked_inventory';
-          readinessDetails = `חסר ${state.project.color}: צריך ${gramsThisCycle}g, זמין ${Math.floor(availableMaterial)}g`;
-        } else if (isCorrectColorMounted) {
-          // Correct color already mounted - ready to print
-          readinessState = 'ready';
-          readinessDetails = undefined;
-        } else {
-          // Need to load spool - this is always waiting_for_spool (SOFT constraint)
-          readinessState = 'waiting_for_spool';
+            presetSelectionReason: presetReason,
+            // Plate constraint fields
+            plateIndex,
+            plateReleaseTime,
+          };
           
-          // Build detailed message based on situation
-          if (totalSpoolCount === 0) {
-            // No spools registered for this color at all - soft, not blocking
-            readinessDetails = `אין גלילים רשומים ל-${state.project.color} - הוסף גלילים למלאי`;
-          } else if (!hasSpoolCapacity) {
-            // All spools of this color are in use on other printers (soft warning)
-            readinessDetails = `כל ${totalSpoolCount} הגלילים ל-${state.project.color} בשימוש. המתן לפינוי או הוסף גליל.`;
-          } else if (currentMountedColor && normalizeColor(currentMountedColor) !== colorKey) {
-            readinessDetails = `טען גליל ${state.project.color} על ${slot.printerName} (כרגע: ${currentMountedColor})`;
-          } else {
-            readinessDetails = `טען גליל ${state.project.color} על ${slot.printerName}`;
-          }
+          // Update slot
+          slot.cyclesScheduled.push(scheduledCycle);
+          slot.currentTime = addHours(cycleEndTime, transitionMinutes / 60);
           
-          // Suggest matching spools
-          const matchingSpools = availableSpoolsForColor.filter(s => s.gramsRemainingEst >= gramsThisCycle);
-          for (const spool of matchingSpools.slice(0, 3)) {
-            suggestedSpoolIds.push(spool.id);
+          // ============= PLATE CONSTRAINT: ADD PLATE TO IN-USE LIST =============
+          slot.platesInUse.push({
+            releaseTime: plateReleaseTime,
+            cycleId: scheduledCycle.id,
+          });
+          slot.lastScheduledColor = state.project.color; // Track for non-AMS color lock
+          
+          const platesRemaining = slot.physicalPlateCapacity - slot.platesInUse.length;
+          
+          console.log('[PlateConstraint] 📋 Plate used:', {
+            printer: slot.printerName,
+            plateIndex: `${plateIndex}/${slot.physicalPlateCapacity}`,
+            platesRemaining,
+            color: state.project.color,
+            cycleEnd: cycleEndTime.toISOString(),
+            plateReleaseTime: plateReleaseTime.toISOString(),
+            isNightSlot,
+            isWithinWorkHours: slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours,
+          });
+          
+          // Update project state
+          state.remainingUnits -= unitsThisCycle;
+          
+          // ============= NO MATERIAL DEDUCTION IN PLANNING =============
+          // Material is deducted ONLY at execution time in StartPrintModal
+          // Planning tracks estimates but never changes actual inventory
+          // workingMaterial remains unchanged - cycles may overlap on same material
+          
+          // Track this printer as using this color (for spool-limiting concurrent access)
+          if (!workingSpoolAssignments.has(colorKey)) {
+            workingSpoolAssignments.set(colorKey, new Set());
           }
+          workingSpoolAssignments.get(colorKey)!.add(slot.printerId);
+          
+          moreToSchedule = true;
+          
+          // ============= MINIMUM PRINTER STRATEGY CHANGE =============
+          // DON'T break immediately! Stay on same printer to fill it up
+          // Only break if printer is out of time OR we need to switch colors
+          // This concentrates work on fewer printers
+          
+          // Check if we should continue on this printer
+          const canContinueOnPrinter = slot.currentTime < slot.endOfDayTime && 
+            workingStates.some(s => s.remainingUnits > 0);
+          
+          if (!canContinueOnPrinter) {
+            break; // This printer is exhausted, move to next
+          }
+          // Otherwise, loop again and schedule another cycle on SAME printer
         }
         
-        // ============= CALCULATE PLATE INDEX BEFORE CREATING CYCLE =============
-        const PLATE_CLEANUP_MINUTES = 10;
-        const plateReleaseTime = new Date(cycleEndTime.getTime() + PLATE_CLEANUP_MINUTES * 60_000);
-        const plateIndex = slot.platesInUse.length + 1; // 1-based for display
-        
-        // Create the scheduled cycle (ALWAYS create it, per PRD - planning is separate from execution)
-        const scheduledCycle: ScheduledCycle = {
-          id: generateId(),
-          projectId: state.project.id,
-          printerId: slot.printerId,
-          unitsPlanned: unitsThisCycle,
-          gramsPlanned: gramsThisCycle,
-          startTime: new Date(slot.currentTime),
-          endTime: cycleEndTime,
-          plateType,
-          shift: isEndOfDayCycle ? 'end_of_day' : 'day',
-          isEndOfDayCycle,
-          readinessState,
-          readinessDetails,
-          requiredColor: state.project.color,
-          requiredGrams: gramsThisCycle,
-          suggestedSpoolIds: suggestedSpoolIds.length > 0 ? suggestedSpoolIds : undefined,
-          // Preset selection fields
-          presetId: activePreset.id,
-          presetName: activePreset.name,
-          presetSelectionReason: presetReason,
-          // Plate constraint fields
-          plateIndex,
-          plateReleaseTime,
-        };
-        
-        // Update slot
-        slot.cyclesScheduled.push(scheduledCycle);
-        slot.currentTime = addHours(cycleEndTime, transitionMinutes / 60);
-        
-        // ============= PLATE CONSTRAINT: ADD PLATE TO IN-USE LIST =============
-        slot.platesInUse.push({
-          releaseTime: plateReleaseTime,
-          cycleId: scheduledCycle.id,
-        });
-        slot.lastScheduledColor = state.project.color; // Track for non-AMS color lock
-        
-        const platesRemaining = slot.physicalPlateCapacity - slot.platesInUse.length;
-        
-        console.log('[PlateConstraint] 📋 Plate used:', {
-          printer: slot.printerName,
-          plateIndex: `${plateIndex}/${slot.physicalPlateCapacity}`,
-          platesRemaining,
-          color: state.project.color,
-          cycleEnd: cycleEndTime.toISOString(),
-          plateReleaseTime: plateReleaseTime.toISOString(),
-          isNightSlot,
-          isWithinWorkHours: slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours,
-        });
-        
-        // Update project state
-        state.remainingUnits -= unitsThisCycle;
-        
-        // ============= NO MATERIAL DEDUCTION IN PLANNING =============
-        // Material is deducted ONLY at execution time in StartPrintModal
-        // Planning tracks estimates but never changes actual inventory
-        // workingMaterial remains unchanged - cycles may overlap on same material
-        
-        // Track this printer as using this color (for spool-limiting concurrent access)
-        if (!workingSpoolAssignments.has(colorKey)) {
-          workingSpoolAssignments.set(colorKey, new Set());
-        }
-        workingSpoolAssignments.get(colorKey)!.add(slot.printerId);
-        
-        moreToSchedule = true;
-        
-        // ============= MINIMUM PRINTER STRATEGY CHANGE =============
-        // DON'T break immediately! Stay on same printer to fill it up
-        // Only break if printer is out of time OR we need to switch colors
-        // This concentrates work on fewer printers
-        
-        // Check if we should continue on this printer
-        const canContinueOnPrinter = slot.currentTime < slot.endOfDayTime && 
-          workingStates.some(s => s.remainingUnits > 0);
-        
-        if (!canContinueOnPrinter) {
-          break; // This printer is exhausted, move to next
-        }
-        // Otherwise, loop again and schedule another cycle on SAME printer
+        // Remove completed projects between printers
+        workingStates = workingStates.filter(s => s.remainingUnits > 0);
+        if (workingStates.length === 0) break;
       }
       
-      // Remove completed projects between printers
+      // Remove completed projects before next round
       workingStates = workingStates.filter(s => s.remainingUnits > 0);
       if (workingStates.length === 0) break;
     }
     
-    // Remove completed projects before next round
-    workingStates = workingStates.filter(s => s.remainingUnits > 0);
-    if (workingStates.length === 0) break;
-  }
-  
-  if (iterationCount >= maxIterations) {
-    console.warn('[Planning] Hit max iteration limit - possible infinite loop prevented');
+    if (iterationCount >= maxIterations) {
+      console.warn('[Planning] Hit max iteration limit - possible infinite loop prevented');
+    }
   }
   
   // ============= DEBUG: Night scheduling diagnostic =============
