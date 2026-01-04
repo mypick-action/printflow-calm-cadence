@@ -62,7 +62,7 @@ export interface ScheduledCycle {
   shift: 'day' | 'end_of_day';
   isEndOfDayCycle: boolean;
   // Readiness tracking (new for PRD compliance)
-  readinessState: 'ready' | 'waiting_for_spool' | 'blocked_inventory';
+  readinessState: 'ready' | 'waiting_for_spool' | 'blocked_inventory' | 'waiting_for_plate_reload';
   readinessDetails?: string;
   requiredColor: string;
   requiredGrams: number;
@@ -547,6 +547,12 @@ interface PrinterTimeSlot {
   endOfDayTime: Date;  // Extended end (includes night window for FULL_AUTOMATION)
   endOfWorkHours: Date; // Regular work end (for determining if cycle is "night")
   cyclesScheduled: ScheduledCycle[];
+  // ============= PLATE CONSTRAINT FIELDS =============
+  platesAvailable: number;        // 0..4 physical plates available
+  lastReloadTime: Date;           // When plates were last reset
+  lastScheduledColor?: string;    // For non-AMS printers: locked color after hours
+  hasAMS: boolean;                // Cache of printer.hasAMS
+  physicalPlateCapacity: number;  // From printer settings (default 4)
 }
 
 const scheduleCyclesForDay = (
@@ -690,6 +696,21 @@ const scheduleCyclesForDay = (
       ? startFromBusy
       : effectiveStart;
     
+    // ============= PLATE CONSTRAINT INITIALIZATION =============
+    // Each printer has physical_plate_capacity plates (default 4)
+    // Plates are reloaded at start of work day
+    const plateCapacity = p.physicalPlateCapacity ?? 4;
+    
+    // Count locked cycles for this printer on this day to reduce available plates
+    const lockedCyclesForPrinter = lockedCyclesForDay.filter(c => c.printerId === p.id);
+    const platesUsed = lockedCyclesForPrinter.length;
+    const platesAvailable = Math.max(0, plateCapacity - platesUsed);
+    
+    // Get the last scheduled color from locked cycles (for non-AMS color lock)
+    const lastLockedCycle = lockedCyclesForPrinter
+      .sort((a, b) => new Date(b.endTime).getTime() - new Date(a.endTime).getTime())[0];
+    const lastScheduledColor = lastLockedCycle?.requiredColor;
+    
     return {
       printerId: p.id,
       printerName: p.name,
@@ -697,6 +718,12 @@ const scheduleCyclesForDay = (
       endOfDayTime: new Date(dayEnd),
       endOfWorkHours: new Date(endOfRegularWorkday),
       cyclesScheduled: [],
+      // Plate constraint fields
+      platesAvailable,
+      lastReloadTime: new Date(dayStart), // Plates reloaded at work day start
+      lastScheduledColor,
+      hasAMS: p.hasAMS ?? false,
+      physicalPlateCapacity: plateCapacity,
     };
   });
   
@@ -704,6 +731,10 @@ const scheduleCyclesForDay = (
     printer: s.printerName,
     printerId: s.printerId,
     slotStart: s.currentTime.toISOString(),
+    platesAvailable: s.platesAvailable,
+    physicalPlateCapacity: s.physicalPlateCapacity,
+    hasAMS: s.hasAMS,
+    lastScheduledColor: s.lastScheduledColor,
   })));
   
   // Clone project states for modification
@@ -734,6 +765,36 @@ const scheduleCyclesForDay = (
       // Check if this printer still has time available
       if (slot.currentTime >= slot.endOfDayTime) continue;
       
+      // ============= PLATE CONSTRAINT CHECK =============
+      // If no plates available and we're outside reload-capable hours, skip this printer
+      // Plates can only be reloaded during working hours (dayStart to endOfWorkHours)
+      const isInReloadWindow = slot.currentTime >= new Date(dayStart) && 
+                               slot.currentTime < slot.endOfWorkHours;
+      
+      if (slot.platesAvailable <= 0 && !isInReloadWindow) {
+        // No plates available and can't reload - advance to next reload window
+        // (handled at day level - this printer is done for this scheduling window)
+        console.log('[PlateConstraint] 🛑 Printer out of plates outside reload hours:', {
+          printer: slot.printerName,
+          platesAvailable: slot.platesAvailable,
+          currentTime: slot.currentTime.toISOString(),
+          endOfWorkHours: slot.endOfWorkHours.toISOString(),
+          isInReloadWindow,
+        });
+        continue;
+      }
+      
+      // If in reload window and plates are 0, reset them
+      if (slot.platesAvailable <= 0 && isInReloadWindow) {
+        slot.platesAvailable = slot.physicalPlateCapacity;
+        slot.lastReloadTime = new Date(slot.currentTime);
+        slot.lastScheduledColor = undefined; // Color lock is reset on reload
+        console.log('[PlateConstraint] ♻️ Plates reloaded during work hours:', {
+          printer: slot.printerName,
+          platesAvailable: slot.platesAvailable,
+        });
+      }
+      
       // Find highest priority project that can be scheduled on THIS printer
       for (const state of workingStates) {
         if (state.remainingUnits <= 0) continue;
@@ -745,8 +806,24 @@ const scheduleCyclesForDay = (
         // Check if it's a night slot (after end of work hours, NOT end of planning window)
         const isNightSlot = slot.currentTime >= slot.endOfWorkHours;
         
+        // ============= NON-AMS COLOR LOCK CONSTRAINT =============
+        // If printer has no AMS and we're outside work hours, it cannot switch colors
+        const projectColorKey = normalizeColor(state.project.color);
+        const lastColorKey = slot.lastScheduledColor ? normalizeColor(slot.lastScheduledColor) : undefined;
+        
+        if (!slot.hasAMS && isNightSlot && lastColorKey && lastColorKey !== projectColorKey) {
+          // Non-AMS printer is locked to previous color during night/weekend
+          console.log('[ColorLock] 🔒 Non-AMS printer color locked:', {
+            printer: slot.printerName,
+            lockedColor: slot.lastScheduledColor,
+            requestedColor: state.project.color,
+            isNightSlot,
+          });
+          continue; // Skip this project for this printer
+        }
+        
         // Get available material for this color
-        const colorKey = normalizeColor(state.project.color);
+        const colorKey = projectColorKey;
         const availableMaterial = workingMaterial.get(colorKey) || 0;
         
         // Select optimal preset dynamically
@@ -981,6 +1058,18 @@ const scheduleCyclesForDay = (
         // Update slot
         slot.cyclesScheduled.push(scheduledCycle);
         slot.currentTime = addHours(cycleEndTime, transitionMinutes / 60);
+        
+        // ============= PLATE CONSTRAINT: DECREMENT PLATES =============
+        slot.platesAvailable--;
+        slot.lastScheduledColor = state.project.color; // Track for non-AMS color lock
+        
+        console.log('[PlateConstraint] 📋 Plate used:', {
+          printer: slot.printerName,
+          platesRemaining: slot.platesAvailable,
+          color: state.project.color,
+          cycleEnd: cycleEndTime.toISOString(),
+          isNightSlot,
+        });
         
         // Update project state
         state.remainingUnits -= unitsThisCycle;
@@ -1538,6 +1627,7 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
       ready: allCycles.filter(c => c.readinessState === 'ready').length,
       waiting_for_spool: allCycles.filter(c => c.readinessState === 'waiting_for_spool').length,
       blocked_inventory: allCycles.filter(c => c.readinessState === 'blocked_inventory').length,
+      waiting_for_plate_reload: allCycles.filter(c => c.readinessState === 'waiting_for_plate_reload').length,
     }
   });
   
