@@ -15,7 +15,8 @@ export type CycleBlockReason =
   | 'printer_inactive'       // Printer is not active
   | 'no_matching_preset'     // No preset fits constraints
   | 'deadline_passed'        // Project deadline already passed
-  | 'project_complete';      // Project already completed
+  | 'project_complete'       // Project already completed
+  | 'color_lock_night';      // Non-AMS printer locked to different color during night
 
 export interface CycleBlockEntry {
   timestamp: string;
@@ -94,6 +95,7 @@ export const getBlockSummary = (): BlockSummary => {
     no_matching_preset: 0,
     deadline_passed: 0,
     project_complete: 0,
+    color_lock_night: 0,
   };
   
   for (const entry of entries) {
@@ -138,6 +140,7 @@ export const formatBlockSummary = (summary: BlockSummary): string => {
     no_matching_preset: 'אין פריסט מתאים',
     deadline_passed: 'דדליין עבר',
     project_complete: 'פרויקט הושלם',
+    color_lock_night: 'נעילת צבע בלילה (ללא AMS)',
   };
   
   for (const [reason, count] of Object.entries(summary.byReason)) {

@@ -10,7 +10,8 @@ export type FeatureFlagName =
   | 'PHYSICAL_PLATES_LIMIT'      // Enable physical plate count limits per printer
   | 'WEEKEND_AUTONOMY_BUDGET'    // Enable weekend/after-hours autonomy budget calculation
   | 'OVERNIGHT_SPOOL_PREP_MODAL' // Show modal for overnight spool preparation
-  | 'OVERNIGHT_OPEN_SPOOL_ALLOWED'; // Allow using open spools for overnight cycles
+  | 'OVERNIGHT_OPEN_SPOOL_ALLOWED' // Allow using open spools for overnight cycles
+  | 'PLANNER_V2_PROJECT_CENTRIC';  // NEW: Project-Centric planning algorithm with minimum printers
 
 // Feature flag configuration
 interface FeatureFlagConfig {
@@ -39,6 +40,11 @@ const FLAG_CONFIGS: Record<FeatureFlagName, FeatureFlagConfig> = {
     name: 'OVERNIGHT_OPEN_SPOOL_ALLOWED',
     description: 'אפשר שימוש בגלילים פתוחים למחזורי לילה',
     defaultValue: false,
+  },
+  PLANNER_V2_PROJECT_CENTRIC: {
+    name: 'PLANNER_V2_PROJECT_CENTRIC',
+    description: 'אלגוריתם תכנון חדש - Project-Centric עם מינימום מדפסות',
+    defaultValue: false, // OFF by default - experimental
   },
 };
 
