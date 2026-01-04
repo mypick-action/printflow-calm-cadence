@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   Dialog,
@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Badge } from '@/components/ui/badge';
-import { AlertTriangle, Play } from 'lucide-react';
+import { AlertTriangle, Play, Clock } from 'lucide-react';
 import { SpoolIcon, getSpoolColor } from '@/components/icons/SpoolIcon';
 import { 
   getColorInventoryItem,
@@ -57,6 +57,14 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
   const { language } = useLanguage();
   const [spoolType, setSpoolType] = useState<SpoolType>('open');
   const [openSpoolGrams, setOpenSpoolGrams] = useState<string>('');
+  const [manualStartTime, setManualStartTime] = useState<string>('');
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!open) {
+      setManualStartTime('');
+    }
+  }, [open]);
 
   // Get current inventory state
   const inventoryItem = useMemo(() => {
@@ -105,10 +113,19 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
   const gramsMissing = gramsNeeded - willHaveGrams;
 
   const handleConfirm = async () => {
-    const now = new Date();
-    const nowIso = now.toISOString();
+    // Determine start time - use manual input if provided, otherwise use current time
+    let startDate: Date;
+    if (manualStartTime) {
+      const [hours, minutes] = manualStartTime.split(':').map(Number);
+      startDate = new Date();
+      startDate.setHours(hours, minutes, 0, 0);
+    } else {
+      startDate = new Date();
+    }
+    
+    const startTimeIso = startDate.toISOString();
     const cycleHours = cycle.cycleHours || 2;
-    const endTime = new Date(now.getTime() + cycleHours * 60 * 60 * 1000);
+    const endTime = new Date(startDate.getTime() + cycleHours * 60 * 60 * 1000);
     const endTimeIso = endTime.toISOString();
 
     // Determine grams estimate and source
@@ -141,7 +158,7 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
     // Update the planned cycle to in_progress (local)
     updatePlannedCycle(cycle.id, {
       status: 'in_progress',
-      startTime: nowIso,
+      startTime: startTimeIso,
       endTime: endTimeIso,
     });
 
@@ -151,7 +168,7 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
       projectId: cycle.projectId || '', // Will be resolved in service
       printerId,
       status: 'in_progress',
-      startTime: nowIso,
+      startTime: startTimeIso,
       endTime: endTimeIso,
     });
     
@@ -327,6 +344,26 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
                 </p>
               </div>
             )}
+
+            {/* Manual Start Time - Optional */}
+            <div className="space-y-2 p-3 rounded-lg bg-muted/30 border">
+              <Label htmlFor="startTime" className="text-sm font-medium flex items-center gap-2">
+                <Clock className="w-4 h-4" />
+                {language === 'he' ? 'שעת התחלה בפועל (אופציונלי)' : 'Actual start time (optional)'}
+              </Label>
+              <Input
+                id="startTime"
+                type="time"
+                value={manualStartTime}
+                onChange={(e) => setManualStartTime(e.target.value)}
+                className="text-lg"
+              />
+              <p className="text-xs text-muted-foreground">
+                {language === 'he' 
+                  ? 'השאר ריק אם אתה מתחיל עכשיו. מלא אם התחלת בשעה אחרת'
+                  : 'Leave empty if starting now. Fill in if you started at a different time'}
+              </p>
+            </div>
           </div>
 
           {/* Warning if not enough material */}
