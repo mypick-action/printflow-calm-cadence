@@ -24,11 +24,14 @@ import { getPrinters } from '@/services/storage';
 import { 
   getWeekRange, 
   getCyclesByDayAndPrinter,
+  getWeeklyProductSummary,
   CycleWithDetails,
-  DayInfo 
+  DayInfo,
+  ProductWeeklySummary
 } from '@/services/weeklyPlanningService';
 import { CycleDetailsModal } from './CycleDetailsModal';
 import { format } from 'date-fns';
+import { Package } from 'lucide-react';
 
 interface WeeklyPlanningPageProps {
   onNavigateToProject?: (projectId: string) => void;
@@ -46,6 +49,7 @@ export const WeeklyPlanningPage: React.FC<WeeklyPlanningPageProps> = ({
   const printers = getPrinters();
   const weekDays = getWeekRange();
   const cyclesByDayAndPrinter = getCyclesByDayAndPrinter();
+  const productSummary = getWeeklyProductSummary();
 
   // Filter printers
   const filteredPrinters = useMemo(() => {
@@ -175,6 +179,40 @@ export const WeeklyPlanningPage: React.FC<WeeklyPlanningPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Product Summary */}
+      {productSummary.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Package className="w-4 h-4" />
+              {language === 'he' ? 'סיכום מוצרים לשבוע' : 'Weekly Product Summary'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="flex flex-wrap gap-2">
+              {productSummary.map((product) => (
+                <Badge 
+                  key={product.productId} 
+                  variant="secondary" 
+                  className="flex items-center gap-2 py-1.5 px-3"
+                >
+                  {product.color && (
+                    <div 
+                      className="w-3 h-3 rounded-full flex-shrink-0 border border-border"
+                      style={{ backgroundColor: product.color }}
+                    />
+                  )}
+                  <span className="font-medium">{product.productName}</span>
+                  <span className="text-muted-foreground">
+                    {product.totalUnitsPlanned} {language === 'he' ? 'יח׳' : 'u'}
+                  </span>
+                </Badge>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filters */}
       <Card>
