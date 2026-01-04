@@ -1,0 +1,230 @@
+// ============= SCHEDULING HELPERS =============
+// Shared utility functions for both estimation and scheduling
+// Ensures consistency between dry-run simulation and actual scheduling
+
+import { 
+  FactorySettings, 
+  Printer, 
+  getDayScheduleForDate,
+  PlatePreset
+} from './storage';
+
+// ============= TIME SLOT INTERFACE =============
+// Represents a printer's current scheduling state
+export interface PrinterTimeSlot {
+  printerId: string;
+  printerName: string;
+  currentTime: Date;
+  endOfDayTime: Date;
+  endOfWorkHours: Date;
+  workDayStart: Date;
+  hasAMS: boolean;
+  canStartNewCyclesAfterHours: boolean;
+  physicalPlateCapacity: number;
+  lastScheduledColor?: string;
+}
+
+// ============= HELPER: Parse time string =============
+export function parseTime(timeStr: string): { hours: number; minutes: number } {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return { hours, minutes };
+}
+
+// ============= HELPER: Create date with specific time =============
+export function createDateWithTime(date: Date, timeStr: string): Date {
+  const result = new Date(date);
+  const { hours, minutes } = parseTime(timeStr);
+  result.setHours(hours, minutes, 0, 0);
+  return result;
+}
+
+// ============= HELPER: Add days to date =============
+export function addDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+// ============= CORE: Advance to next workday start =============
+/**
+ * Given a current time, find the start of the next working day.
+ * ONLY accepts a Date - does not modify any slot.
+ * 
+ * @param currentTime - The current time point
+ * @param settings - Factory settings with schedule
+ * @param maxDaysAhead - Maximum days to search (default 14)
+ * @returns Start time of next workday, or null if none found
+ */
+export function advanceToNextWorkdayStart(
+  currentTime: Date,
+  settings: FactorySettings,
+  maxDaysAhead: number = 14
+): Date | null {
+  // Start from the next day
+  const startSearchDate = new Date(currentTime);
+  startSearchDate.setDate(startSearchDate.getDate() + 1);
+  startSearchDate.setHours(0, 0, 0, 0);
+  
+  for (let offset = 0; offset < maxDaysAhead; offset++) {
+    const checkDate = addDays(startSearchDate, offset);
+    const schedule = getDayScheduleForDate(checkDate, settings, []);
+    
+    if (schedule?.enabled) {
+      return createDateWithTime(checkDate, schedule.startTime);
+    }
+  }
+  
+  return null;
+}
+
+// ============= CORE: Update slot bounds for new day =============
+/**
+ * Updates a printer time slot's day boundaries for a new day.
+ * Called after advanceToNextWorkdayStart to set new bounds.
+ * 
+ * @param slot - The printer time slot to update (mutated in place)
+ * @param dayStart - The new day's start time
+ * @param settings - Factory settings
+ */
+export function updateSlotBoundsForDay(
+  slot: PrinterTimeSlot,
+  dayStart: Date,
+  settings: FactorySettings
+): void {
+  const schedule = getDayScheduleForDate(dayStart, settings, []);
+  
+  if (!schedule?.enabled) {
+    // Non-working day - shouldn't happen if advanceToNextWorkdayStart worked
+    console.warn('[schedulingHelpers] updateSlotBoundsForDay called for non-working day');
+    return;
+  }
+  
+  slot.workDayStart = new Date(dayStart);
+  slot.endOfWorkHours = createDateWithTime(dayStart, schedule.endTime);
+  
+  // Handle cross-midnight schedules
+  const startMinutes = parseTime(schedule.startTime).hours * 60 + parseTime(schedule.startTime).minutes;
+  const endMinutes = parseTime(schedule.endTime).hours * 60 + parseTime(schedule.endTime).minutes;
+  if (endMinutes < startMinutes) {
+    slot.endOfWorkHours = new Date(slot.endOfWorkHours.getTime() + 24 * 60 * 60 * 1000);
+  }
+  
+  // Set endOfDayTime based on automation mode
+  if (settings.afterHoursBehavior === 'FULL_AUTOMATION' && slot.canStartNewCyclesAfterHours) {
+    // Extend to next workday start
+    const nextWorkday = advanceToNextWorkdayStart(dayStart, settings);
+    slot.endOfDayTime = nextWorkday ?? new Date(slot.endOfWorkHours);
+  } else {
+    slot.endOfDayTime = new Date(slot.endOfWorkHours);
+  }
+}
+
+// ============= CORE: Get effective availability time =============
+/**
+ * Returns when a printer will actually be available to start a cycle.
+ * If currentTime is past endOfDayTime, calculates next workday start.
+ * 
+ * @param slot - The printer time slot
+ * @param settings - Factory settings
+ * @returns Effective availability time (may be in the future if next workday)
+ */
+export function getEffectiveAvailability(
+  slot: PrinterTimeSlot,
+  settings: FactorySettings
+): Date {
+  // If printer is still available today
+  if (slot.currentTime < slot.endOfDayTime) {
+    return new Date(slot.currentTime);
+  }
+  
+  // Need to advance to next workday
+  const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+  return nextStart ?? new Date(slot.currentTime);
+}
+
+// ============= CORE: Check if time is within work window =============
+/**
+ * Checks if a given time falls within working hours.
+ * 
+ * @param time - Time to check
+ * @param workDayStart - Start of work hours
+ * @param endOfWorkHours - End of work hours
+ * @returns true if within work hours
+ */
+export function isWithinWorkWindow(
+  time: Date,
+  workDayStart: Date,
+  endOfWorkHours: Date
+): boolean {
+  return time >= workDayStart && time < endOfWorkHours;
+}
+
+// ============= CRITICAL: Central night/autonomous eligibility check =============
+/**
+ * Single source of truth for "can a cycle start at this time?"
+ * Used by BOTH estimateProjectFinishTime and scheduleProjectOnPrinters.
+ * 
+ * Checks the 3-level control:
+ * 1. Factory: afterHoursBehavior === 'FULL_AUTOMATION'
+ * 2. Printer: canStartNewCyclesAfterHours === true
+ * 3. Preset: allowedForNightCycle !== false
+ * 
+ * @param time - Proposed cycle start time
+ * @param printer - Printer to start on
+ * @param preset - Preset to use (optional, for night cycle check)
+ * @param settings - Factory settings
+ * @param workDayStart - Start of current work day
+ * @param endOfWorkHours - End of current work hours
+ * @returns true if cycle can start at this time
+ */
+export function canStartCycleAt(
+  time: Date,
+  printer: { canStartNewCyclesAfterHours: boolean },
+  preset: PlatePreset | null | undefined,
+  settings: FactorySettings,
+  workDayStart: Date,
+  endOfWorkHours: Date
+): boolean {
+  const isWithinWork = isWithinWorkWindow(time, workDayStart, endOfWorkHours);
+  
+  // During work hours - always allowed
+  if (isWithinWork) {
+    return true;
+  }
+  
+  // Outside work hours - check 3-level control
+  
+  // Level 1: Factory must allow full automation
+  if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
+    return false;
+  }
+  
+  // Level 2: Printer must allow night starts
+  if (!printer.canStartNewCyclesAfterHours) {
+    return false;
+  }
+  
+  // Level 3: Preset must allow night cycles (default true if not set or no preset)
+  if (preset && preset.allowedForNightCycle === false) {
+    return false;
+  }
+  
+  return true;
+}
+
+// ============= HELPER: Check if time is in night window =============
+/**
+ * Checks if a time is in the "night" window (after work hours).
+ * Used to determine if night-specific rules apply.
+ */
+export function isNightTime(
+  time: Date,
+  endOfWorkHours: Date
+): boolean {
+  return time >= endOfWorkHours;
+}
+
+// ============= HELPER: Calculate hours between two times =============
+export function hoursBetween(start: Date, end: Date): number {
+  return (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+}
