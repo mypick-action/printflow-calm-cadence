@@ -72,6 +72,7 @@ export const FeatureFlagsPanel: React.FC = () => {
     OVERNIGHT_SPOOL_PREP_MODAL: { he: 'מודל הכנת גלילים ללילה', en: 'Overnight Spool Prep Modal' },
     OVERNIGHT_OPEN_SPOOL_ALLOWED: { he: 'גליל פתוח למחזור לילה', en: 'Open Spool for Night Cycle' },
     PLANNER_V2_PROJECT_CENTRIC: { he: 'תכנון V2 - מינימום מדפסות', en: 'Planner V2 - Minimum Printers' },
+    PLANNING_HYBRID_OBJECTIVE: { he: 'HYBRID - ניצול קיבולת', en: 'HYBRID Objective' },
   };
 
   return (

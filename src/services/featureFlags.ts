@@ -11,7 +11,8 @@ export type FeatureFlagName =
   | 'WEEKEND_AUTONOMY_BUDGET'    // Enable weekend/after-hours autonomy budget calculation
   | 'OVERNIGHT_SPOOL_PREP_MODAL' // Show modal for overnight spool preparation
   | 'OVERNIGHT_OPEN_SPOOL_ALLOWED' // Allow using open spools for overnight cycles
-  | 'PLANNER_V2_PROJECT_CENTRIC';  // NEW: Project-Centric planning algorithm with minimum printers
+  | 'PLANNER_V2_PROJECT_CENTRIC'   // Project-Centric planning algorithm with minimum printers
+  | 'PLANNING_HYBRID_OBJECTIVE';   // Use HYBRID planning objective instead of MIN_PRINTERS
 
 // Feature flag configuration
 interface FeatureFlagConfig {
@@ -45,6 +46,11 @@ const FLAG_CONFIGS: Record<FeatureFlagName, FeatureFlagConfig> = {
     name: 'PLANNER_V2_PROJECT_CENTRIC',
     description: 'אלגוריתם תכנון חדש - Project-Centric עם מינימום מדפסות',
     defaultValue: false, // OFF by default - experimental
+  },
+  PLANNING_HYBRID_OBJECTIVE: {
+    name: 'PLANNING_HYBRID_OBJECTIVE',
+    description: 'אסטרטגיית HYBRID - ניצול קיבולת בשעות עבודה',
+    defaultValue: false, // OFF by default - enable via FF for testing
   },
 };
 
