@@ -142,7 +142,8 @@ export function updateSlotBoundsForDay(
     slot.endOfDayTimeReason = `printer_night_disabled: canStartNewCyclesAfterHours=false`;
   } else {
     // FULL_AUTOMATION enabled and printer allows night - extend to next workday start
-    const nextWorkday = advanceToNextWorkdayStart(dayStart, settings);
+    // FIX: Use endOfWorkHours (not dayStart) as base - ensures we find NEXT workday, not same day
+    const nextWorkday = advanceToNextWorkdayStart(slot.endOfWorkHours, settings);
     if (nextWorkday) {
       slot.endOfDayTime = nextWorkday;
       slot.endOfDayTimeSource = 'nextWorkdayStart';
