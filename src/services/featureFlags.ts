@@ -23,7 +23,7 @@ const FLAG_CONFIGS: Record<FeatureFlagName, FeatureFlagConfig> = {
   PHYSICAL_PLATES_LIMIT: {
     name: 'PHYSICAL_PLATES_LIMIT',
     description: 'הפעלת הגבלת מספר פלטות פיזיות למדפסת',
-    defaultValue: false,
+    defaultValue: true, // Enabled by default - physical plate constraint is core functionality
   },
   WEEKEND_AUTONOMY_BUDGET: {
     name: 'WEEKEND_AUTONOMY_BUDGET',
