@@ -335,6 +335,61 @@ export function computeWeeklyStats(): WeeklyStats {
   };
 }
 
+// ============= PRODUCT SUMMARY =============
+
+export interface ProductWeeklySummary {
+  productId: string;
+  productName: string;
+  color: string;
+  material: string;
+  totalUnitsPlanned: number;
+  cycleCount: number;
+}
+
+/**
+ * Get summary of products planned for the week
+ */
+export function getWeeklyProductSummary(): ProductWeeklySummary[] {
+  const weekDays = getWeekRange();
+  const startDate = weekDays[0].dateStr;
+  const endDate = weekDays[6].dateStr;
+  
+  const cycles = getPlannedCyclesForWeek(startDate, endDate);
+  const projects = getProjectsSync();
+  
+  // Group by product
+  const productMap = new Map<string, ProductWeeklySummary>();
+  
+  for (const cycle of cycles) {
+    if (cycle.status === 'completed' || cycle.status === 'failed') continue;
+    
+    const project = projects.find(p => p.id === cycle.projectId);
+    if (!project) continue;
+    
+    // Use product name as key (or productId if available)
+    const key = project.productId || project.productName || project.name;
+    const existing = productMap.get(key);
+    
+    if (existing) {
+      existing.totalUnitsPlanned += cycle.unitsPlanned;
+      existing.cycleCount += 1;
+    } else {
+      productMap.set(key, {
+        productId: project.productId || key,
+        productName: project.productName || project.name,
+        color: project.color || '',
+        material: 'PLA',
+        totalUnitsPlanned: cycle.unitsPlanned,
+        cycleCount: 1,
+      });
+    }
+  }
+  
+  // Convert to array and sort by units (descending)
+  return Array.from(productMap.values())
+    .sort((a, b) => b.totalUnitsPlanned - a.totalUnitsPlanned);
+}
+
 // ============= CYCLES BY DAY/PRINTER =============
 
 export interface CyclesByDayAndPrinter {
