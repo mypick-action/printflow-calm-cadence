@@ -12,7 +12,8 @@ export type FeatureFlagName =
   | 'OVERNIGHT_SPOOL_PREP_MODAL' // Show modal for overnight spool preparation
   | 'OVERNIGHT_OPEN_SPOOL_ALLOWED' // Allow using open spools for overnight cycles
   | 'PLANNER_V2_PROJECT_CENTRIC'   // Project-Centric planning algorithm with minimum printers
-  | 'PLANNING_HYBRID_OBJECTIVE';   // Use HYBRID planning objective instead of MIN_PRINTERS
+  | 'PLANNING_HYBRID_OBJECTIVE'    // Use HYBRID planning objective instead of MIN_PRINTERS
+  | 'MAX_THROUGHPUT_V0';           // Fill idle printers with same project/color (conservative)
 
 // Feature flag configuration
 interface FeatureFlagConfig {
@@ -51,6 +52,11 @@ const FLAG_CONFIGS: Record<FeatureFlagName, FeatureFlagConfig> = {
     name: 'PLANNING_HYBRID_OBJECTIVE',
     description: 'אסטרטגיית HYBRID - ניצול קיבולת בשעות עבודה',
     defaultValue: false, // OFF by default - enable via FF for testing
+  },
+  MAX_THROUGHPUT_V0: {
+    name: 'MAX_THROUGHPUT_V0',
+    description: 'מילוי מדפסות פנויות (אותו פרויקט/צבע בלבד)',
+    defaultValue: false, // OFF by default - conservative V0
   },
 };
 
