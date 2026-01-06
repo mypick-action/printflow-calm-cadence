@@ -56,7 +56,10 @@ import {
   CycleLog,
   calculateDaysRemaining,
   getColorInventory,
+  consumeFromColorInventory,
+  getColorInventoryItem,
 } from '@/services/storage';
+import { Switch } from '@/components/ui/switch';
 import { EndCycleLog } from '@/components/end-cycle/EndCycleLog';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { RecalculateModal } from '@/components/planning/RecalculateModal';
@@ -116,6 +119,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   const [externalUnitsPopoverOpen, setExternalUnitsPopoverOpen] = useState(false);
   const [externalUnits, setExternalUnits] = useState<string>('');
   const [externalNotes, setExternalNotes] = useState<string>('');
+  const [isMyMaterial, setIsMyMaterial] = useState(false);
   
   // Warning modal state
   const [planningIssues, setPlanningIssues] = useState<{
@@ -264,7 +268,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
   // Handle adding external units (from external supplier)
   const handleAddExternalUnits = async () => {
     const units = Number(externalUnits.trim());
-    if (!Number.isInteger(units) || units < 1 || !project) return;
+    if (!Number.isInteger(units) || units < 1 || !project || !product) return;
     
     const remaining = project.quantityTarget - project.quantityGood;
     
@@ -279,6 +283,22 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
       // Fill up to target, rest goes to overage
       newQuantityGood = project.quantityTarget;
       newOverage = (project.quantityOverage || 0) + (units - remaining);
+    }
+    
+    // Handle material consumption if it's our material
+    let materialConsumed = 0;
+    if (isMyMaterial && project.color) {
+      const gramsToConsume = units * product.gramsPerUnit;
+      const result = consumeFromColorInventory(
+        project.color,
+        'PLA', // Default material
+        gramsToConsume
+      );
+      materialConsumed = result.consumed;
+      
+      if (result.consumed < gramsToConsume) {
+        console.warn(`[ExternalUnits] Partial material consumption: ${result.consumed}g of ${gramsToConsume}g needed`);
+      }
     }
     
     // Check if project is now completed
@@ -296,6 +316,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
       setExternalUnitsPopoverOpen(false);
       setExternalUnits('');
       setExternalNotes('');
+      setIsMyMaterial(false);
       
       // CRITICAL FIX: Reload data FIRST to ensure projects are hydrated,
       // THEN run replan. This prevents orphaned project detection.
@@ -305,20 +326,27 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
       // Run replan AFTER loadData to prevent race condition
       const result = await runReplanNow('external_units_added');
       
+      // Build toast description
+      const materialSuffix = isMyMaterial && materialConsumed > 0
+        ? (language === 'he' 
+            ? `. קוזז ${materialConsumed.toLocaleString()}g פילמנט ${project.color}` 
+            : `. Deducted ${materialConsumed.toLocaleString()}g ${project.color} filament`)
+        : '';
+      
       // Show appropriate toast
       if (isNowCompleted) {
         toast({
           title: language === 'he' ? 'הפרויקט הושלם!' : 'Project completed!',
           description: language === 'he' 
-            ? `נוספו ${units} יחידות מספק חיצוני${newOverage > 0 ? ` (${newOverage} עודף)` : ''}` 
-            : `Added ${units} units from external supplier${newOverage > 0 ? ` (${newOverage} excess)` : ''}`,
+            ? `נוספו ${units} יחידות מספק חיצוני${newOverage > 0 ? ` (${newOverage} עודף)` : ''}${materialSuffix}` 
+            : `Added ${units} units from external supplier${newOverage > 0 ? ` (${newOverage} excess)` : ''}${materialSuffix}`,
         });
       } else {
         toast({
           title: language === 'he' ? 'יחידות נוספו' : 'Units added',
           description: language === 'he' 
-            ? `נוספו ${units} יחידות. נותרו ${project.quantityTarget - newQuantityGood} יחידות.` 
-            : `Added ${units} units. ${project.quantityTarget - newQuantityGood} remaining.`,
+            ? `נוספו ${units} יחידות. נותרו ${project.quantityTarget - newQuantityGood} יחידות${materialSuffix}.` 
+            : `Added ${units} units. ${project.quantityTarget - newQuantityGood} remaining${materialSuffix}.`,
         });
       }
     }
@@ -602,6 +630,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
                   if (!open) {
                     setExternalUnits('');
                     setExternalNotes('');
+                    setIsMyMaterial(false);
                   }
                 }}>
                   <PopoverTrigger asChild>
@@ -609,7 +638,7 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
                       <Truck className="h-4 w-4 text-muted-foreground" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-64" align="start">
+                  <PopoverContent className="w-72" align="start">
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-sm font-medium">
                         <Truck className="h-4 w-4" />
@@ -625,6 +654,51 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
                           placeholder="100"
                         />
                       </div>
+                      
+                      {/* My Material Toggle */}
+                      <div className="flex items-center justify-between py-2 border-t border-b border-border">
+                        <Label htmlFor="my-material" className="text-sm cursor-pointer">
+                          {language === 'he' ? 'חומר הגלם שלי' : 'My material'}
+                        </Label>
+                        <Switch
+                          id="my-material"
+                          checked={isMyMaterial}
+                          onCheckedChange={setIsMyMaterial}
+                        />
+                      </div>
+                      
+                      {/* Material Deduction Info */}
+                      {isMyMaterial && product && externalUnits && Number(externalUnits) > 0 && (
+                        <div className="p-2 rounded-md bg-muted text-sm space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">{language === 'he' ? 'יקוזז:' : 'Deduct:'}</span>
+                            <span className="font-medium">
+                              {(Number(externalUnits) * product.gramsPerUnit).toLocaleString()}g
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">{language === 'he' ? 'צבע:' : 'Color:'}</span>
+                            <span>{project.color}</span>
+                          </div>
+                          {(() => {
+                            const inventoryItem = getColorInventoryItem(project.color || '', 'PLA');
+                            const gramsNeeded = Number(externalUnits) * product.gramsPerUnit;
+                            const available = inventoryItem?.openTotalGrams || 0;
+                            if (gramsNeeded > available) {
+                              return (
+                                <div className="text-warning text-xs flex items-center gap-1 mt-1">
+                                  <AlertTriangle className="h-3 w-3" />
+                                  {language === 'he' 
+                                    ? `זמין רק ${available.toLocaleString()}g` 
+                                    : `Only ${available.toLocaleString()}g available`}
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
+                      )}
+                      
                       <div className="space-y-1">
                         <Label>{language === 'he' ? 'הערה (אופציונלי)' : 'Note (optional)'}</Label>
                         <Input
