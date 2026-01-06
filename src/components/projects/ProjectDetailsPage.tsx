@@ -683,7 +683,8 @@ export const ProjectDetailsPage: React.FC<ProjectDetailsPageProps> = ({
                           {(() => {
                             const inventoryItem = getColorInventoryItem(project.color || '', 'PLA');
                             const gramsNeeded = Number(externalUnits) * product.gramsPerUnit;
-                            const available = inventoryItem?.openTotalGrams || 0;
+                            const closedGrams = (inventoryItem?.closedCount || 0) * (inventoryItem?.closedSpoolSizeGrams || 1000);
+                            const available = (inventoryItem?.openTotalGrams || 0) + closedGrams;
                             if (gramsNeeded > available) {
                               return (
                                 <div className="text-warning text-xs flex items-center gap-1 mt-1">
