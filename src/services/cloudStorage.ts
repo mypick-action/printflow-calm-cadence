@@ -368,6 +368,39 @@ export const createPlatePreset = async (
   return data;
 };
 
+export const updatePlatePreset = async (
+  id: string,
+  updates: Partial<DbPlatePreset>
+): Promise<DbPlatePreset | null> => {
+  const { data, error } = await supabase
+    .from('plate_presets')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error updating preset:', error);
+    return null;
+  }
+  
+  return data;
+};
+
+export const deletePlatePreset = async (id: string): Promise<boolean> => {
+  const { error } = await supabase
+    .from('plate_presets')
+    .delete()
+    .eq('id', id);
+  
+  if (error) {
+    console.error('Error deleting preset:', error);
+    return false;
+  }
+  
+  return true;
+};
+
 // ============= PRINTERS =============
 
 export const getPrinters = async (workspaceId: string): Promise<DbPrinter[]> => {

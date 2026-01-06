@@ -153,16 +153,34 @@ export const updateProductCloudFirst = async (
     // Delete removed presets
     for (const existing of existingPresets) {
       if (!inputIds.has(existing.id)) {
-        // TODO: Add deletePlatePreset to cloudStorage
-        console.log('[ProductService] Would delete preset:', existing.id);
+        await cloudStorage.deletePlatePreset(existing.id);
+        console.log('[ProductService] Deleted preset:', existing.id);
       }
     }
     
     // Update/create presets
     for (const preset of input.platePresets) {
       if (existingIds.has(preset.id)) {
-        // Update existing - for now just keep it
-        savedPresets.push(preset);
+        // Update existing preset in cloud
+        const updatedPreset = await cloudStorage.updatePlatePreset(preset.id, {
+          name: preset.name,
+          units_per_plate: preset.unitsPerPlate,
+          cycle_hours: preset.cycleHours,
+          grams_per_unit: input.gramsPerUnit || cloudProduct.default_grams_per_unit,
+          allowed_for_night_cycle: preset.allowedForNightCycle,
+        });
+        
+        if (updatedPreset) {
+          savedPresets.push({
+            id: updatedPreset.id,
+            name: updatedPreset.name,
+            unitsPerPlate: updatedPreset.units_per_plate,
+            cycleHours: updatedPreset.cycle_hours,
+            riskLevel: preset.riskLevel || 'low',
+            allowedForNightCycle: updatedPreset.allowed_for_night_cycle,
+            isRecommended: preset.isRecommended,
+          });
+        }
       } else {
         // Create new preset
         const cloudPreset = await cloudStorage.createPlatePreset(workspaceId, {
