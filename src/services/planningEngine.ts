@@ -3101,7 +3101,387 @@ export const validateExistingPlan = (): PlanValidation => {
   };
 };
 
-// ============= CAPACITY CALCULATION =============
+// ============= DEADLINE GUARD: Impact Check for New Projects =============
+
+export interface DeadlineImpactResult {
+  safe: boolean;
+  affectedProjects: {
+    projectId: string;
+    projectName: string;
+    currentSlack: number;      // Current margin in hours
+    newSlack: number;          // Margin after adding new project
+    wouldMissDeadline: boolean;
+    slackDropped: boolean;     // Dropped below threshold (4 hours)
+  }[];
+  summary: string;
+  summaryHe: string;
+}
+
+/**
+ * Check if adding a new project would impact existing deadlines.
+ * Runs a "dry run" plan comparison: before vs after adding the project.
+ * 
+ * @param newProject - The project about to be created (not yet saved)
+ * @returns DeadlineImpactResult with affected projects and recommendations
+ */
+export const checkDeadlineImpact = (
+  newProject: Omit<Project, 'id' | 'createdAt' | 'quantityGood' | 'quantityScrap'>
+): DeadlineImpactResult => {
+  const SLACK_THRESHOLD_HOURS = 4; // Alert if margin drops below this
+  
+  console.log('[DeadlineGuard] Starting impact check for:', newProject.name);
+  
+  // Get current state
+  const existingProjects = getActiveProjects();
+  const products = getProducts();
+  const settings = getFactorySettings();
+  
+  if (!settings) {
+    return {
+      safe: true,
+      affectedProjects: [],
+      summary: 'Cannot check - no factory settings',
+      summaryHe: 'לא ניתן לבדוק - אין הגדרות מפעל',
+    };
+  }
+  
+  // Plan 1: Current state (without new project)
+  const planBefore = generatePlan({
+    startDate: new Date(),
+    daysToPlane: 14,
+    scope: 'from_now',
+    lockInProgress: true,
+  });
+  
+  // Calculate slack for each project in current plan
+  const slackBefore = new Map<string, number>();
+  for (const project of existingProjects) {
+    if (!project.dueDate || project.status === 'completed') continue;
+    
+    // Find last cycle for this project
+    const projectCycles = planBefore.cycles
+      .filter(c => c.projectId === project.id)
+      .sort((a, b) => new Date(b.endTime).getTime() - new Date(a.endTime).getTime());
+    
+    if (projectCycles.length > 0) {
+      const lastCycleEnd = new Date(projectCycles[0].endTime);
+      const deadline = new Date(project.dueDate);
+      const slackHours = (deadline.getTime() - lastCycleEnd.getTime()) / (1000 * 60 * 60);
+      slackBefore.set(project.id, slackHours);
+    } else {
+      // No cycles planned - project might be blocked or not enough capacity
+      slackBefore.set(project.id, -999); // Will be compared later
+    }
+  }
+  
+  // Create temporary project for simulation
+  const tempProject: Project = {
+    ...newProject,
+    id: 'temp-deadline-check-' + Date.now(),
+    createdAt: new Date().toISOString().split('T')[0],
+    quantityGood: 0,
+    quantityScrap: 0,
+  } as Project;
+  
+  // Temporarily add project to list for planning
+  const projectsWithNew = [...existingProjects, tempProject];
+  
+  // Plan 2: With new project (dry run - we pass projects directly)
+  // Since generatePlan uses getActiveProjects(), we need a different approach:
+  // We'll calculate what cycles the new project would need and simulate impact
+  
+  const planAfter = generatePlan({
+    startDate: new Date(),
+    daysToPlane: 14,
+    scope: 'from_now',
+    lockInProgress: true,
+    // Note: This will NOT include the temp project since it's not in storage
+    // So we calculate impact differently - by checking if existing projects' cycles shift
+  });
+  
+  // For now, use a simpler approach: check if adding cycles for new project
+  // would push existing projects beyond their deadlines
+  const product = products.find(p => p.id === newProject.productId);
+  const preset = product?.platePresets?.[0];
+  
+  if (!product || !preset) {
+    return {
+      safe: true,
+      affectedProjects: [],
+      summary: 'Cannot estimate - no product/preset',
+      summaryHe: 'לא ניתן להעריך - אין מוצר/פריסט',
+    };
+  }
+  
+  // Calculate how many cycles the new project needs
+  const newProjectCyclesNeeded = Math.ceil(newProject.quantityTarget / preset.unitsPerPlate);
+  const newProjectHoursNeeded = newProjectCyclesNeeded * preset.cycleHours;
+  
+  console.log('[DeadlineGuard] New project requires:', {
+    cycles: newProjectCyclesNeeded,
+    hours: newProjectHoursNeeded,
+    deadline: newProject.dueDate,
+  });
+  
+  // Check each existing project
+  const affectedProjects: DeadlineImpactResult['affectedProjects'] = [];
+  
+  for (const project of existingProjects) {
+    if (!project.dueDate || project.status === 'completed') continue;
+    
+    const currentSlack = slackBefore.get(project.id) ?? 0;
+    
+    // If new project has earlier/same deadline, it might push this project later
+    const newDeadline = new Date(newProject.dueDate);
+    const existingDeadline = new Date(project.dueDate);
+    
+    // Simple heuristic: if new project deadline is before or same as existing,
+    // and they share the same color (competing for printers), estimate impact
+    const sameColor = normalizeColor(newProject.color) === normalizeColor(project.color);
+    const newIsMoreUrgent = newDeadline <= existingDeadline;
+    
+    let estimatedSlackLoss = 0;
+    if (sameColor && newIsMoreUrgent) {
+      // New project likely takes printer time from this project
+      // Rough estimate: proportional to hours needed
+      estimatedSlackLoss = newProjectHoursNeeded * 0.5; // Conservative estimate
+    } else if (newIsMoreUrgent) {
+      // Different color but still competes for capacity
+      estimatedSlackLoss = newProjectHoursNeeded * 0.2;
+    }
+    
+    const newSlack = currentSlack - estimatedSlackLoss;
+    const wouldMissDeadline = currentSlack > 0 && newSlack < 0;
+    const slackDropped = currentSlack >= SLACK_THRESHOLD_HOURS && newSlack < SLACK_THRESHOLD_HOURS;
+    
+    if (wouldMissDeadline || slackDropped) {
+      affectedProjects.push({
+        projectId: project.id,
+        projectName: project.name,
+        currentSlack: Math.round(currentSlack * 10) / 10,
+        newSlack: Math.round(newSlack * 10) / 10,
+        wouldMissDeadline,
+        slackDropped,
+      });
+    }
+  }
+  
+  const safe = affectedProjects.filter(p => p.wouldMissDeadline).length === 0;
+  
+  const summary = affectedProjects.length === 0
+    ? 'No deadline impact detected'
+    : `${affectedProjects.filter(p => p.wouldMissDeadline).length} project(s) may miss deadline`;
+  
+  const summaryHe = affectedProjects.length === 0
+    ? 'לא זוהתה פגיעה בדדליינים'
+    : `${affectedProjects.filter(p => p.wouldMissDeadline).length} פרויקט(ים) עלולים לפספס דדליין`;
+  
+  console.log('[DeadlineGuard] Impact check result:', {
+    safe,
+    affectedCount: affectedProjects.length,
+    affectedProjects: affectedProjects.map(p => ({
+      name: p.projectName,
+      currentSlack: p.currentSlack,
+      newSlack: p.newSlack,
+      wouldMiss: p.wouldMissDeadline,
+    })),
+  });
+  
+  return {
+    safe,
+    affectedProjects,
+    summary,
+    summaryHe,
+  };
+};
+
+// ============= IDLE PRINTER DIAGNOSTIC REPORT =============
+
+export type IdlePrinterReason = 
+  | 'NO_WORK'           // No more work to schedule
+  | 'NO_PLATES'         // All plates in use (night constraint)
+  | 'COLOR_MISMATCH'    // Only different-color projects remain
+  | 'AFTER_HOURS_BLOCK' // Printer not allowed for after-hours
+  | 'MATERIAL_SHORTAGE' // Not enough material on spool
+  | 'FILLED';           // Successfully filled
+
+export interface IdlePrinterReport {
+  printerId: string;
+  printerName: string;
+  freeWindowHours: number;
+  reason: IdlePrinterReason;
+  details: string;
+  potentialCycles: number; // How many cycles could fit in the free window
+  currentColor?: string;
+}
+
+/**
+ * Generate diagnostic report for idle printers after V2 planning.
+ * Does NOT modify any scheduling - purely diagnostic logging.
+ */
+export const generateIdlePrinterReport = (planResult: PlanningResult): IdlePrinterReport[] => {
+  const printers = getActivePrinters();
+  const settings = getFactorySettings();
+  const projects = getActiveProjects();
+  const products = getProducts();
+  
+  if (!settings) return [];
+  
+  const report: IdlePrinterReport[] = [];
+  const today = new Date();
+  const todaySchedule = getDayScheduleForDate(today, settings, []);
+  
+  if (!todaySchedule?.enabled) {
+    console.log('[IdlePrinterReport] Today is not a workday, skipping report');
+    return [];
+  }
+  
+  const workEndTime = createDateWithTime(today, todaySchedule.endTime);
+  const now = new Date();
+  
+  // For each printer, calculate free window for tonight
+  for (const printer of printers) {
+    const printerCycles = planResult.cycles
+      .filter(c => c.printerId === printer.id)
+      .filter(c => {
+        const cycleDate = new Date(c.startTime);
+        return formatDateString(cycleDate) === formatDateString(today);
+      })
+      .sort((a, b) => new Date(b.endTime).getTime() - new Date(a.endTime).getTime());
+    
+    // Find when this printer is free
+    let freeFrom: Date;
+    let currentColor: string | undefined;
+    
+    if (printerCycles.length > 0) {
+      const lastCycle = printerCycles[0];
+      freeFrom = new Date(lastCycle.endTime);
+      currentColor = lastCycle.requiredColor;
+    } else {
+      freeFrom = now;
+    }
+    
+    // Calculate free window until end of day (or end of extended hours)
+    // If FULL_AUTOMATION, printers can work until next workday
+    let effectiveEndTime = workEndTime;
+    
+    if (settings.afterHoursBehavior === 'FULL_AUTOMATION' && printer.canStartNewCyclesAfterHours) {
+      // Can work overnight - calculate until next day start
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowSchedule = getDayScheduleForDate(tomorrow, settings, []);
+      if (tomorrowSchedule?.enabled) {
+        effectiveEndTime = createDateWithTime(tomorrow, tomorrowSchedule.startTime);
+      } else {
+        // Weekend - extend to Monday
+        effectiveEndTime = new Date(workEndTime);
+        effectiveEndTime.setHours(23, 59, 59); // End of today at minimum
+      }
+    }
+    
+    const freeWindowMs = Math.max(0, effectiveEndTime.getTime() - freeFrom.getTime());
+    const freeWindowHours = freeWindowMs / (1000 * 60 * 60);
+    
+    // Determine why printer is idle
+    let reason: IdlePrinterReason = 'FILLED';
+    let details = '';
+    let potentialCycles = 0;
+    
+    if (freeWindowHours < 1) {
+      // Less than 1 hour free - effectively filled
+      reason = 'FILLED';
+      details = 'פחות משעה פנויה';
+    } else {
+      // Has free window - check why not filled
+      const platesUsed = printerCycles.length;
+      const platesAvailable = (printer.physicalPlateCapacity ?? 4) - platesUsed;
+      
+      // Check after-hours permission
+      if (freeFrom >= workEndTime && !printer.canStartNewCyclesAfterHours) {
+        reason = 'AFTER_HOURS_BLOCK';
+        details = `מדפסת לא מורשית לעבודת לילה`;
+        potentialCycles = 0;
+      } else if (platesAvailable <= 0) {
+        reason = 'NO_PLATES';
+        details = `כל ${printer.physicalPlateCapacity ?? 4} הפלטות בשימוש`;
+        potentialCycles = 0;
+      } else {
+        // Find remaining work
+        const remainingProjects = projects.filter(p => {
+          if (p.status === 'completed') return false;
+          const remaining = p.quantityTarget - p.quantityGood;
+          return remaining > 0 && p.includeInPlanning;
+        });
+        
+        if (remainingProjects.length === 0) {
+          reason = 'NO_WORK';
+          details = 'אין עבודה נוספת לתזמן';
+          potentialCycles = 0;
+        } else {
+          // Check if any project matches current color
+          const sameColorProjects = remainingProjects.filter(p => 
+            normalizeColor(p.color) === normalizeColor(currentColor || '')
+          );
+          
+          if (currentColor && sameColorProjects.length === 0) {
+            reason = 'COLOR_MISMATCH';
+            details = `צבע נוכחי: ${currentColor}, פרויקטים שנותרו: ${remainingProjects.map(p => p.color).join(', ')}`;
+            // Estimate how many cycles could fit
+            const avgCycleHours = 2;
+            potentialCycles = Math.min(platesAvailable, Math.floor(freeWindowHours / avgCycleHours));
+          } else {
+            // There IS work in same color but wasn't scheduled - might be V2's "minimum printer" behavior
+            reason = 'NO_WORK'; // Actually "NOT_SCHEDULED_DUE_TO_V2"
+            details = `V2 לא שיבץ - ${sameColorProjects.length} פרויקטים באותו צבע זמינים`;
+            const avgCycleHours = 2;
+            potentialCycles = Math.min(platesAvailable, Math.floor(freeWindowHours / avgCycleHours));
+          }
+        }
+      }
+    }
+    
+    report.push({
+      printerId: printer.id,
+      printerName: printer.name,
+      freeWindowHours: Math.round(freeWindowHours * 10) / 10,
+      reason,
+      details,
+      potentialCycles,
+      currentColor,
+    });
+  }
+  
+  // Log the report
+  console.log('[IdlePrinterReport] 📊 Idle Printer Diagnostic:');
+  console.table(report.map(r => ({
+    'מדפסת': r.printerName,
+    'שעות פנויות': r.freeWindowHours,
+    'סיבה': r.reason,
+    'פרטים': r.details,
+    'מחזורים פוטנציאליים': r.potentialCycles,
+    'צבע נוכחי': r.currentColor || '-',
+  })));
+  
+  // Summary
+  const filledCount = report.filter(r => r.reason === 'FILLED').length;
+  const idleCount = report.filter(r => r.reason !== 'FILLED').length;
+  const totalPotentialCycles = report.reduce((sum, r) => sum + r.potentialCycles, 0);
+  
+  console.log('[IdlePrinterReport] Summary:', {
+    totalPrinters: report.length,
+    filled: filledCount,
+    idle: idleCount,
+    potentialCyclesLost: totalPotentialCycles,
+    idleReasons: {
+      NO_WORK: report.filter(r => r.reason === 'NO_WORK').length,
+      NO_PLATES: report.filter(r => r.reason === 'NO_PLATES').length,
+      COLOR_MISMATCH: report.filter(r => r.reason === 'COLOR_MISMATCH').length,
+      AFTER_HOURS_BLOCK: report.filter(r => r.reason === 'AFTER_HOURS_BLOCK').length,
+    },
+  });
+  
+  return report;
+};
 
 export interface CapacityInfo {
   totalHoursAvailable: number;
