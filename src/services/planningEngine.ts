@@ -1860,6 +1860,19 @@ const scheduleCyclesForDay = (
   let workingStates = projectStates.map(s => ({ ...s }));
   const workingMaterial = new Map(materialTracker);
   
+  // 🔍 DEBUG: Log workingStates before scheduling
+  console.log('[TRACE] workingStates after clone', {
+    dateString,
+    count: workingStates.length,
+    statesWithRemaining: workingStates.filter(s => s.remainingUnits > 0).length,
+    projects: workingStates.map(s => ({
+      name: s.project.name.slice(0, 20),
+      id: s.project.id.slice(0, 8),
+      remainingUnits: s.remainingUnits,
+      hasProduct: Boolean(s.project.productId),
+    })),
+  });
+  
   // Clone spool assignment tracker (color -> set of printer IDs using that color simultaneously)
   const workingSpoolAssignments = new Map<string, Set<string>>();
   for (const [color, printerSet] of spoolAssignmentTracker) {
