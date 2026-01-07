@@ -2191,6 +2191,12 @@ const scheduleCyclesForDay = (
           }
         }
         
+        console.log('[TRACE] About to enter scheduling loop', {
+          workingStatesCount: workingStates.length,
+          printerSlotsCount: printerSlots.length,
+          codePath: 'V2_PROJECT_CENTRIC',
+        });
+        
         // Find highest priority project that can be scheduled on THIS printer
         console.log('[TRACE] Enter project loop', {
           printer: slot.printerName,
