@@ -1663,9 +1663,9 @@ const scheduleCyclesForDay = (
     // NEW MODEL: Plates are a parallel resource (capacity = 4)
     // - During work hours: plates recycle after cycle ends + 10min cleanup
     // - Outside work hours: plates don't recycle, hard stop after capacity exhausted
-    // Default to 4 if not set, or if set to 999 (legacy "unlimited")
-    const rawCapacity = p.physicalPlateCapacity ?? 4;
-    const plateCapacity = rawCapacity >= 999 ? 4 : rawCapacity; // Treat 999 as "use default 4"
+    // Default to 5 if not set, or if set to 999 (legacy "unlimited")
+    const rawCapacity = p.physicalPlateCapacity ?? 5;
+    const plateCapacity = rawCapacity >= 999 ? 5 : rawCapacity; // Treat 999 as "use default 5"
     
     // Initialize plates in use from locked cycles
     // Each locked cycle "holds" a plate until its end time + cleanup delay
