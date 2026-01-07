@@ -445,7 +445,17 @@ const prioritizeProjects = (projects: Project[], products: Product[], fromDate: 
       preset = defaultPreset;
     }
     
-    if (!product || !preset) continue;
+    if (!product || !preset) {
+      console.warn(`[Planning] Skipping project "${project.name}" (id: ${project.id}):`, {
+        hasProduct: !!product,
+        productName: product?.name ?? null,
+        presetsCount: product?.platePresets?.length ?? 0,
+        presetIds: product?.platePresets?.map(p => p.id) ?? [],
+        preferredPresetId: project.preferredPresetId ?? null,
+        presetResolved: preset?.id ?? null,
+      });
+      continue;
+    }
     
     // Calculate units already being produced in in_progress cycles
     const inProgressUnits = existingCycles
