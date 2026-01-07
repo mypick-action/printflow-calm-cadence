@@ -131,7 +131,14 @@ export const PrintersPage: React.FC = () => {
   const [loadSlotIndex, setLoadSlotIndex] = useState<number | null>(null); // null = main spool, number = AMS slot
 
   useEffect(() => {
-    refreshData();
+    const init = async () => {
+      // Hydrate localStorage from cloud before refreshing data
+      if (workspaceId) {
+        await hydrateLocalFromCloud(workspaceId, { force: false });
+      }
+      refreshData();
+    };
+    init();
   }, [workspaceId]);
 
   // Listen for printer changes (e.g., when loading spools from LoadRecommendationsPanel)
@@ -174,7 +181,7 @@ export const PrintersPage: React.FC = () => {
       ams_multi_color: editingPrinter.amsModes?.multiColor ?? editingPrinter.amsMode === 'multi_color',
       mounted_spool_id: editingPrinter.mountedSpoolId ?? null,
       notes: (editingPrinter as any).notes ?? null,
-      physical_plate_capacity: editingPrinter.physicalPlateCapacity ?? 999,
+      physical_plate_capacity: editingPrinter.physicalPlateCapacity ?? 5,
       can_start_new_cycles_after_hours: editingPrinter.canStartNewCyclesAfterHours ?? false,
     });
     
@@ -1157,13 +1164,13 @@ export const PrintersPage: React.FC = () => {
               <div className="space-y-2">
                 <Label>{language === 'he' ? 'מספר פלטות פיזיות' : 'Physical Plate Capacity'}</Label>
                 <Select 
-                  value={String(editingPrinter.physicalPlateCapacity || 999)} 
+                  value={String(editingPrinter.physicalPlateCapacity || 5)} 
                   onValueChange={(v) => setEditingPrinter({ ...editingPrinter, physicalPlateCapacity: parseInt(v) })}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="bg-background border shadow-lg">
+                  <SelectContent className="z-[100] bg-background border shadow-lg">
                     <SelectItem value="3">3 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
                     <SelectItem value="4">4 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
                     <SelectItem value="5">5 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
