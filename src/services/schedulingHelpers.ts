@@ -223,19 +223,8 @@ export function isOperatorPresent(
   const dayName = dayNames[time.getDay()];
   const schedule = getDayScheduleForDate(time, settings, []);
   
-  // DEBUG: Log the schedule check
-  console.log('[isOperatorPresent] Checking:', {
-    time: time.toISOString(),
-    dayOfWeek: dayName,
-    dayIndex: time.getDay(),
-    scheduleForDay: schedule,
-    weeklyScheduleFromSettings: settings.weeklySchedule?.[dayName],
-    isEnabled: schedule?.enabled,
-  });
-  
   // Not a working day → no operator
   if (!schedule?.enabled) {
-    console.log('[isOperatorPresent] ❌ Day not enabled, returning false');
     return false;
   }
   
@@ -251,15 +240,8 @@ export function isOperatorPresent(
     adjustedWorkEnd = new Date(workEnd.getTime() + 24 * 60 * 60 * 1000);
   }
   
-  const isPresent = time >= workStart && time < adjustedWorkEnd;
-  console.log('[isOperatorPresent] Work hours check:', {
-    workStart: workStart.toISOString(),
-    workEnd: adjustedWorkEnd.toISOString(),
-    isPresent,
-  });
-  
   // Operator is present only during work hours
-  return isPresent;
+  return time >= workStart && time < adjustedWorkEnd;
 }
 
 // ============= CRITICAL: Central night/autonomous eligibility check =============
