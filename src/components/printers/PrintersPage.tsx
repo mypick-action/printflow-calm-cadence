@@ -1171,6 +1171,8 @@ export const PrintersPage: React.FC = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="z-[100] bg-background border shadow-lg">
+                    <SelectItem value="1">1 {language === 'he' ? 'פלטה' : 'plate'}</SelectItem>
+                    <SelectItem value="2">2 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
                     <SelectItem value="3">3 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
                     <SelectItem value="4">4 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
                     <SelectItem value="5">5 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
