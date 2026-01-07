@@ -438,6 +438,7 @@ export const createPrinter = async (
       ams_slots: printer.ams_slots || null,
       ams_backup_mode: printer.ams_backup_mode || false,
       ams_multi_color: printer.ams_multi_color || false,
+      physical_plate_capacity: printer.physical_plate_capacity ?? 5, // Default to 5 plates
       workspace_id: workspaceId,
     })
     .select()
