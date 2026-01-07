@@ -174,7 +174,7 @@ export const PrintersPage: React.FC = () => {
       ams_multi_color: editingPrinter.amsModes?.multiColor ?? editingPrinter.amsMode === 'multi_color',
       mounted_spool_id: editingPrinter.mountedSpoolId ?? null,
       notes: (editingPrinter as any).notes ?? null,
-      physical_plate_capacity: editingPrinter.physicalPlateCapacity ?? 5,
+      physical_plate_capacity: editingPrinter.physicalPlateCapacity ?? 999,
       can_start_new_cycles_after_hours: editingPrinter.canStartNewCyclesAfterHours ?? false,
     });
     
@@ -1157,7 +1157,7 @@ export const PrintersPage: React.FC = () => {
               <div className="space-y-2">
                 <Label>{language === 'he' ? 'מספר פלטות פיזיות' : 'Physical Plate Capacity'}</Label>
                 <Select 
-                  value={String(editingPrinter.physicalPlateCapacity || 5)} 
+                  value={String(editingPrinter.physicalPlateCapacity || 999)} 
                   onValueChange={(v) => setEditingPrinter({ ...editingPrinter, physicalPlateCapacity: parseInt(v) })}
                 >
                   <SelectTrigger>

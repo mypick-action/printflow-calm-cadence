@@ -276,7 +276,7 @@ export async function hydrateLocalFromCloud(
       // Additional fields
       canStartNewCyclesAfterHours: Boolean(p.can_start_new_cycles_after_hours),
       maxSpoolWeight: (p.max_spool_weight as number) ?? undefined,
-      physicalPlateCapacity: (p as any).physical_plate_capacity ?? 5,
+      physicalPlateCapacity: (p as any).physical_plate_capacity ?? 999,
       
       // These fields are not in cloud, preserve from existing or leave undefined
       currentColor: undefined,
