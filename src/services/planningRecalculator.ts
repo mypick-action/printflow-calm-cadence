@@ -10,8 +10,6 @@ import {
   savePlanningMeta,
   KEYS,
   getProjects,
-  getProducts,
-  getActiveProjects,
 } from './storage';
 import { generatePlan, BlockingIssue, PlanningWarning } from './planningEngine';
 import { addPlanningLogEntry } from './planningLogger';
@@ -70,15 +68,6 @@ export const recalculatePlan = async (
   const cycles = getPlannedCycles();
   const settings = getFactorySettings();
   const printers = getActivePrinters();
-  
-  // Pre-plan data check
-  const preCheckProducts = getProducts();
-  const preCheckProjects = getActiveProjects().filter(p => p.includeInPlanning !== false);
-  console.log('[Recalculator] Pre-plan data check:', {
-    productsCount: preCheckProducts.length,
-    projectsCount: preCheckProjects.length,
-    productsHavePresets: preCheckProducts.map(p => ({ name: p.name, presets: p.platePresets?.length ?? 0 })),
-  });
   
   // ============= HARD DEBUG: Factory Settings State =============
   console.log('[FACTORY SETTINGS USED IN PLANNING]', {

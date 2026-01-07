@@ -1023,19 +1023,8 @@ export const createProject = (project: Omit<Project, 'id' | 'createdAt' | 'quant
   const projectId = generateUUID();
   const legacyId = generateLegacyId(); // Keep for backward compatibility
   
-  // Auto-select preset if not provided but product has presets
-  let preferredPresetId = project.preferredPresetId;
-  if (!preferredPresetId && project.productId) {
-    const product = getProduct(project.productId);
-    if (product && product.platePresets.length > 0) {
-      preferredPresetId = product.platePresets.find(p => p.isRecommended)?.id || product.platePresets[0].id;
-      console.log(`[createProject] Auto-selected preset "${preferredPresetId}" for product "${product.name}"`);
-    }
-  }
-  
   const newProject: Project = {
     ...project,
-    preferredPresetId,
     id: projectId,
     createdAt: new Date().toISOString().split('T')[0],
     quantityGood: 0,

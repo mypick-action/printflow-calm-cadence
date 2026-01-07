@@ -276,7 +276,7 @@ export async function hydrateLocalFromCloud(
       // Additional fields
       canStartNewCyclesAfterHours: Boolean(p.can_start_new_cycles_after_hours),
       maxSpoolWeight: (p.max_spool_weight as number) ?? undefined,
-      physicalPlateCapacity: (p as any).physical_plate_capacity ?? 4,
+      physicalPlateCapacity: (p as any).physical_plate_capacity ?? 999,
       
       // These fields are not in cloud, preserve from existing or leave undefined
       currentColor: undefined,
@@ -531,13 +531,6 @@ export async function hydrateLocalFromCloud(
       
       localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(mappedProducts));
       console.log('[CloudBridge] Wrote products to localStorage:', mappedProducts.length);
-      console.log('[CloudBridge] Products written with presets:', 
-        mappedProducts.map(p => ({ 
-          name: p.name, 
-          presetsCount: p.platePresets.length,
-          presetIds: p.platePresets.map(pp => pp.id),
-        }))
-      );
     }
   }
 

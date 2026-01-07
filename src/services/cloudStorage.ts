@@ -44,7 +44,7 @@ export interface DbPrinter {
   mounted_spool_id: string | null;
   can_start_new_cycles_after_hours: boolean;
   max_spool_weight: number | null;
-  physical_plate_capacity: number; // Default 4
+  physical_plate_capacity: number; // Default 999 = unlimited
   notes: string | null;
   has_ams: boolean;
   ams_slots: number | null;
