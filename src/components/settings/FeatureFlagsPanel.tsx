@@ -73,7 +73,6 @@ export const FeatureFlagsPanel: React.FC = () => {
     OVERNIGHT_OPEN_SPOOL_ALLOWED: { he: 'גליל פתוח למחזור לילה', en: 'Open Spool for Night Cycle' },
     PLANNER_V2_PROJECT_CENTRIC: { he: 'תכנון V2 - מינימום מדפסות', en: 'Planner V2 - Minimum Printers' },
     PLANNING_HYBRID_OBJECTIVE: { he: 'HYBRID - ניצול קיבולת', en: 'HYBRID Objective' },
-    MAX_THROUGHPUT_V0: { he: 'Max Throughput V0 - מילוי מדפסות', en: 'Max Throughput V0 - Fill Printers' },
   };
 
   return (

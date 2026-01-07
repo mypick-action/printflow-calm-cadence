@@ -981,7 +981,6 @@ function selectMinimumPrintersForDeadline(
  * Schedule all cycles for a project on selected printers.
  * Uses MinHeap for earliest-available scheduling.
  * 
- * @param maxCycles - Maximum number of cycles to schedule (default: Infinity)
  * @returns Array of scheduled cycles and updated printer slots
  */
 function scheduleProjectOnPrinters(
@@ -993,8 +992,7 @@ function scheduleProjectOnPrinters(
   dateString: string,
   workingMaterial: Map<string, number>,
   workingSpoolAssignments: Map<string, Set<string>>,
-  trackAdvanceReason?: AdvanceReasonTracker,
-  maxCycles: number = Infinity  // NEW: Limit cycles per call for V0
+  trackAdvanceReason?: AdvanceReasonTracker
 ): ScheduledCycle[] {
   const scheduledCycles: ScheduledCycle[] = [];
   const transitionMs = (settings.transitionMinutes ?? 0) * 60 * 1000;
@@ -1003,12 +1001,6 @@ function scheduleProjectOnPrinters(
   // Get selected slots
   const selectedSlots = printerSlots.filter(s => selectedPrinterIds.includes(s.printerId));
   if (selectedSlots.length === 0) return [];
-  
-  // Helper: Track skip reason for a specific slot
-  const trackSlotSkip = (slot: PrinterTimeSlot, reason: string, details?: string) => {
-    slot.lastSkipReason = details ? `${reason}: ${details}` : reason;
-    trackAdvanceReason?.(reason);
-  };
   
   // Initialize MinHeap
   const heap = new MinHeap<PrinterTimeSlot>();
@@ -1027,9 +1019,8 @@ function scheduleProjectOnPrinters(
   
   // Track consumed material during scheduling (for accurate hasMaterial check)
   let consumedMaterial = 0;
-  let scheduledCount = 0;  // NEW: Track cycles scheduled for maxCycles limit
   
-  while (remainingUnits > 0 && !heap.isEmpty() && scheduledCount < maxCycles) {
+  while (remainingUnits > 0 && !heap.isEmpty()) {
     const entry = heap.pop();
     if (!entry) break;
     
@@ -1059,8 +1050,8 @@ function scheduleProjectOnPrinters(
         presetAllowedForNight: project.preset?.allowedForNightCycle,
       });
       
-      // Track reason for summary (per-slot)
-      trackSlotSkip(slot, 'past_endOfDayTime');
+      // Track reason for summary
+      trackAdvanceReason?.('past_endOfDayTime');
       
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1118,8 +1109,8 @@ function scheduleProjectOnPrinters(
         projectColor: project.project.color ?? 'none',
       });
       
-      // Track reason for summary (per-slot)
-      trackSlotSkip(slot, 'no_plates_available', `${platesInUseCount}/${slot.physicalPlateCapacity}`);
+      // Track reason for summary
+      trackAdvanceReason?.('no_plates_available');
       
       // No plates available - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1163,8 +1154,8 @@ function scheduleProjectOnPrinters(
         presetAllowedForNight: project.preset?.allowedForNightCycle,
       });
       
-      // Track reason for summary (per-slot)
-      trackSlotSkip(slot, 'after_hours_blocked');
+      // Track reason for summary
+      trackAdvanceReason?.('canStartCycleAt_false');
       
       // Advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1205,8 +1196,8 @@ function scheduleProjectOnPrinters(
         presetAllowedForNight: project.preset?.allowedForNightCycle,
       });
       
-      // Track reason for summary (per-slot)
-      trackSlotSkip(slot, 'cycle_too_long', `${cycleHours}h > remaining`);
+      // Track reason for summary
+      trackAdvanceReason?.('cycle_exceeds_endOfDayTime');
       
       // Doesn't fit - advance to next workday
       const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
@@ -1361,7 +1352,6 @@ function scheduleProjectOnPrinters(
     
     scheduledCycles.push(cycle);
     remainingUnits -= unitsThisCycle;
-    scheduledCount++;  // Track for maxCycles limit
     
     // ============= FIX #1: Track consumed material =============
     consumedMaterial += gramsThisCycle;
@@ -1525,8 +1515,6 @@ interface PrinterTimeSlot {
   // ============= DEBUG FIELDS =============
   endOfDayTimeSource?: EndOfDayTimeSource;    // Why endOfDayTime was set to its value
   endOfDayTimeReason?: string;    // Additional human-readable reason
-  // ============= MAX THROUGHPUT V0 FIELDS =============
-  lastSkipReason?: string;  // Per-slot tracking: why scheduling failed on this slot
 }
 
 const scheduleCyclesForDay = (
@@ -1867,111 +1855,7 @@ const scheduleCyclesForDay = (
     // Filter completed projects
     workingStates = workingStates.filter(s => s.remainingUnits > 0);
     
-    // ============= MAX THROUGHPUT V0 =============
-    // Fill idle printers with SAME PROJECT or SAME COLOR only
-    // Multi-pass with safe stop: one cycle per printer per pass, repeat until no progress
-    if (isFeatureEnabled('MAX_THROUGHPUT_V0') && workingStates.length > 0) {
-      console.log('[MaxThroughput-V0] 🚀 Starting fill passes...');
-      
-      const MAX_PASSES = 20;  // Safety limit
-      let passNumber = 0;
-      let totalAdditionalCycles = 0;
-      
-      while (passNumber < MAX_PASSES) {
-        passNumber++;
-        let cyclesThisPass = 0;
-        
-        for (const slot of printerSlots) {
-          // Skip if slot is at end of day
-          if (slot.currentTime >= slot.endOfDayTime) continue;
-          
-          // Clear skip reason for this attempt
-          slot.lastSkipReason = undefined;
-          
-          // === Find candidate: Priority 1 = same project, Priority 2 = same color ===
-          let candidateProject: ProjectPlanningState | null = null;
-          let matchType: 'SAME_PROJECT' | 'SAME_COLOR' | null = null;
-          
-          const existingProjectIds = new Set(
-            (slot.cyclesScheduled || []).map(c => c.projectId)
-          );
-          
-          // Priority 1: Same project already on this printer
-          for (const state of workingStates) {
-            if (state.remainingUnits <= 0) continue;
-            if (existingProjectIds.has(state.project.id)) {
-              candidateProject = state;
-              matchType = 'SAME_PROJECT';
-              break;
-            }
-          }
-          
-          // Priority 2: Same color (for printers with color loaded)
-          if (!candidateProject && slot.lastScheduledColor) {
-            const slotColor = normalizeColor(slot.lastScheduledColor);
-            for (const state of workingStates) {
-              if (state.remainingUnits <= 0) continue;
-              const projectColor = normalizeColor(state.project.color);
-              if (projectColor === slotColor) {
-                candidateProject = state;
-                matchType = 'SAME_COLOR';
-                break;
-              }
-            }
-          }
-          
-          // No candidate - set explicit reason
-          if (!candidateProject) {
-            slot.lastSkipReason = slot.lastScheduledColor 
-              ? 'NO_MATCHING_COLOR_PROJECT' 
-              : 'NO_COLOR_LOADED';
-            continue;
-          }
-          
-          // Try to schedule ONE cycle using existing logic
-          const cyclesBefore = slot.cyclesScheduled?.length ?? 0;
-          scheduleProjectOnPrinters(
-            candidateProject,
-            printerSlots,
-            [slot.printerId],
-            settings,
-            printers,
-            dateString,
-            workingMaterial,
-            workingSpoolAssignments,
-            trackAdvanceReason,
-            1  // maxCycles = 1
-          );
-          
-          const cyclesAfter = slot.cyclesScheduled?.length ?? 0;
-          if (cyclesAfter > cyclesBefore) {
-            cyclesThisPass++;
-            totalAdditionalCycles++;
-            console.log(`[MaxThroughput-V0] ✅ Pass ${passNumber}: +1 cycle on ${slot.printerName} (${matchType})`);
-          }
-        }
-        
-        // Stop if no progress this pass
-        if (cyclesThisPass === 0) {
-          console.log(`[MaxThroughput-V0] 🛑 Pass ${passNumber}: no cycles added, stopping`);
-          break;
-        }
-        
-        // Update working states
-        workingStates = workingStates.filter(s => s.remainingUnits > 0);
-        if (workingStates.length === 0) break;
-      }
-      
-      // === Debug Report ===
-      console.log(`[MaxThroughput-V0] 📊 Summary: ${totalAdditionalCycles} additional cycles in ${passNumber} passes`);
-      for (const slot of printerSlots) {
-        const freeWindow = (slot.endOfDayTime.getTime() - slot.currentTime.getTime()) / 3600000;
-        if (freeWindow > 0.5 && slot.lastSkipReason) {
-          console.log(`[MaxThroughput-V0] ⚠️ ${slot.printerName}: ${slot.lastSkipReason} (${freeWindow.toFixed(1)}h free)`);
-        }
-      }
-    }
-    
+  } else {
     // ============= LEGACY: MINIMUM PRINTER STRATEGY =============
     // Goal: Concentrate work on minimum printers to reduce color changes
     // 1. Fill one printer at a time until deadline pressure requires more
