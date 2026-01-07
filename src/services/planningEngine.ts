@@ -1067,9 +1067,9 @@ function scheduleProjectOnPrinters(
     // Check plate availability - same logic as Legacy
     const isWithinWorkHoursNow = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
     
-    // FIX: Release plates ANY time (not just work hours) - plates release when cycleEnd + cleanup passes
-    // This allows FULL_AUTOMATION to properly free plates during night runs
-    if (slot.platesInUse) {
+    // During work hours: release plates whose cleanup time has passed
+    // Outside work hours: plates are NEVER released (no operator to clean)
+    if (slot.platesInUse && isWithinWorkHoursNow) {
       slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
     }
     
