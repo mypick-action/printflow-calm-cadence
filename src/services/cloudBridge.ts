@@ -531,6 +531,13 @@ export async function hydrateLocalFromCloud(
       
       localStorage.setItem(KEYS.PRODUCTS, JSON.stringify(mappedProducts));
       console.log('[CloudBridge] Wrote products to localStorage:', mappedProducts.length);
+      console.log('[CloudBridge] Products written with presets:', 
+        mappedProducts.map(p => ({ 
+          name: p.name, 
+          presetsCount: p.platePresets.length,
+          presetIds: p.platePresets.map(pp => pp.id),
+        }))
+      );
     }
   }
 
