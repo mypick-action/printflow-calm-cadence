@@ -1856,6 +1856,16 @@ const scheduleCyclesForDay = (
     lastScheduledColor: s.lastScheduledColor,
   })));
   
+  // 🔍 TRACE: Log slot windows to detect "no time window" issue
+  console.log('[TRACE] SLOT WINDOWS', printerSlots.map(s => ({
+    printer: s.printerName,
+    current: s.currentTime?.toISOString(),
+    endWork: s.endOfWorkHours?.toISOString(),
+    endDay: s.endOfDayTime?.toISOString(),
+    endDaySrc: s.endOfDayTimeSource,
+    noWindow: s.currentTime >= s.endOfDayTime
+  })));
+  
   // Clone project states for modification
   let workingStates = projectStates.map(s => ({ ...s }));
   const workingMaterial = new Map(materialTracker);
@@ -2120,6 +2130,16 @@ const scheduleCyclesForDay = (
     
     // Reset skip stats at start of scheduling
     skipStats.reset();
+    
+    // 🔍 TRACE: Check if all slots have no time window before entering loop
+    const noWindowCount = printerSlots.filter(s => s.currentTime >= s.endOfDayTime).length;
+    if (noWindowCount === printerSlots.length) {
+      console.log('[SKIP] ALL_SLOTS_NO_WINDOW', {
+        dateString,
+        noWindowCount,
+        totalSlots: printerSlots.length,
+      });
+    }
     
     while (moreToSchedule && iterationCount < maxIterations) {
       iterationCount++;
