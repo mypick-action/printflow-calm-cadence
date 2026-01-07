@@ -200,6 +200,47 @@ export function isWithinWorkWindow(
   return time >= workDayStart && time < endOfWorkHours;
 }
 
+// ============= CRITICAL: Check if operator is present =============
+/**
+ * Checks if an operator is physically present at the given time.
+ * Operators are ONLY present during work hours of ENABLED days.
+ * 
+ * This is the KEY check for determining if NEW cycles can be loaded.
+ * - Even with FULL_AUTOMATION, an operator must load the first plate
+ * - Running cycles can finish overnight, but NEW cycles need an operator
+ * 
+ * @param time - The time to check
+ * @param settings - Factory settings with work schedule
+ * @returns true if operator is present and can load/unload plates
+ */
+export function isOperatorPresent(
+  time: Date,
+  settings: FactorySettings
+): boolean {
+  // Get schedule for this specific day
+  const schedule = getDayScheduleForDate(time, settings, []);
+  
+  // Not a working day → no operator
+  if (!schedule?.enabled) {
+    return false;
+  }
+  
+  // Calculate work hours for this day
+  const workStart = createDateWithTime(time, schedule.startTime);
+  const workEnd = createDateWithTime(time, schedule.endTime);
+  
+  // Handle cross-midnight shifts
+  let adjustedWorkEnd = workEnd;
+  const startMinutes = parseTime(schedule.startTime).hours * 60 + parseTime(schedule.startTime).minutes;
+  const endMinutes = parseTime(schedule.endTime).hours * 60 + parseTime(schedule.endTime).minutes;
+  if (endMinutes < startMinutes) {
+    adjustedWorkEnd = new Date(workEnd.getTime() + 24 * 60 * 60 * 1000);
+  }
+  
+  // Operator is present only during work hours
+  return time >= workStart && time < adjustedWorkEnd;
+}
+
 // ============= CRITICAL: Central night/autonomous eligibility check =============
 /**
  * Single source of truth for "can a cycle start at this time?"

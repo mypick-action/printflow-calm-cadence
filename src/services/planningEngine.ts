@@ -49,6 +49,7 @@ import {
   canStartCycleAt,
   isNightTime,
   getNextOperatorTime,  // NEW: Self-contained plate release calculator
+  isOperatorPresent,    // NEW: Check if operator can load new plates
   hoursBetween,
   PrinterTimeSlot as SchedulingSlot,
   PlateReleaseInfo,
@@ -703,7 +704,40 @@ function estimateProjectFinishTime(
       continue;
     }
     
-    // Check if cycle can start (3-level control)
+    // ============= CRITICAL: Check if operator is present to load new plate =============
+    // Even with FULL_AUTOMATION, an operator must physically load the plate
+    // This prevents scheduling new cycles on Friday/Saturday or outside work hours
+    if (!isOperatorPresent(slot.currentTime, settings)) {
+      console.log('[EstimateSim] ⏭️ Advancing to next day:', {
+        reason: 'no_operator_present',
+        projectId: project.project.id,
+        projectName: project.project.name,
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        dayOfWeek: slot.currentTime.toLocaleDateString('en-US', { weekday: 'long' }),
+        workDayStart: slot.workDayStart.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+      });
+      
+      // Advance to next workday when operator arrives
+      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+      if (!nextStart || nextStart > maxSimulationTime) {
+        continue;
+      }
+      slot.currentTime = nextStart;
+      updateSlotBoundsForDay(slot, nextStart, settings);
+      // Release plates that operator can clear
+      if (slot.platesInUse) {
+        slot.platesInUse = slot.platesInUse.filter(p => 
+          getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+        );
+      }
+      heap.push(slot.currentTime.getTime(), slot);
+      continue;
+    }
+    
+    // Check if cycle can start (3-level control for night automation)
     const printer = printerMap.get(slot.printerId);
     if (!canStartCycleAt(
       slot.currentTime,
@@ -1061,6 +1095,40 @@ function scheduleProjectOnPrinters(
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
       // Release plates at new workday start (operator arrives and clears finished plates)
+      if (slot.platesInUse) {
+        slot.platesInUse = slot.platesInUse.filter(p => 
+          getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+        );
+      }
+      heap.push(slot.currentTime.getTime(), slot);
+      continue;
+    }
+    
+    // ============= CRITICAL: Check if operator is present to load new plate =============
+    // Even with FULL_AUTOMATION, an operator must physically load the plate
+    // This prevents scheduling new cycles on Friday/Saturday or outside work hours
+    if (!isOperatorPresent(slot.currentTime, settings)) {
+      console.log('[V2Schedule] ⏭️ Advancing to next day:', {
+        reason: 'no_operator_present',
+        projectId: project.project.id,
+        projectName: project.project.name,
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        dayOfWeek: slot.currentTime.toLocaleDateString('en-US', { weekday: 'long' }),
+        workDayStart: slot.workDayStart.toISOString(),
+        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+      });
+      
+      // Track reason for summary
+      trackAdvanceReason?.('no_operator_present');
+      
+      // Advance to next workday when operator arrives
+      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+      if (!nextStart) continue;
+      slot.currentTime = nextStart;
+      updateSlotBoundsForDay(slot, nextStart, settings);
+      // Release plates that operator can clear
       if (slot.platesInUse) {
         slot.platesInUse = slot.platesInUse.filter(p => 
           getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
