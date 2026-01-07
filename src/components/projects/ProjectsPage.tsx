@@ -102,8 +102,9 @@ import { DeadlineWarningModal } from './DeadlineWarningModal';
 import { ManualStartPrintModal } from '@/components/dashboard/ManualStartPrintModal';
 import { scheduleAutoReplan } from '@/services/autoReplan';
 import { runReplanNow } from '@/services/planningRecalculator';
-import { BlockingIssue, PlanningWarning } from '@/services/planningEngine';
+import { BlockingIssue, PlanningWarning, checkDeadlineImpact, DeadlineImpactResult } from '@/services/planningEngine';
 import { subscribeToInventoryChanges } from '@/services/inventoryEvents';
+import { isFeatureEnabled } from '@/services/featureFlags';
 
 import {
   AlertDialog,
@@ -229,6 +230,11 @@ export const ProjectsPage: React.FC = () => {
     newProjectId?: string;
     newProjectName?: string;
   } | null>(null);
+  
+  // Deadline Guard: impact check before creating project
+  const [deadlineImpactOpen, setDeadlineImpactOpen] = useState(false);
+  const [deadlineImpactResult, setDeadlineImpactResult] = useState<DeadlineImpactResult | null>(null);
+  const [pendingProjectData, setPendingProjectData] = useState<typeof newProject | null>(null);
   
   // Custom color state
   const [useCustomColor, setUseCustomColor] = useState(false);
@@ -530,7 +536,39 @@ export const ProjectsPage: React.FC = () => {
 
     const calculatedUrgency = calculatePriorityFromDueDate(newProject.dueDate);
     const finalUrgency = newProject.manualUrgency || calculatedUrgency;
+    const effectiveColor = useCustomColor ? customColorName.trim() : newProject.color;
     
+    // ============= DEADLINE GUARD: Check impact before creating =============
+    if (isFeatureEnabled('DEADLINE_GUARD') && newProject.includeInPlanning) {
+      const impactResult = checkDeadlineImpact({
+        name: newProject.name,
+        productId: newProject.productId,
+        productName: product.name,
+        preferredPresetId: newProject.preferredPresetId || undefined,
+        quantityTarget: newProject.quantityTarget,
+        dueDate: newProject.dueDate,
+        urgency: finalUrgency,
+        urgencyManualOverride: newProject.manualUrgency !== null,
+        status: 'pending',
+        color: effectiveColor,
+        includeInPlanning: true,
+      });
+      
+      // If there are affected projects, show warning before proceeding
+      if (!impactResult.safe || impactResult.affectedProjects.length > 0) {
+        setDeadlineImpactResult(impactResult);
+        setPendingProjectData({ ...newProject, color: effectiveColor });
+        setDeadlineImpactOpen(true);
+        return; // Don't create yet - wait for user confirmation
+      }
+    }
+    
+    // Proceed with creation
+    proceedWithProjectCreation(finalUrgency, effectiveColor, product);
+  };
+  
+  // Separate function to actually create the project (called directly or after user confirms impact)
+  const proceedWithProjectCreation = (finalUrgency: ProjectPriority, effectiveColor: string, product: Product) => {
     // If using a custom color, save it to factory settings for future use
     if (useCustomColor && customColorName.trim()) {
       const settings = getFactorySettings();
@@ -553,7 +591,7 @@ export const ProjectsPage: React.FC = () => {
       urgency: finalUrgency,
       urgencyManualOverride: newProject.manualUrgency !== null,
       status: 'pending',
-      color: newProject.color,
+      color: effectiveColor,
       includeInPlanning: newProject.includeInPlanning,
     });
     
@@ -581,6 +619,31 @@ export const ProjectsPage: React.FC = () => {
     // Show assignment choice modal
     setCreatedProject(newCreatedProject);
     setAssignmentChoiceOpen(true);
+  };
+  
+  // Handle user confirming to create project despite deadline impact
+  const handleConfirmDeadlineImpact = () => {
+    if (!pendingProjectData) return;
+    
+    const product = products.find(p => p.id === pendingProjectData.productId);
+    if (!product) return;
+    
+    const calculatedUrgency = calculatePriorityFromDueDate(pendingProjectData.dueDate);
+    const finalUrgency = pendingProjectData.manualUrgency || calculatedUrgency;
+    
+    setDeadlineImpactOpen(false);
+    setDeadlineImpactResult(null);
+    setPendingProjectData(null);
+    
+    proceedWithProjectCreation(finalUrgency, pendingProjectData.color, product);
+  };
+  
+  // Handle user canceling due to deadline impact
+  const handleCancelDeadlineImpact = () => {
+    setDeadlineImpactOpen(false);
+    setDeadlineImpactResult(null);
+    setPendingProjectData(null);
+    // Keep dialog open so user can modify the project
   };
 
   const handleManualAssignment = () => {
@@ -1524,6 +1587,50 @@ export const ProjectsPage: React.FC = () => {
           newProjectName={planningIssues.newProjectName}
         />
       )}
+
+      {/* Deadline Impact Warning (DEADLINE_GUARD) */}
+      <AlertDialog open={deadlineImpactOpen} onOpenChange={setDeadlineImpactOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-warning">
+              <AlertTriangle className="w-5 h-5" />
+              {language === 'he' ? 'אזהרה: פגיעה אפשרית בדדליינים' : 'Warning: Possible Deadline Impact'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  {language === 'he' 
+                    ? 'הוספת הפרויקט עלולה לפגוע בדדליינים של פרויקטים קיימים:'
+                    : 'Adding this project may impact deadlines of existing projects:'}
+                </p>
+                {deadlineImpactResult?.affectedProjects.map(p => (
+                  <div key={p.projectId} className="bg-warning/10 p-2 rounded border border-warning/30">
+                    <div className="font-medium">{p.projectName}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {language === 'he' 
+                        ? `מרווח: ${p.currentSlack}h → ${p.newSlack}h`
+                        : `Slack: ${p.currentSlack}h → ${p.newSlack}h`}
+                      {p.wouldMissDeadline && (
+                        <Badge variant="destructive" className="mr-2 text-xs">
+                          {language === 'he' ? 'יפספס דדליין!' : 'Will miss deadline!'}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelDeadlineImpact}>
+              {language === 'he' ? 'ביטול' : 'Cancel'}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDeadlineImpact} className="bg-warning text-warning-foreground">
+              {language === 'he' ? 'צור בכל זאת' : 'Create Anyway'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

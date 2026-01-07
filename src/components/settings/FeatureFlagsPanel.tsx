@@ -73,6 +73,7 @@ export const FeatureFlagsPanel: React.FC = () => {
     OVERNIGHT_OPEN_SPOOL_ALLOWED: { he: 'גליל פתוח למחזור לילה', en: 'Open Spool for Night Cycle' },
     PLANNER_V2_PROJECT_CENTRIC: { he: 'תכנון V2 - מינימום מדפסות', en: 'Planner V2 - Minimum Printers' },
     PLANNING_HYBRID_OBJECTIVE: { he: 'HYBRID - ניצול קיבולת', en: 'HYBRID Objective' },
+    DEADLINE_GUARD: { he: 'הגנת דדליין - התראה על פגיעה', en: 'Deadline Guard - Impact Alerts' },
   };
 
   return (
