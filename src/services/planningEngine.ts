@@ -418,6 +418,11 @@ export const selectOptimalPreset = (
 
 
 const prioritizeProjects = (projects: Project[], products: Product[], fromDate: Date, existingCycles: PlannedCycle[] = []): ProjectPlanningState[] => {
+  console.log('[Planning] prioritizeProjects called with:', {
+    projectsReceived: projects.length,
+    productsReceived: products.length,
+  });
+  
   const projectStates: ProjectPlanningState[] = [];
   
   // Get first available product as fallback for projects without product
@@ -487,6 +492,13 @@ const prioritizeProjects = (projects: Project[], products: Product[], fromDate: 
   projectStates.sort((a, b) => {
     if (a.priority !== b.priority) return a.priority - b.priority;
     return a.daysUntilDue - b.daysUntilDue;
+  });
+  
+  console.log('[Planning] prioritizeProjects result:', {
+    inputProjects: projects.length,
+    outputStates: projectStates.length,
+    skippedCount: projects.length - projectStates.length,
+    stateNames: projectStates.map(s => s.project.name),
   });
   
   return projectStates;
@@ -2772,6 +2784,25 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
   const products = getProducts();
   const spools = getSpools();
   const existingCycles = getPlannedCycles();
+  
+  // Debug: Log data state before prioritization
+  console.log('[Plan] 📊 Data state for planning:', {
+    projectsCount: projects.length,
+    projectNames: projects.map(p => p.name),
+    productsCount: products.length,
+    productsWithPresets: products.filter(p => p.platePresets?.length > 0).length,
+    productDetails: products.map(p => ({
+      name: p.name,
+      id: p.id,
+      presetsCount: p.platePresets?.length ?? 0,
+    })),
+    projectProductMapping: projects.map(p => ({
+      projectName: p.name,
+      productId: p.productId,
+      preferredPresetId: p.preferredPresetId,
+      productExists: products.some(prod => prod.id === p.productId),
+    })),
+  });
   
   const warnings: PlanningWarning[] = [];
   const blockingIssues: BlockingIssue[] = [];
