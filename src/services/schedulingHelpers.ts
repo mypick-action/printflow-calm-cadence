@@ -11,7 +11,7 @@ import {
 
 // ============= PLATE RELEASE INFO =============
 export interface PlateReleaseInfo {
-  releaseTime: Date;
+  releaseTime: Date;  // This is doneTime (cycleEnd + cleanupMinutes)
   cycleId: string;
 }
 
@@ -67,6 +67,10 @@ export function addDays(date: Date, days: number): Date {
 /**
  * Given a current time, find the start of the next working day.
  * ONLY accepts a Date - does not modify any slot.
+ * 
+ * NOTE: This function starts searching from the NEXT DAY.
+ * If you need same-day work start (for "before work hours" case), 
+ * use getNextOperatorTime instead.
  * 
  * @param currentTime - The current time point
  * @param settings - Factory settings with schedule
@@ -266,21 +270,66 @@ export function hoursBetween(start: Date, end: Date): number {
   return (end.getTime() - start.getTime()) / (1000 * 60 * 60);
 }
 
-// ============= CRITICAL: Actual plate release time =============
+// ============= CRITICAL: Get next operator time =============
 /**
- * Determines when a plate actually becomes available.
- * Plates can ONLY be cleared when an operator is present (during work hours).
+ * Given a "done time" (when plate finishes + cleanup), returns the earliest time
+ * an operator can physically clear the plate.
+ * 
+ * This function is SELF-CONTAINED and does NOT rely on slot boundaries.
+ * It calculates the work schedule for the specific day the plate finished.
  * 
  * Rules:
- * - If plate finishes during work hours (08:30-17:30) → released at releaseTime
- * - If plate finishes BEFORE work hours start → released at workDayStart (operator arrives)
- * - If plate finishes AFTER work hours end → released at NEXT workday start
+ * - If doneTime is during work hours of a working day → return doneTime (operator present)
+ * - If doneTime is BEFORE work hours of a working day → return workDayStart (operator arrives)
+ * - If doneTime is AFTER work hours OR on a non-working day → return next working day start
  * 
- * @param releaseTime - When the cycle ends + cleanup time
- * @param workDayStart - Start of current work day (e.g., 08:30)
- * @param endOfWorkHours - End of work day (e.g., 17:30)
- * @param settings - Factory settings for finding next work day
- * @returns Actual time when plate becomes available (when operator can clear it)
+ * @param doneTime - When the plate is physically done (cycleEnd + cleanupMinutes)
+ * @param settings - Factory settings with work schedule
+ * @returns Time when operator can clear the plate
+ */
+export function getNextOperatorTime(
+  doneTime: Date,
+  settings: FactorySettings
+): Date {
+  // Step 1: Get the schedule for the ACTUAL day the plate finished
+  const schedule = getDayScheduleForDate(doneTime, settings, []);
+  
+  // If it's not a working day → find next working day start
+  if (!schedule?.enabled) {
+    const nextWorkDay = advanceToNextWorkdayStart(doneTime, settings);
+    return nextWorkDay ?? doneTime;
+  }
+  
+  // Step 2: Calculate work hours for THAT specific day
+  const workDayStart = createDateWithTime(doneTime, schedule.startTime);
+  const endOfWorkHours = createDateWithTime(doneTime, schedule.endTime);
+  
+  // Step 3: Determine when operator can clear the plate
+  
+  // Case A: doneTime is during work hours → operator is present, can clear immediately
+  if (doneTime >= workDayStart && doneTime < endOfWorkHours) {
+    return doneTime;
+  }
+  
+  // Case B: doneTime is BEFORE work hours started (e.g., plate finished at 03:00)
+  // → operator arrives at workDayStart and clears it
+  if (doneTime < workDayStart) {
+    return workDayStart;
+  }
+  
+  // Case C: doneTime is AFTER work hours ended (e.g., 20:00)
+  // → wait for next working day's start
+  const nextWorkDay = advanceToNextWorkdayStart(doneTime, settings);
+  return nextWorkDay ?? doneTime;
+}
+
+// ============= DEPRECATED: Use getNextOperatorTime instead =============
+/**
+ * @deprecated Use getNextOperatorTime(doneTime, settings) instead.
+ * This function incorrectly relies on slot boundaries which may not match
+ * the actual day the plate finished.
+ * 
+ * Kept for backwards compatibility - now just forwards to getNextOperatorTime.
  */
 export function getActualPlateReleaseTime(
   releaseTime: Date,
@@ -288,19 +337,6 @@ export function getActualPlateReleaseTime(
   endOfWorkHours: Date,
   settings: FactorySettings
 ): Date {
-  // Case 1: Plate finished during work hours → operator is present, release immediately
-  if (releaseTime >= workDayStart && releaseTime < endOfWorkHours) {
-    return releaseTime;
-  }
-  
-  // Case 2: Plate finished BEFORE work hours started (e.g., 03:00)
-  // → operator arrives at workDayStart (08:30 same day) and clears it
-  if (releaseTime < workDayStart) {
-    return workDayStart;
-  }
-  
-  // Case 3: Plate finished AFTER work hours ended (e.g., 20:00 or weekend)
-  // → operator not present until next working day morning
-  const nextWorkDayStart = advanceToNextWorkdayStart(releaseTime, settings);
-  return nextWorkDayStart ?? releaseTime;
+  // Forward to new implementation - ignores workDayStart/endOfWorkHours params
+  return getNextOperatorTime(releaseTime, settings);
 }

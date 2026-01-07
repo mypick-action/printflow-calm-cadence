@@ -48,7 +48,7 @@ import {
   isWithinWorkWindow,
   canStartCycleAt,
   isNightTime,
-  getActualPlateReleaseTime,
+  getNextOperatorTime,  // NEW: Self-contained plate release calculator
   hoursBetween,
   PrinterTimeSlot as SchedulingSlot,
   PlateReleaseInfo,
@@ -1062,12 +1062,9 @@ function scheduleProjectOnPrinters(
       updateSlotBoundsForDay(slot, nextStart, settings);
       // Release plates at new workday start (operator arrives and clears finished plates)
       if (slot.platesInUse) {
-        slot.platesInUse = slot.platesInUse.filter(p => {
-          const actualRelease = getActualPlateReleaseTime(
-            p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
-          );
-          return actualRelease > slot.currentTime;
-        });
+        slot.platesInUse = slot.platesInUse.filter(p => 
+          getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+        );
       }
       heap.push(slot.currentTime.getTime(), slot);
       continue;
@@ -1081,15 +1078,9 @@ function scheduleProjectOnPrinters(
     // - During work hours: release if releaseTime passed
     // - Overnight/weekend plates: only release at workDayStart when operator arrives
     if (slot.platesInUse) {
-      slot.platesInUse = slot.platesInUse.filter(p => {
-        const actualRelease = getActualPlateReleaseTime(
-          p.releaseTime,
-          slot.workDayStart,
-          slot.endOfWorkHours,
-          settings
-        );
-        return actualRelease > slot.currentTime;
-      });
+      slot.platesInUse = slot.platesInUse.filter(p => 
+        getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+      );
     }
     
     const platesInUseCount = slot.platesInUse?.length ?? 0;
@@ -1098,20 +1089,16 @@ function scheduleProjectOnPrinters(
     if (platesAvailable <= 0) {
       if (isWithinWorkHoursNow && slot.platesInUse && slot.platesInUse.length > 0) {
         // Wait for nearest plate release during work hours
-        // Use actual release time (considers operator presence)
         const actualReleaseTimes = slot.platesInUse.map(p => 
-          getActualPlateReleaseTime(p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings).getTime()
+          getNextOperatorTime(p.releaseTime, settings).getTime()
         );
         const nearestRelease = Math.min(...actualReleaseTimes);
         if (nearestRelease < slot.endOfWorkHours.getTime()) {
           slot.currentTime = new Date(nearestRelease);
-          // Re-filter with actual release times
-          slot.platesInUse = slot.platesInUse.filter(p => {
-            const actualRelease = getActualPlateReleaseTime(
-              p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
-            );
-            return actualRelease > slot.currentTime;
-          });
+          // Re-filter plates
+          slot.platesInUse = slot.platesInUse.filter(p => 
+            getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+          );
           heap.push(slot.currentTime.getTime(), slot);
           continue;
         }
@@ -1146,13 +1133,10 @@ function scheduleProjectOnPrinters(
       if (!nextStart) continue;
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
-      // Release plates using actual release time (at new workday start, operator clears finished plates)
-      slot.platesInUse = slot.platesInUse.filter(p => {
-        const actualRelease = getActualPlateReleaseTime(
-          p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
-        );
-        return actualRelease > slot.currentTime;
-      });
+      // Release plates using getNextOperatorTime (self-contained, doesn't use slot bounds)
+      slot.platesInUse = slot.platesInUse.filter(p => 
+        getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+      );
       heap.push(slot.currentTime.getTime(), slot);
       continue;
     }
@@ -1197,14 +1181,11 @@ function scheduleProjectOnPrinters(
       
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
-      // Release plates at new workday start (operator arrives and clears finished plates)
+      // Release plates using getNextOperatorTime (self-contained, doesn't use slot bounds)
       if (slot.platesInUse) {
-        slot.platesInUse = slot.platesInUse.filter(p => {
-          const actualRelease = getActualPlateReleaseTime(
-            p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
-          );
-          return actualRelease > slot.currentTime;
-        });
+        slot.platesInUse = slot.platesInUse.filter(p => 
+          getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+        );
       }
       heap.push(slot.currentTime.getTime(), slot);
       continue;
@@ -1248,14 +1229,11 @@ function scheduleProjectOnPrinters(
       
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
-      // Release plates at new workday start (operator arrives and clears finished plates)
+      // Release plates using getNextOperatorTime (self-contained, doesn't use slot bounds)
       if (slot.platesInUse) {
-        slot.platesInUse = slot.platesInUse.filter(p => {
-          const actualRelease = getActualPlateReleaseTime(
-            p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
-          );
-          return actualRelease > slot.currentTime;
-        });
+        slot.platesInUse = slot.platesInUse.filter(p => 
+          getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+        );
       }
       heap.push(slot.currentTime.getTime(), slot);
       continue;
@@ -1303,14 +1281,11 @@ function scheduleProjectOnPrinters(
         
         slot.currentTime = nextStart;
         updateSlotBoundsForDay(slot, nextStart, settings);
-        // Release plates at new workday start (operator arrives and clears finished plates)
+        // Release plates using getNextOperatorTime (self-contained, doesn't use slot bounds)
         if (slot.platesInUse) {
-          slot.platesInUse = slot.platesInUse.filter(p => {
-            const actualRelease = getActualPlateReleaseTime(
-              p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
-            );
-            return actualRelease > slot.currentTime;
-          });
+          slot.platesInUse = slot.platesInUse.filter(p => 
+            getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+          );
         }
         heap.push(slot.currentTime.getTime(), slot);
         continue;
