@@ -2001,19 +2001,6 @@ const scheduleCyclesForDay = (
         // Check if this printer still has time available
         if (slot.currentTime >= slot.endOfDayTime) continue;
         
-        // ============= CRITICAL: Check if operator is present =============
-        // New cycles can only start when an operator is physically present
-        // to load the plate. This prevents scheduling on Friday/Saturday
-        // or outside work hours even with FULL_AUTOMATION enabled.
-        if (!isOperatorPresent(slot.currentTime, settings)) {
-          console.log('[Legacy] ⏭️ Skipping - no operator present:', {
-            printer: slot.printerName,
-            currentTime: slot.currentTime.toISOString(),
-            dayOfWeek: slot.currentTime.toLocaleDateString('en-US', { weekday: 'long' }),
-          });
-          continue; // Skip to next printer - no one to load new plate
-        }
-        
         // ============= PLATE CONSTRAINT CHECK =============
         // NEW MODEL: Plates recycle during work hours, but NOT outside
         // - Release plates that have finished recycling (during work hours only)
