@@ -25,9 +25,16 @@ import {
   Timer,
   TrendingUp,
   Truck,
-  Zap
+  Zap,
+  Info,
+  AlertCircle,
 } from 'lucide-react';
-import { getProducts, simulateQuote, QuoteCheckResult, getSpools } from '@/services/storage';
+import { getProducts, getSpools } from '@/services/storage';
+import { 
+  checkProposalFeasibility, 
+  ProposalFeasibilityResult,
+  RiskLevel 
+} from '@/services/proposalChecker';
 
 const availableColors = ['Black', 'White', 'Gray', 'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'Purple', 'Pink'];
 
@@ -37,18 +44,17 @@ interface Suggestion {
   textEn: string;
 }
 
-const getSuggestions = (result: QuoteCheckResult, language: string): Suggestion[] => {
-  if (result.canAccept) {
+const getSuggestions = (result: ProposalFeasibilityResult, language: string): Suggestion[] => {
+  if (result.feasible && result.riskLevel === 'low') {
     return [
       { icon: CheckCircle2, text: 'הכל מוכן - אפשר לאשר ללקוח!', textEn: 'All set - you can confirm with the customer!' }
     ];
   }
   
-  if (result.canAcceptWithAdjustment) {
+  if (result.feasible && (result.riskLevel === 'medium' || result.riskLevel === 'high')) {
     return [
-      { icon: Timer, text: 'הוסיפו שעות נוספות ביום או יומיים', textEn: 'Add overtime for a day or two' },
-      { icon: TrendingUp, text: 'הפחיתו יחידות למחזור לזמן אספקה מהיר יותר', textEn: 'Reduce units per cycle for faster delivery' },
-      { icon: Package, text: 'קנו גליל גדול יותר כדי למנוע עצירות', textEn: 'Buy a larger spool to avoid stops' },
+      { icon: Timer, text: 'שקלו להוסיף שעות נוספות', textEn: 'Consider adding overtime' },
+      { icon: TrendingUp, text: 'מומלץ לעקוב אחרי ההתקדמות מקרוב', textEn: 'Recommended to monitor progress closely' },
     ];
   }
   
@@ -57,6 +63,26 @@ const getSuggestions = (result: QuoteCheckResult, language: string): Suggestion[
     { icon: Calendar, text: 'נסו לנהל משא ומתן על דדליין מאוחר יותר', textEn: 'Try negotiating a later deadline' },
     { icon: Zap, text: 'הצעה: השתמשו ב-AMS כגיבוי לעבודה רציפה', textEn: 'Tip: Use AMS backup for continuous work' },
   ];
+};
+
+const getRiskLevelColor = (riskLevel: RiskLevel): string => {
+  switch (riskLevel) {
+    case 'low': return 'text-success';
+    case 'medium': return 'text-warning';
+    case 'high': return 'text-orange-500';
+    case 'critical': return 'text-error';
+    default: return 'text-muted-foreground';
+  }
+};
+
+const getRiskLevelBg = (riskLevel: RiskLevel): string => {
+  switch (riskLevel) {
+    case 'low': return 'bg-success/10 border-success/30';
+    case 'medium': return 'bg-warning/10 border-warning/30';
+    case 'high': return 'bg-orange-500/10 border-orange-500/30';
+    case 'critical': return 'bg-error/10 border-error/30';
+    default: return 'bg-muted';
+  }
 };
 
 export const QuoteCheckPage: React.FC = () => {
@@ -69,11 +95,19 @@ export const QuoteCheckPage: React.FC = () => {
   const [dueDate, setDueDate] = useState('');
   const [urgency, setUrgency] = useState<'normal' | 'urgent' | 'critical'>('normal');
   const [preferredColor, setPreferredColor] = useState('any');
-  const [result, setResult] = useState<QuoteCheckResult | null>(null);
+  const [result, setResult] = useState<ProposalFeasibilityResult | null>(null);
 
   const handleCheck = () => {
     if (!productId || !dueDate || quantity <= 0) return;
-    const checkResult = simulateQuote(productId, quantity, dueDate, urgency);
+    
+    const checkResult = checkProposalFeasibility({
+      productId,
+      quantity,
+      dueDate,
+      urgency,
+      preferredColor: preferredColor !== 'any' ? preferredColor : undefined,
+    });
+    
     setResult(checkResult);
   };
 
@@ -88,40 +122,47 @@ export const QuoteCheckPage: React.FC = () => {
 
   const getResultIcon = () => {
     if (!result) return null;
-    if (result.canAccept) return <CheckCircle2 className="w-14 h-14 text-success" />;
-    if (result.canAcceptWithAdjustment) return <AlertTriangle className="w-14 h-14 text-warning" />;
+    if (result.feasible && result.riskLevel === 'low') {
+      return <CheckCircle2 className="w-14 h-14 text-success" />;
+    }
+    if (result.feasible) {
+      return <AlertTriangle className="w-14 h-14 text-warning" />;
+    }
     return <XCircle className="w-14 h-14 text-error" />;
-  };
-
-  const getResultBgClass = () => {
-    if (!result) return '';
-    if (result.canAccept) return 'bg-success/10 border-success/30';
-    if (result.canAcceptWithAdjustment) return 'bg-warning/10 border-warning/30';
-    return 'bg-error/10 border-error/30';
   };
 
   const getResultTitle = () => {
     if (!result) return '';
-    if (result.canAccept) {
+    
+    if (result.feasible && result.riskLevel === 'low') {
       return language === 'he' ? '✓ אפשר לקבל!' : '✓ Can Accept!';
     }
-    if (result.canAcceptWithAdjustment) {
-      return language === 'he' ? 'אפשר עם התאמות קטנות' : 'Possible with Small Adjustments';
+    if (result.feasible) {
+      return language === 'he' ? 'אפשר עם סיכון' : 'Possible with Risk';
     }
-    return language === 'he' ? 'צריך מיקור חוץ' : 'Requires Outsourcing';
+    if (result.riskLevel === 'high') {
+      return language === 'he' ? 'אפשרי עם התאמות' : 'Possible with Adjustments';
+    }
+    return language === 'he' ? 'לא מומלץ' : 'Not Recommended';
   };
 
   const getResultMessage = () => {
     if (!result) return '';
-    if (result.canAccept) {
+    
+    if (result.feasible && result.riskLevel === 'low') {
       return language === 'he' 
         ? 'יש לכם מספיק קיבולת לסיים בזמן. קדימה!' 
         : 'You have enough capacity to finish on time. Go for it!';
     }
-    if (result.canAcceptWithAdjustment) {
+    if (result.feasible) {
       return language === 'he'
-        ? 'זה אפשרי, אבל תצטרכו לעשות קצת התאמות. הנה כמה רעיונות:'
-        : "It's doable, but you'll need some adjustments. Here are some ideas:";
+        ? 'אפשרי, אבל הקיבולת צפופה. מומלץ לעקוב מקרוב.'
+        : "It's doable, but capacity is tight. Monitor closely.";
+    }
+    if (result.affectedProjects.some(p => p.wouldMissDeadline)) {
+      return language === 'he'
+        ? 'הוספת ההזמנה עלולה לגרום לפרויקטים קיימים לפספס דדליין.'
+        : 'Adding this order may cause existing projects to miss their deadlines.';
     }
     return language === 'he'
       ? 'ההזמנה גדולה מהקיבולת הזמינה. הנה מה שאפשר לעשות:'
@@ -273,8 +314,18 @@ export const QuoteCheckPage: React.FC = () => {
 
       {/* Result */}
       {result && (
-        <Card variant="elevated" className={`border-2 ${getResultBgClass()} animate-fade-in`}>
+        <Card variant="elevated" className={`border-2 ${getRiskLevelBg(result.riskLevel)} animate-fade-in`}>
           <CardContent className="pt-6 space-y-6">
+            {/* Estimation Banner */}
+            <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border border-muted">
+              <Info className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                {language === 'he' 
+                  ? 'החישוב הוא הערכה ראשונית, לא סימולציה מלאה. התוצאות משמרניות (עדיף להזהיר יותר מדי מאשר פחות מדי).'
+                  : 'This is a preliminary estimate, not a full simulation. Results are conservative (prefer over-warning to under-warning).'}
+              </p>
+            </div>
+
             {/* Result Header */}
             <div className="flex flex-col items-center text-center gap-4">
               {getResultIcon()}
@@ -287,18 +338,87 @@ export const QuoteCheckPage: React.FC = () => {
             {/* Stats */}
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 bg-background rounded-xl text-center">
-                <div className="text-3xl font-bold text-foreground">{result.requiredDays}</div>
+                <div className="text-3xl font-bold text-foreground">{result.metrics.requiredDays}</div>
                 <div className="text-sm text-muted-foreground">
                   {language === 'he' ? 'ימים לייצור' : 'Days to Produce'}
                 </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  ({language === 'he' ? 'הערכה' : 'Estimated'})
+                </div>
               </div>
               <div className="p-4 bg-background rounded-xl text-center">
-                <div className="text-3xl font-bold text-foreground">{result.availableCapacityUnits}</div>
+                <div className="text-3xl font-bold text-foreground">{result.metrics.availableCapacityUnits}</div>
                 <div className="text-sm text-muted-foreground">
                   {language === 'he' ? 'יחידות פנויות' : 'Available Capacity'}
                 </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  ({language === 'he' ? 'הערכה' : 'Estimated'})
+                </div>
               </div>
             </div>
+
+            {/* Capacity Utilization */}
+            <div className="p-4 bg-background rounded-xl">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-muted-foreground">
+                  {language === 'he' ? 'ניצול קיבולת (הערכה)' : 'Capacity Utilization (Est.)'}
+                </span>
+                <span className={`text-sm font-medium ${getRiskLevelColor(result.riskLevel)}`}>
+                  {Math.round(result.metrics.capacityUtilization * 100)}%
+                </span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all ${
+                    result.metrics.capacityUtilization < 0.6 ? 'bg-success' :
+                    result.metrics.capacityUtilization < 0.85 ? 'bg-warning' : 'bg-error'
+                  }`}
+                  style={{ width: `${Math.min(100, result.metrics.capacityUtilization * 100)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Affected Projects */}
+            {result.affectedProjects.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <AlertCircle className="w-4 h-4 text-warning" />
+                  {language === 'he' ? 'פרויקטים שעלולים להיפגע' : 'Potentially Affected Projects'}
+                  <span className="text-xs text-muted-foreground">
+                    ({language === 'he' ? 'הערכה' : 'Estimated'})
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {result.affectedProjects.map((project) => (
+                    <div 
+                      key={project.projectId}
+                      className={`flex items-center justify-between p-3 rounded-lg ${
+                        project.wouldMissDeadline ? 'bg-error/10' : 'bg-warning/10'
+                      }`}
+                    >
+                      <div>
+                        <span className="font-medium text-foreground">{project.projectName}</span>
+                        <p className="text-xs text-muted-foreground">
+                          {language === 'he' ? project.reasonHe : project.reason}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm">
+                          <span className="text-muted-foreground">{project.currentSlackHours}h</span>
+                          <span className="mx-1">→</span>
+                          <span className={project.estimatedSlackAfter < 0 ? 'text-error font-bold' : 'text-warning'}>
+                            {project.estimatedSlackAfter}h
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          ({language === 'he' ? 'הערכה' : 'Est.'})
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Friendly Suggestions */}
             <div className="space-y-3">
@@ -326,13 +446,34 @@ export const QuoteCheckPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Notes */}
+            {result.notes.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-muted">
+                {result.notes.map((note, index) => (
+                  <div 
+                    key={index}
+                    className={`flex items-start gap-2 text-xs p-2 rounded ${
+                      note.type === 'error' ? 'bg-error/10 text-error' :
+                      note.type === 'warning' ? 'bg-warning/10 text-warning' :
+                      'bg-muted/50 text-muted-foreground'
+                    }`}
+                  >
+                    {note.type === 'error' ? <XCircle className="w-3 h-3 mt-0.5 flex-shrink-0" /> :
+                     note.type === 'warning' ? <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" /> :
+                     <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />}
+                    <span>{language === 'he' ? note.textHe : note.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex gap-3 pt-2">
               <Button variant="outline" onClick={handleReset} className="flex-1 gap-2">
                 <RotateCcw className="w-4 h-4" />
                 {language === 'he' ? 'בדיקה חדשה' : 'New Check'}
               </Button>
-              {(result.canAccept || result.canAcceptWithAdjustment) && (
+              {result.feasible && (
                 <Button className="flex-1">
                   {language === 'he' ? 'צור פרויקט' : 'Create Project'}
                 </Button>
