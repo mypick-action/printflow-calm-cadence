@@ -377,8 +377,9 @@ export const selectOptimalPreset = (
   
   // Filter presets by constraints
   const validPresets = presets.filter(p => {
-    // Night slot: only allow if preset is marked as safe for night
-    if (isNightSlot && !p.allowedForNightCycle) return false;
+    // Night slot: only block if preset EXPLICITLY has allowedForNightCycle=false
+    // Treat undefined/null as true (backward compatibility - allow by default)
+    if (isNightSlot && p.allowedForNightCycle === false) return false;
     
     // Check if cycle fits in available time
     if (p.cycleHours > availableHours) return false;
@@ -2479,8 +2480,9 @@ const scheduleCyclesForDay = (
             }
             
             // Level 3: Check preset allows night operation
-            // Note: We log the RAW value (true/false/null/undefined) for debugging
-            if (!activePreset.allowedForNightCycle) {
+            // Treat undefined/null as true (backward compatibility - allow by default)
+            // Only block if EXPLICITLY set to false
+            if (activePreset.allowedForNightCycle === false) {
               skipStats.log({
                 code: 'PRESET_NIGHT_BLOCK',
                 dateString,
@@ -2573,7 +2575,7 @@ const scheduleCyclesForDay = (
             if (spansNight && (
               settings.afterHoursBehavior !== 'FULL_AUTOMATION' || 
               !printer?.canStartNewCyclesAfterHours ||
-              !activePreset.allowedForNightCycle
+              activePreset.allowedForNightCycle === false  // Only block if explicitly false
             )) {
               skipStats.log({
                 code: 'CYCLE_SPANS_NIGHT_NOT_ALLOWED',
