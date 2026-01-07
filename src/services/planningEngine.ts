@@ -48,6 +48,7 @@ import {
   isWithinWorkWindow,
   canStartCycleAt,
   isNightTime,
+  getActualPlateReleaseTime,
   hoursBetween,
   PrinterTimeSlot as SchedulingSlot,
   PlateReleaseInfo,
@@ -1059,18 +1060,36 @@ function scheduleProjectOnPrinters(
       
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
+      // Release plates at new workday start (operator arrives and clears finished plates)
+      if (slot.platesInUse) {
+        slot.platesInUse = slot.platesInUse.filter(p => {
+          const actualRelease = getActualPlateReleaseTime(
+            p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
+          );
+          return actualRelease > slot.currentTime;
+        });
+      }
       heap.push(slot.currentTime.getTime(), slot);
       continue;
     }
     
     // ============= PLATE CONSTRAINT CHECK (V2) =============
-    // Check plate availability - same logic as Legacy
+    // Check plate availability - uses actual release time considering operator presence
     const isWithinWorkHoursNow = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
     
-    // During work hours: release plates whose cleanup time has passed
-    // Outside work hours: plates are NEVER released (no operator to clean)
-    if (slot.platesInUse && isWithinWorkHoursNow) {
-      slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+    // Release plates based on ACTUAL availability (when operator can clear them)
+    // - During work hours: release if releaseTime passed
+    // - Overnight/weekend plates: only release at workDayStart when operator arrives
+    if (slot.platesInUse) {
+      slot.platesInUse = slot.platesInUse.filter(p => {
+        const actualRelease = getActualPlateReleaseTime(
+          p.releaseTime,
+          slot.workDayStart,
+          slot.endOfWorkHours,
+          settings
+        );
+        return actualRelease > slot.currentTime;
+      });
     }
     
     const platesInUseCount = slot.platesInUse?.length ?? 0;
@@ -1079,10 +1098,20 @@ function scheduleProjectOnPrinters(
     if (platesAvailable <= 0) {
       if (isWithinWorkHoursNow && slot.platesInUse && slot.platesInUse.length > 0) {
         // Wait for nearest plate release during work hours
-        const nearestRelease = Math.min(...slot.platesInUse.map(p => p.releaseTime.getTime()));
+        // Use actual release time (considers operator presence)
+        const actualReleaseTimes = slot.platesInUse.map(p => 
+          getActualPlateReleaseTime(p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings).getTime()
+        );
+        const nearestRelease = Math.min(...actualReleaseTimes);
         if (nearestRelease < slot.endOfWorkHours.getTime()) {
           slot.currentTime = new Date(nearestRelease);
-          slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+          // Re-filter with actual release times
+          slot.platesInUse = slot.platesInUse.filter(p => {
+            const actualRelease = getActualPlateReleaseTime(
+              p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
+            );
+            return actualRelease > slot.currentTime;
+          });
           heap.push(slot.currentTime.getTime(), slot);
           continue;
         }
@@ -1117,8 +1146,13 @@ function scheduleProjectOnPrinters(
       if (!nextStart) continue;
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
-      // FIX #1: Do NOT reset plates - filter by releaseTime at new day start
-      slot.platesInUse = slot.platesInUse.filter(p => p.releaseTime > slot.currentTime);
+      // Release plates using actual release time (at new workday start, operator clears finished plates)
+      slot.platesInUse = slot.platesInUse.filter(p => {
+        const actualRelease = getActualPlateReleaseTime(
+          p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
+        );
+        return actualRelease > slot.currentTime;
+      });
       heap.push(slot.currentTime.getTime(), slot);
       continue;
     }
@@ -1163,6 +1197,15 @@ function scheduleProjectOnPrinters(
       
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
+      // Release plates at new workday start (operator arrives and clears finished plates)
+      if (slot.platesInUse) {
+        slot.platesInUse = slot.platesInUse.filter(p => {
+          const actualRelease = getActualPlateReleaseTime(
+            p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
+          );
+          return actualRelease > slot.currentTime;
+        });
+      }
       heap.push(slot.currentTime.getTime(), slot);
       continue;
     }
@@ -1205,6 +1248,15 @@ function scheduleProjectOnPrinters(
       
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
+      // Release plates at new workday start (operator arrives and clears finished plates)
+      if (slot.platesInUse) {
+        slot.platesInUse = slot.platesInUse.filter(p => {
+          const actualRelease = getActualPlateReleaseTime(
+            p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
+          );
+          return actualRelease > slot.currentTime;
+        });
+      }
       heap.push(slot.currentTime.getTime(), slot);
       continue;
     }
@@ -1251,6 +1303,15 @@ function scheduleProjectOnPrinters(
         
         slot.currentTime = nextStart;
         updateSlotBoundsForDay(slot, nextStart, settings);
+        // Release plates at new workday start (operator arrives and clears finished plates)
+        if (slot.platesInUse) {
+          slot.platesInUse = slot.platesInUse.filter(p => {
+            const actualRelease = getActualPlateReleaseTime(
+              p.releaseTime, slot.workDayStart, slot.endOfWorkHours, settings
+            );
+            return actualRelease > slot.currentTime;
+          });
+        }
         heap.push(slot.currentTime.getTime(), slot);
         continue;
       }

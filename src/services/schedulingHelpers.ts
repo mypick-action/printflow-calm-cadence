@@ -265,3 +265,42 @@ export function isNightTime(
 export function hoursBetween(start: Date, end: Date): number {
   return (end.getTime() - start.getTime()) / (1000 * 60 * 60);
 }
+
+// ============= CRITICAL: Actual plate release time =============
+/**
+ * Determines when a plate actually becomes available.
+ * Plates can ONLY be cleared when an operator is present (during work hours).
+ * 
+ * Rules:
+ * - If plate finishes during work hours (08:30-17:30) → released at releaseTime
+ * - If plate finishes BEFORE work hours start → released at workDayStart (operator arrives)
+ * - If plate finishes AFTER work hours end → released at NEXT workday start
+ * 
+ * @param releaseTime - When the cycle ends + cleanup time
+ * @param workDayStart - Start of current work day (e.g., 08:30)
+ * @param endOfWorkHours - End of work day (e.g., 17:30)
+ * @param settings - Factory settings for finding next work day
+ * @returns Actual time when plate becomes available (when operator can clear it)
+ */
+export function getActualPlateReleaseTime(
+  releaseTime: Date,
+  workDayStart: Date,
+  endOfWorkHours: Date,
+  settings: FactorySettings
+): Date {
+  // Case 1: Plate finished during work hours → operator is present, release immediately
+  if (releaseTime >= workDayStart && releaseTime < endOfWorkHours) {
+    return releaseTime;
+  }
+  
+  // Case 2: Plate finished BEFORE work hours started (e.g., 03:00)
+  // → operator arrives at workDayStart (08:30 same day) and clears it
+  if (releaseTime < workDayStart) {
+    return workDayStart;
+  }
+  
+  // Case 3: Plate finished AFTER work hours ended (e.g., 20:00 or weekend)
+  // → operator not present until next working day morning
+  const nextWorkDayStart = advanceToNextWorkdayStart(releaseTime, settings);
+  return nextWorkDayStart ?? releaseTime;
+}
