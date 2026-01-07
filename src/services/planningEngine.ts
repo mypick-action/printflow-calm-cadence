@@ -2192,6 +2192,15 @@ const scheduleCyclesForDay = (
         }
         
         // Find highest priority project that can be scheduled on THIS printer
+        console.log('[TRACE] Enter project loop', {
+          printer: slot.printerName,
+          printerId: slot.printerId.slice(0, 8),
+          slotCurrentTime: slot.currentTime.toISOString(),
+          slotEndOfDayTime: slot.endOfDayTime.toISOString(),
+          workingStatesCount: workingStates.length,
+          statesWithRemaining: workingStates.filter(s => s.remainingUnits > 0).length,
+        });
+        
         for (const state of workingStates) {
           if (state.remainingUnits <= 0) continue;
           
