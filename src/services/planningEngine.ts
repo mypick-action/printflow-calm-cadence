@@ -1695,6 +1695,15 @@ const scheduleCyclesForDay = (
       const nextWorkDayStart = findNextWorkDayStart(date, settings, 7);
       // Use next day start OR 24h from work end (whichever is earlier/defined)
       dayEnd = nextWorkDayStart ?? createDateWithTime(addDays(date, 1), schedule.startTime);
+      
+      // 🔍 DIAGNOSTIC: Log FULL_AUTOMATION dayEnd calculation
+      console.log('[FULL_AUTOMATION] dayEnd calculation:', {
+        dateString: formatDateString(date),
+        dayEnd: dayEnd.toISOString(),
+        nextWorkDayStart: nextWorkDayStart?.toISOString() ?? 'null',
+        endOfRegularWorkday: endOfRegularWorkday.toISOString(),
+        planningStartTime: planningStartTime?.toISOString() ?? 'null',
+      });
     } else {
       dayEnd = endOfRegularWorkday;
     }
@@ -1823,6 +1832,19 @@ const scheduleCyclesForDay = (
     const printerEndOfDayTime = endOfDayTimeSource === 'nextWorkdayStart'
       ? new Date(dayEnd)
       : new Date(endOfRegularWorkday);
+    
+    // 🔍 DIAGNOSTIC: Log per-printer endOfDayTime calculation
+    console.log('[PRINTER_SLOT] endOfDayTime:', {
+      printer: p.name,
+      printerId: p.id.slice(0, 8),
+      endOfDayTimeSource,
+      printerEndOfDayTime: printerEndOfDayTime.toISOString(),
+      dayEnd: dayEnd.toISOString(),
+      endOfRegularWorkday: endOfRegularWorkday.toISOString(),
+      startTime: startTime.toISOString(),
+      canStartNewCyclesAfterHours: p.canStartNewCyclesAfterHours,
+      hasTimeWindow: startTime < printerEndOfDayTime,
+    });
     
     return {
       printerId: p.id,
@@ -2133,12 +2155,48 @@ const scheduleCyclesForDay = (
     
     // 🔍 TRACE: Check if all slots have no time window before entering loop
     const noWindowCount = printerSlots.filter(s => s.currentTime >= s.endOfDayTime).length;
-    if (noWindowCount === printerSlots.length) {
+    if (noWindowCount === printerSlots.length && printerSlots.length > 0) {
       console.log('[SKIP] ALL_SLOTS_NO_WINDOW', {
         dateString,
         noWindowCount,
         totalSlots: printerSlots.length,
+        afterHoursBehavior: settings.afterHoursBehavior,
+        planningStartTime: planningStartTime?.toISOString(),
+        slots: printerSlots.map(s => ({
+          printer: s.printerName,
+          currentTime: s.currentTime.toISOString(),
+          endOfDayTime: s.endOfDayTime.toISOString(),
+          endOfDayTimeSource: s.endOfDayTimeSource,
+          canStartAfterHours: s.canStartNewCyclesAfterHours,
+        })),
       });
+      
+      // ============= FIX: Skip this day if all slots exhausted =============
+      // Return empty plan for this day - the calling loop will continue to next day
+      // This prevents the while loop from spinning with no progress
+      return {
+        dayPlan: {
+          date,
+          dateString,
+          isWorkday: schedule.enabled,
+          workStart: schedule.startTime,
+          workEnd: schedule.endTime,
+          printerPlans: printers.map(p => ({
+            printerId: p.id,
+            printerName: p.name,
+            cycles: [],
+            totalUnits: 0,
+            totalHours: 0,
+            capacityUsedPercent: 0,
+          })),
+          totalUnits: 0,
+          totalCycles: 0,
+          unusedCapacityHours: 0,
+        },
+        updatedProjectStates: projectStates,
+        updatedMaterialTracker: materialTracker,
+        updatedSpoolAssignments: spoolAssignmentTracker,
+      };
     }
     
     while (moreToSchedule && iterationCount < maxIterations) {
