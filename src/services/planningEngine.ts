@@ -59,6 +59,89 @@ import {
   PrinterScoreDetails,
 } from './planningDecisionLog';
 
+// ============= SKIP LOGGER FOR DEBUGGING =============
+interface SkipInfo {
+  code: string;
+  dateString: string;
+  printerId: string;
+  printerName: string;
+  projectId: string;
+  projectName: string;
+  slotCurrentTime: string;
+  slotEndOfDayTime: string;
+  slotEndOfWorkHours: string;
+  isNightSlot: boolean;
+  shouldPlanAutonomous: boolean;
+  endOfDayTimeSource: string;
+  extra?: Record<string, unknown>;
+}
+
+// Accumulator for skip statistics
+const skipStats = {
+  counts: new Map<string, number>(),
+  samples: new Map<string, SkipInfo[]>(),
+  reset() {
+    this.counts.clear();
+    this.samples.clear();
+  },
+  log(info: SkipInfo) {
+    const count = (this.counts.get(info.code) || 0) + 1;
+    this.counts.set(info.code, count);
+    
+    // Keep up to 3 samples per code
+    const samples = this.samples.get(info.code) || [];
+    if (samples.length < 3) {
+      samples.push(info);
+      this.samples.set(info.code, samples);
+    }
+    
+    // Log individual skip (first 5 per code only to reduce noise)
+    if (count <= 5) {
+      console.log(`[SKIP] ${info.code}`, {
+        date: info.dateString,
+        printer: `${info.printerName} (${info.printerId.slice(0, 8)})`,
+        project: `${info.projectName} (${info.projectId.slice(0, 8)})`,
+        slotCurrentTime: info.slotCurrentTime,
+        slotEndOfDayTime: info.slotEndOfDayTime,
+        slotEndOfWorkHours: info.slotEndOfWorkHours,
+        isNightSlot: info.isNightSlot,
+        shouldPlanAutonomous: info.shouldPlanAutonomous,
+        endOfDayTimeSource: info.endOfDayTimeSource,
+        ...info.extra,
+      });
+    }
+  },
+  printSummary(dateString: string, totalScheduled: number, projectsRemaining: number) {
+    const sortedCounts = Array.from(this.counts.entries())
+      .sort((a, b) => b[1] - a[1]);
+    
+    console.log('[SKIP] ═══════════════════════════════════════════════════════');
+    console.log('[SKIP] SUMMARY', {
+      date: dateString,
+      totalSkips: Array.from(this.counts.values()).reduce((a: number, b: number) => a + b, 0),
+      totalCyclesScheduled: totalScheduled,
+      projectsRemaining,
+    });
+    console.log('[SKIP] ───────────────────────────────────────────────────────');
+    console.log('[SKIP] COUNTS BY CODE:');
+    sortedCounts.forEach(([code, count]) => {
+      console.log(`[SKIP]   ${code}: ${count}`);
+    });
+    console.log('[SKIP] ───────────────────────────────────────────────────────');
+    console.log('[SKIP] SAMPLES (up to 3 per code):');
+    sortedCounts.forEach(([code]) => {
+      const samples = this.samples.get(code) || [];
+      console.log(`[SKIP] ${code}:`, samples.map(s => ({
+        printer: s.printerName,
+        project: s.projectName,
+        isNightSlot: s.isNightSlot,
+        ...s.extra,
+      })));
+    });
+    console.log('[SKIP] ═══════════════════════════════════════════════════════');
+  }
+};
+
 // ============= TYPES =============
 
 // Type for advance reason tracking callback
@@ -2022,6 +2105,9 @@ const scheduleCyclesForDay = (
       });
     };
     
+    // Reset skip stats at start of scheduling
+    skipStats.reset();
+    
     while (moreToSchedule && iterationCount < maxIterations) {
       iterationCount++;
       moreToSchedule = false;
@@ -2140,7 +2226,26 @@ const scheduleCyclesForDay = (
           );
           
           if (!presetResult) {
-            console.log('[Planning] No valid preset found for project:', state.project.name);
+            skipStats.log({
+              code: 'NO_PRESET',
+              dateString,
+              printerId: slot.printerId,
+              printerName: slot.printerName,
+              projectId: state.project.id,
+              projectName: state.project.name,
+              slotCurrentTime: slot.currentTime.toISOString(),
+              slotEndOfDayTime: slot.endOfDayTime.toISOString(),
+              slotEndOfWorkHours: slot.endOfWorkHours.toISOString(),
+              isNightSlot: slot.currentTime >= slot.endOfWorkHours,
+              shouldPlanAutonomous: isAutonomousDay,
+              endOfDayTimeSource: slot.endOfDayTimeSource ?? 'unknown',
+              extra: {
+                productId: state.product?.id,
+                productName: state.product?.name,
+                presetsCount: state.product?.platePresets?.length ?? 0,
+                availableSlotHours,
+              },
+            });
             continue;
           }
           
@@ -2153,6 +2258,25 @@ const scheduleCyclesForDay = (
           
           // Validate cycle fits in remaining slot
           if (cycleEndTime > slot.endOfDayTime) {
+            skipStats.log({
+              code: 'CYCLE_EXCEEDS_SLOT',
+              dateString,
+              printerId: slot.printerId,
+              printerName: slot.printerName,
+              projectId: state.project.id,
+              projectName: state.project.name,
+              slotCurrentTime: slot.currentTime.toISOString(),
+              slotEndOfDayTime: slot.endOfDayTime.toISOString(),
+              slotEndOfWorkHours: slot.endOfWorkHours.toISOString(),
+              isNightSlot: slot.currentTime >= slot.endOfWorkHours,
+              shouldPlanAutonomous: isAutonomousDay,
+              endOfDayTimeSource: slot.endOfDayTimeSource ?? 'unknown',
+              extra: {
+                cycleHours,
+                cycleEndTime: cycleEndTime.toISOString(),
+                availableHours: (slot.endOfDayTime.getTime() - slot.currentTime.getTime()) / 3600000,
+              },
+            });
             continue;
           }
           
@@ -2165,7 +2289,21 @@ const scheduleCyclesForDay = (
           if (isNightSlot) {
             // Level 1: Check factory allows automation
             if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
-              // Log block reason
+              skipStats.log({
+                code: 'FACTORY_AFTER_HOURS_BLOCK',
+                dateString,
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                projectId: state.project.id,
+                projectName: state.project.name,
+                slotCurrentTime: slot.currentTime.toISOString(),
+                slotEndOfDayTime: slot.endOfDayTime.toISOString(),
+                slotEndOfWorkHours: slot.endOfWorkHours.toISOString(),
+                isNightSlot: true,
+                shouldPlanAutonomous: isAutonomousDay,
+                endOfDayTimeSource: slot.endOfDayTimeSource ?? 'unknown',
+                extra: { factoryAfterHoursBehavior: settings.afterHoursBehavior },
+              });
               logCycleBlock({
                 reason: 'after_hours_policy',
                 projectId: state.project.id,
@@ -2183,6 +2321,21 @@ const scheduleCyclesForDay = (
             
             // Level 2: Check printer allows night starts
             if (!printer?.canStartNewCyclesAfterHours) {
+              skipStats.log({
+                code: 'PRINTER_AFTER_HOURS_BLOCK',
+                dateString,
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                projectId: state.project.id,
+                projectName: state.project.name,
+                slotCurrentTime: slot.currentTime.toISOString(),
+                slotEndOfDayTime: slot.endOfDayTime.toISOString(),
+                slotEndOfWorkHours: slot.endOfWorkHours.toISOString(),
+                isNightSlot: true,
+                shouldPlanAutonomous: isAutonomousDay,
+                endOfDayTimeSource: slot.endOfDayTimeSource ?? 'unknown',
+                extra: { printerCanStartAfterHours: printer?.canStartNewCyclesAfterHours },
+              });
               logCycleBlock({
                 reason: 'after_hours_policy',
                 projectId: state.project.id,
@@ -2199,7 +2352,32 @@ const scheduleCyclesForDay = (
             }
             
             // Level 3: Check preset allows night operation
+            // Note: We log the RAW value (true/false/null/undefined) for debugging
             if (!activePreset.allowedForNightCycle) {
+              skipStats.log({
+                code: 'PRESET_NIGHT_BLOCK',
+                dateString,
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                projectId: state.project.id,
+                projectName: state.project.name,
+                slotCurrentTime: slot.currentTime.toISOString(),
+                slotEndOfDayTime: slot.endOfDayTime.toISOString(),
+                slotEndOfWorkHours: slot.endOfWorkHours.toISOString(),
+                isNightSlot: true,
+                shouldPlanAutonomous: isAutonomousDay,
+                endOfDayTimeSource: slot.endOfDayTimeSource ?? 'unknown',
+                extra: {
+                  presetId: activePreset.id,
+                  presetName: activePreset.name,
+                  presetAllowedForNightCycle: activePreset.allowedForNightCycle,
+                  presetAllowedForNightCycleType: typeof activePreset.allowedForNightCycle,
+                  // Show raw value for clear debugging
+                  rawValue: activePreset.allowedForNightCycle === null ? 'null' 
+                    : activePreset.allowedForNightCycle === undefined ? 'undefined'
+                    : activePreset.allowedForNightCycle,
+                },
+              });
               logCycleBlock({
                 reason: 'no_night_preset',
                 projectId: state.project.id,
@@ -2208,7 +2386,7 @@ const scheduleCyclesForDay = (
                 printerName: slot.printerName,
                 presetId: activePreset.id,
                 presetName: activePreset.name,
-                details: `Preset "${activePreset.name}" has allowedForNightCycle=false`,
+                details: `Preset "${activePreset.name}" has allowedForNightCycle=${activePreset.allowedForNightCycle} (type: ${typeof activePreset.allowedForNightCycle})`,
                 scheduledDate: dateString,
                 cycleHours: cycleHours,
               });
@@ -2222,6 +2400,25 @@ const scheduleCyclesForDay = (
               const projectColorKey = colorKey;
               
               if (slotColorKey !== projectColorKey) {
+                skipStats.log({
+                  code: 'COLOR_LOCK_NIGHT',
+                  dateString,
+                  printerId: slot.printerId,
+                  printerName: slot.printerName,
+                  projectId: state.project.id,
+                  projectName: state.project.name,
+                  slotCurrentTime: slot.currentTime.toISOString(),
+                  slotEndOfDayTime: slot.endOfDayTime.toISOString(),
+                  slotEndOfWorkHours: slot.endOfWorkHours.toISOString(),
+                  isNightSlot: true,
+                  shouldPlanAutonomous: isAutonomousDay,
+                  endOfDayTimeSource: slot.endOfDayTimeSource ?? 'unknown',
+                  extra: {
+                    slotColor: slot.lastScheduledColor,
+                    projectColor: state.project.color,
+                    hasAMS: slot.hasAMS,
+                  },
+                });
                 logCycleBlock({
                   reason: 'color_lock_night',
                   projectId: state.project.id,
@@ -2244,10 +2441,36 @@ const scheduleCyclesForDay = (
           // to ensure the cycle meets autonomous operation requirements
           if (!isNightSlot && cycleEndTime > slot.endOfWorkHours) {
             // Cycle starts during work but ends after - check if it can run autonomously
-            if (settings.afterHoursBehavior !== 'FULL_AUTOMATION' || 
-                !printer?.canStartNewCyclesAfterHours ||
-                !activePreset.allowedForNightCycle) {
-              // Log block reason
+            // Only skip if this cycle actually spans into night AND fails the checks
+            const spansNight = cycleEndTime > slot.endOfWorkHours;
+            if (spansNight && (
+              settings.afterHoursBehavior !== 'FULL_AUTOMATION' || 
+              !printer?.canStartNewCyclesAfterHours ||
+              !activePreset.allowedForNightCycle
+            )) {
+              skipStats.log({
+                code: 'CYCLE_SPANS_NIGHT_NOT_ALLOWED',
+                dateString,
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                projectId: state.project.id,
+                projectName: state.project.name,
+                slotCurrentTime: slot.currentTime.toISOString(),
+                slotEndOfDayTime: slot.endOfDayTime.toISOString(),
+                slotEndOfWorkHours: slot.endOfWorkHours.toISOString(),
+                isNightSlot: false,
+                shouldPlanAutonomous: isAutonomousDay,
+                endOfDayTimeSource: slot.endOfDayTimeSource ?? 'unknown',
+                extra: {
+                  factoryAfterHours: settings.afterHoursBehavior,
+                  printerNightAllowed: printer?.canStartNewCyclesAfterHours,
+                  presetAllowedForNightCycle: activePreset.allowedForNightCycle,
+                  presetAllowedForNightCycleType: typeof activePreset.allowedForNightCycle,
+                  cycleEndTime: cycleEndTime.toISOString(),
+                  endOfWorkHours: slot.endOfWorkHours.toISOString(),
+                  spansNight: true,
+                },
+              });
               const blockReason = !activePreset.allowedForNightCycle 
                 ? 'no_night_preset' 
                 : 'after_hours_policy';
@@ -2510,6 +2733,11 @@ const scheduleCyclesForDay = (
     }
   }
   
+  // ============= SKIP STATS SUMMARY =============
+  const totalCyclesScheduled = printerSlots.reduce((sum, s) => sum + s.cyclesScheduled.length, 0);
+  const projectsRemaining = workingStates.filter(s => s.remainingUnits > 0).length;
+  skipStats.printSummary(dateString, totalCyclesScheduled, projectsRemaining);
+  
   // ============= DEBUG: Night scheduling diagnostic =============
   if (settings.afterHoursBehavior === 'FULL_AUTOMATION') {
     const statesWithRemaining = workingStates.filter(s => s.remainingUnits > 0);
@@ -2531,7 +2759,7 @@ const scheduleCyclesForDay = (
         remaining: s.remainingUnits,
         color: s.project.color,
       })),
-      totalCyclesScheduled: printerSlots.reduce((sum, s) => sum + s.cyclesScheduled.length, 0),
+      totalCyclesScheduled,
     });
   }
   
