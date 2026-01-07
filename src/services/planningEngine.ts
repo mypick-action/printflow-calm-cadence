@@ -2131,8 +2131,27 @@ const scheduleCyclesForDay = (
       // Minimum Printer Strategy: try to schedule on FIRST available printer only
       // Only move to next printer if current one is exhausted for this cycle
       for (const slot of printerSlots) {
+        // 🔍 TRACE: Start of slot iteration
+        console.log('[TRACE] SLOT_START', {
+          iteration: iterationCount,
+          printer: slot.printerName,
+          currentTime: slot.currentTime.toISOString(),
+          endOfDayTime: slot.endOfDayTime.toISOString(),
+          endOfDayTimeSource: slot.endOfDayTimeSource,
+          platesInUse: slot.platesInUse.length,
+          plateCapacity: slot.physicalPlateCapacity,
+        });
+        
         // Check if this printer still has time available
-        if (slot.currentTime >= slot.endOfDayTime) continue;
+        if (slot.currentTime >= slot.endOfDayTime) {
+          console.log('[TRACE] SLOT_EXHAUSTED', {
+            printer: slot.printerName,
+            currentTime: slot.currentTime.toISOString(),
+            endOfDayTime: slot.endOfDayTime.toISOString(),
+            reason: 'currentTime >= endOfDayTime',
+          });
+          continue;
+        }
         
         // ============= PLATE CONSTRAINT CHECK =============
         // NEW MODEL: Plates recycle during work hours, but NOT outside
@@ -2179,6 +2198,7 @@ const scheduleCyclesForDay = (
                 nextWorkDayStart: nextWorkDayStart?.toISOString(),
               });
               slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted for this day
+              console.log('[TRACE] SLOT_SKIP_PLATE_NO_RELEASE', { printer: slot.printerName });
               continue;
             }
           } else {
@@ -2200,14 +2220,15 @@ const scheduleCyclesForDay = (
               });
               slot.currentTime = new Date(slot.endOfDayTime);
             }
+            console.log('[TRACE] SLOT_SKIP_PLATES_EXHAUSTED', { printer: slot.printerName, platesInUse: slot.platesInUse.length });
             continue; // Skip to next printer
           }
         }
         
-        console.log('[TRACE] About to enter scheduling loop', {
-          workingStatesCount: workingStates.length,
-          printerSlotsCount: printerSlots.length,
-          codePath: 'V2_PROJECT_CENTRIC',
+        console.log('[TRACE] PASSED_ALL_SLOT_CHECKS', {
+          printer: slot.printerName,
+          platesAvailable: slot.physicalPlateCapacity - slot.platesInUse.length,
+          workingStatesWithRemaining: workingStates.filter(s => s.remainingUnits > 0).length,
         });
         
         // Find highest priority project that can be scheduled on THIS printer
