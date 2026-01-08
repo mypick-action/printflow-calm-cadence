@@ -2135,7 +2135,14 @@ const scheduleCyclesForDay = (
           );
           
           if (!presetResult) {
-            console.log('[Planning] No valid preset found for project:', state.project.name);
+            console.log('[Planning] ❌ No valid preset found for project:', {
+              project: state.project.name,
+              currentTime: slot.currentTime.toISOString(),
+              endOfWorkHours: slot.endOfWorkHours.toISOString(),
+              availableSlotHours,
+              isNightSlot,
+              remainingUnits: state.remainingUnits,
+            });
             continue;
           }
           
@@ -2148,6 +2155,13 @@ const scheduleCyclesForDay = (
           
           // Validate cycle fits in remaining slot
           if (cycleEndTime > slot.endOfDayTime) {
+            console.log('[Planning] ⏩ Cycle too long for slot:', {
+              project: state.project.name,
+              currentTime: slot.currentTime.toISOString(),
+              cycleEndTime: cycleEndTime.toISOString(),
+              endOfDayTime: slot.endOfDayTime.toISOString(),
+              cycleHours,
+            });
             continue;
           }
           
@@ -2492,6 +2506,16 @@ const scheduleCyclesForDay = (
           // Update slot
           slot.cyclesScheduled.push(scheduledCycle);
           slot.currentTime = addHours(cycleEndTime, transitionMinutes / 60);
+          
+          console.log('[Planning] ✅ Cycle scheduled:', {
+            project: state.project.name,
+            printer: slot.printerName,
+            startTime: scheduledCycle.startTime.toISOString(),
+            endTime: cycleEndTime.toISOString(),
+            isNightSlot: isNightSlotUpdated,
+            preLoadedPlatesRemaining: slot.preLoadedPlatesRemaining,
+            nextSlotTime: slot.currentTime.toISOString(),
+          });
           
           // ============= PLATE CONSTRAINT: ADD PLATE TO IN-USE LIST =============
           slot.platesInUse.push({
