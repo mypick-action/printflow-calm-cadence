@@ -51,6 +51,16 @@ export interface Project {
   isRecoveryProject?: boolean; // True if this is a recovery/remake project
   // Planning inclusion
   includeInPlanning?: boolean; // If false, project is excluded from planning engine (default: true)
+  // Cloud sync field - stores the cloud UUID when id is legacy_id
+  cloudUuid?: string;
+}
+
+/**
+ * Find a project by ID - handles both legacy_id and cloudUuid lookups
+ * Use this instead of projects.find(p => p.id === projectId) to handle ID mismatches
+ */
+export function findProjectById(projects: Project[], projectId: string): Project | undefined {
+  return projects.find(p => p.id === projectId || p.cloudUuid === projectId);
 }
 
 export interface AMSModes {

@@ -19,6 +19,7 @@ import {
   getFactorySettings,
   getColorInventory,
   getTotalGrams,
+  findProjectById,
 } from './storage';
 import { SAFETY_THRESHOLD_GRAMS } from './materialStatus';
 import { normalizeColor } from './colorNormalization';
@@ -314,7 +315,7 @@ export const generateLoadRecommendations = (
       suggestedSpoolIds = suitableSpools.slice(0, 3).map(s => s.id);
     }
     
-    const project = allProjects.find(p => p.id === cycle.projectId);
+    const project = findProjectById(allProjects, cycle.projectId);
     const projectName = project?.name || 'Unknown';
 
     // Create recommendation with enhanced info
