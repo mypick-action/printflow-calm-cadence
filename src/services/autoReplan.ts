@@ -136,6 +136,15 @@ const executeAutoReplan = async (): Promise<void> => {
       // No cycles but also no blocking issues (e.g., no active projects)
       console.log(`[AutoReplan] No changes: ${result.summary}`);
     }
+    
+    // Dispatch event for UI components to refresh
+    window.dispatchEvent(new CustomEvent('printflow:replan-complete', {
+      detail: { 
+        cyclesCreated: result.cyclesModified,
+        reason: combinedReason,
+        success: result.success
+      }
+    }));
   } catch (error) {
     console.error('[AutoReplan] Error during replan:', error);
     toast.error('שגיאה בעדכון התכנון', {
