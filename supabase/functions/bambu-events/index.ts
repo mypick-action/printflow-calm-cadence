@@ -128,6 +128,29 @@ serve(async (req) => {
         console.error('[bambu-events] Error updating printer:', updateError);
       }
 
+      // VALIDATION: First, complete any existing in_progress cycles for this printer
+      const { data: existingInProgress, error: existingError } = await supabase
+        .from('planned_cycles')
+        .select('id')
+        .eq('printer_id', printer.id)
+        .eq('status', 'in_progress');
+
+      if (!existingError && existingInProgress && existingInProgress.length > 0) {
+        console.log(`[bambu-events] Found ${existingInProgress.length} existing in_progress cycles, completing them`);
+        const { error: completeError } = await supabase
+          .from('planned_cycles')
+          .update({ 
+            status: 'completed',
+            end_time: new Date().toISOString(),
+          })
+          .eq('printer_id', printer.id)
+          .eq('status', 'in_progress');
+        
+        if (completeError) {
+          console.error('[bambu-events] Error completing existing cycles:', completeError);
+        }
+      }
+
       // Find and update waiting/planned cycle to in_progress
       const { data: cycles, error: cycleError } = await supabase
         .from('planned_cycles')

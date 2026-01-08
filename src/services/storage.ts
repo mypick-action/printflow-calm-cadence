@@ -1258,19 +1258,46 @@ export const getCyclesForProject = (projectId: string): PlannedCycle[] => {
   return getPlannedCycles().filter(c => c.projectId === projectId);
 };
 
+/**
+ * Ensure only one in_progress cycle per printer
+ * If setting a cycle to in_progress, complete any other in_progress cycles for that printer
+ */
+const ensureSingleInProgressPerPrinter = (cycles: PlannedCycle[], printerId: string, newInProgressId: string): PlannedCycle[] => {
+  return cycles.map(c => {
+    if (c.printerId === printerId && c.status === 'in_progress' && c.id !== newInProgressId) {
+      console.warn(`[Storage] Auto-completing conflicting in_progress cycle ${c.id} for printer ${printerId}`);
+      return { ...c, status: 'completed' as const, endTime: new Date().toISOString() };
+    }
+    return c;
+  });
+};
+
 export const updatePlannedCycle = (id: string, updates: Partial<PlannedCycle>): PlannedCycle | undefined => {
-  const cycles = getPlannedCycles();
+  let cycles = getPlannedCycles();
   const index = cycles.findIndex(c => c.id === id);
   if (index === -1) return undefined;
   
-  cycles[index] = { ...cycles[index], ...updates };
+  const updatedCycle = { ...cycles[index], ...updates };
+  cycles[index] = updatedCycle;
+  
+  // VALIDATION: If setting to in_progress, ensure no other in_progress cycles for this printer
+  if (updates.status === 'in_progress') {
+    cycles = ensureSingleInProgressPerPrinter(cycles, updatedCycle.printerId, id);
+  }
+  
   setItem(KEYS.PLANNED_CYCLES, cycles);
   return cycles[index];
 };
 
 // Add a new manual cycle (user-created)
 export const addManualCycle = (cycle: PlannedCycle): PlannedCycle => {
-  const cycles = getPlannedCycles();
+  let cycles = getPlannedCycles();
+  
+  // VALIDATION: If new cycle is in_progress, ensure no other in_progress cycles for this printer
+  if (cycle.status === 'in_progress') {
+    cycles = ensureSingleInProgressPerPrinter(cycles, cycle.printerId, cycle.id);
+  }
+  
   cycles.push(cycle);
   setItem(KEYS.PLANNED_CYCLES, cycles);
   return cycle;
