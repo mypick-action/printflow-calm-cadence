@@ -36,6 +36,7 @@ import {
   getPrinters,
 } from '@/services/storage';
 import { scheduleAutoReplan } from '@/services/autoReplan';
+import { syncCycleOperation } from '@/services/cycleOperationSync';
 import { toast } from 'sonner';
 import { format, parseISO, addHours } from 'date-fns';
 import { selectOptimalPreset } from '@/services/planningEngine';
@@ -137,7 +138,7 @@ export const PrinterActionsModal: React.FC<PrinterActionsModalProps> = ({
     onOpenChange(false);
   };
 
-  const handleRemoveJob = () => {
+  const handleRemoveJob = async () => {
     if (!currentCycle) return;
     
     const isInProgress = currentCycle.status === 'in_progress';
@@ -147,11 +148,19 @@ export const PrinterActionsModal: React.FC<PrinterActionsModalProps> = ({
       return;
     }
     
-    // Cancel the cycle
+    // Cancel the cycle locally
     updatePlannedCycle(currentCycle.id, {
       status: 'cancelled',
       cancelledAt: new Date().toISOString(),
       cancelReason: isInProgress ? 'manual_removal_in_progress' : 'manual_removal',
+    });
+    
+    // Sync cancellation to cloud immediately
+    await syncCycleOperation('cancel', {
+      cycleId: currentCycle.id,
+      projectId: currentCycle.projectId,
+      printerId: printerId,
+      status: 'cancelled',
     });
     
     // Check if there are other cycles on this printer
