@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -45,11 +45,24 @@ export const WeeklyPlanningPage: React.FC<WeeklyPlanningPageProps> = ({
   const [selectedPrinter, setSelectedPrinter] = useState<string>('all');
   const [riskOnly, setRiskOnly] = useState(false);
   const [selectedCycle, setSelectedCycle] = useState<CycleWithDetails | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Listen for auto-replan completion to refresh data
+  useEffect(() => {
+    const onReplanComplete = () => {
+      console.log('[WeeklyPlanningPage] Auto-replan completed, refreshing...');
+      setRefreshKey(prev => prev + 1);
+    };
+    window.addEventListener('printflow:replan-complete', onReplanComplete);
+    return () => window.removeEventListener('printflow:replan-complete', onReplanComplete);
+  }, []);
 
   const printers = getPrinters();
   const weekDays = getWeekRange();
-  const cyclesByDayAndPrinter = getCyclesByDayAndPrinter();
-  const productSummary = getWeeklyProductSummary();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const cyclesByDayAndPrinter = useMemo(() => getCyclesByDayAndPrinter(), [refreshKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const productSummary = useMemo(() => getWeeklyProductSummary(), [refreshKey]);
 
   // Filter printers
   const filteredPrinters = useMemo(() => {

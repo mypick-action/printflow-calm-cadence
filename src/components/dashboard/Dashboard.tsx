@@ -106,6 +106,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     refreshData();
   }, [refreshData]);
 
+  // Listen for auto-replan completion to refresh dashboard
+  useEffect(() => {
+    const onReplanComplete = () => {
+      console.log('[Dashboard] Auto-replan completed, refreshing...');
+      refreshData();
+    };
+    window.addEventListener('printflow:replan-complete', onReplanComplete);
+    return () => window.removeEventListener('printflow:replan-complete', onReplanComplete);
+  }, [refreshData]);
+
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return language === 'he' ? 'בוקר טוב!' : 'Good morning!';
