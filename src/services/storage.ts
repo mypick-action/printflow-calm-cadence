@@ -1331,6 +1331,38 @@ export const markPrinterCyclesAsFailed = (printerId: string): number => {
   return count;
 };
 
+/**
+ * Clean up stale "in_progress" cycles whose end_time has passed.
+ * These cycles are auto-completed to prevent "printer busy" false positives.
+ * Returns the IDs of cycles that were cleaned up.
+ */
+export const cleanupStaleCycles = (): string[] => {
+  const now = new Date();
+  const cycles = getPlannedCycles();
+  const cleanedIds: string[] = [];
+  
+  const updatedCycles = cycles.map(c => {
+    if (c.status === 'in_progress' && c.endTime) {
+      const endTime = new Date(c.endTime);
+      if (now > endTime) {
+        console.log(`[storage] Auto-completing stale cycle ${c.id} (ended at ${c.endTime})`);
+        cleanedIds.push(c.id);
+        return {
+          ...c,
+          status: 'completed' as const,
+        };
+      }
+    }
+    return c;
+  });
+  
+  if (cleanedIds.length > 0) {
+    setItem(KEYS.PLANNED_CYCLES, updatedCycles);
+  }
+  
+  return cleanedIds;
+};
+
 // Clean up orphaned cycles (cycles with projectId that doesn't exist)
 export const cleanupOrphanedCycles = (): { removed: number; orphanedProjectIds: string[] } => {
   const cycles = getPlannedCycles();

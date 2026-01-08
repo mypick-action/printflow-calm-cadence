@@ -28,7 +28,7 @@ import {
   ChevronDown,
   Pencil,
 } from 'lucide-react';
-import { getPlanningMeta, updatePlannedCycle, getProducts, getProjects, updatePrinter, getPrinter } from '@/services/storage';
+import { getPlanningMeta, updatePlannedCycle, getProducts, getProjects, updatePrinter, getPrinter, cleanupStaleCycles } from '@/services/storage';
 import { StartPrintModal } from './StartPrintModal';
 import { ManualStartPrintModal } from './ManualStartPrintModal';
 import { PrinterActionsModal } from './PrinterActionsModal';
@@ -88,6 +88,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
 
   const refreshData = useCallback(() => {
     setIsLoading(true);
+    
+    // Cleanup stale in_progress cycles before calculating the plan
+    const cleaned = cleanupStaleCycles();
+    if (cleaned.length > 0) {
+      console.log(`[Dashboard] Auto-completed ${cleaned.length} stale cycles`);
+    }
+    
     // Calculate the daily plan from core system data
     const plan = calculateTodayPlan(new Date());
     setTodayPlan(plan);
