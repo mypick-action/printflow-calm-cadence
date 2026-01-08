@@ -65,7 +65,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
   const [estimatedHours, setEstimatedHours] = useState<string>('');
   const [unitsPlanned, setUnitsPlanned] = useState<string>('');
   const [spoolGrams, setSpoolGrams] = useState<string>('');
-
+  const [plateCount, setPlateCount] = useState<string>('1');
   const projects = useMemo(() => getActiveProjects(), [open]);
   const printers = useMemo(() => getActivePrinters(), [open]);
   const products = useMemo(() => getProducts(), [open]);
@@ -99,6 +99,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     setSelectedPresetId('');
     setEstimatedHours('');
     setUnitsPlanned('');
+    setPlateCount('1');
   }, [selectedProjectId]);
 
   const defaultHours = selectedPreset?.cycleHours || 2;
@@ -122,42 +123,69 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     const start = new Date(startTime);
     const hours = parseFloat(estimatedHours) || defaultHours;
     const units = parseInt(unitsPlanned) || defaultUnits;
-    const end = addHours(start, hours);
-
+    const plates = Math.max(1, Math.min(10, parseInt(plateCount) || 1));
     const spoolGramsNum = parseInt(spoolGrams) || undefined;
 
-    // Generate a proper UUID for cloud compatibility
-    const cycleId = crypto.randomUUID();
-
-    const newCycle: PlannedCycle = {
-      id: cycleId,
-      projectId: selectedProjectId,
-      printerId: selectedPrinterId,
-      unitsPlanned: units,
-      gramsPlanned: units * gramsPerUnit,
-      plateType: 'full',
-      startTime: start.toISOString(),
-      endTime: end.toISOString(),
-      shift: 'day',
-      status: 'in_progress',
-      source: 'manual',
-      locked: true,
-      actualStartTime: start.toISOString(),
-      readinessState: 'ready',
-      requiredColor: selectedProject.color,
-      requiredMaterial: 'PLA',
-      requiredGrams: units * gramsPerUnit,
-      spoolStartGrams: spoolGramsNum,
-      // Preset selection fields
-      presetId: selectedPreset?.id,
-      presetName: selectedPreset?.name,
-      presetSelectionReason: 'manual_selection',
-    };
-
-    // Save to local storage
-    addManualCycle(newCycle);
+    // Create multiple cycles based on plate count
+    const cyclesToCreate: PlannedCycle[] = [];
     
-    // Also update the printer's mounted color to reflect reality
+    for (let i = 0; i < plates; i++) {
+      const cycleStart = addHours(start, i * hours);
+      const cycleEnd = addHours(cycleStart, hours);
+      const cycleId = crypto.randomUUID();
+
+      const cycle: PlannedCycle = {
+        id: cycleId,
+        projectId: selectedProjectId,
+        printerId: selectedPrinterId,
+        unitsPlanned: units,
+        gramsPlanned: units * gramsPerUnit,
+        plateType: 'full',
+        startTime: cycleStart.toISOString(),
+        endTime: cycleEnd.toISOString(),
+        shift: 'day',
+        status: i === 0 ? 'in_progress' : 'planned', // Only first is in_progress
+        source: 'manual',
+        locked: true,
+        actualStartTime: i === 0 ? cycleStart.toISOString() : undefined,
+        readinessState: i === 0 ? 'ready' : undefined,
+        requiredColor: selectedProject.color,
+        requiredMaterial: 'PLA',
+        requiredGrams: units * gramsPerUnit,
+        spoolStartGrams: i === 0 ? spoolGramsNum : undefined,
+        plateIndex: i + 1, // 1, 2, 3, ...
+        // Preset selection fields
+        presetId: selectedPreset?.id,
+        presetName: selectedPreset?.name,
+        presetSelectionReason: 'manual_selection',
+      };
+
+      cyclesToCreate.push(cycle);
+    }
+
+    // Save all cycles to local storage and sync to cloud
+    for (const cycle of cyclesToCreate) {
+      addManualCycle(cycle);
+      
+      const syncResult = await syncCycleOperation('manual_start', {
+        cycleId: cycle.id,
+        projectId: selectedProjectId,
+        printerId: selectedPrinterId,
+        status: cycle.status as 'in_progress' | 'planned' | 'completed' | 'cancelled',
+        startTime: cycle.startTime,
+        endTime: cycle.endTime,
+        presetId: selectedPreset?.id || null,
+        unitsPlanned: units,
+        scheduledDate: format(new Date(cycle.startTime), 'yyyy-MM-dd'),
+        cycleIndex: cycle.plateIndex ? cycle.plateIndex - 1 : 0,
+      });
+      
+      if (syncResult.error) {
+        console.error('[ManualStartPrintModal] Sync failed for cycle:', cycle.id, syncResult.error);
+      }
+    }
+
+    // Update the printer's mounted color
     const printer = getPrinters().find(p => p.id === selectedPrinterId);
     if (printer) {
       updatePrinter(selectedPrinterId, {
@@ -166,29 +194,12 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
       });
     }
 
-    // IMMEDIATELY sync cycle to cloud via unified service
-    const syncResult = await syncCycleOperation('manual_start', {
-      cycleId: cycleId,
-      projectId: selectedProjectId, // Service will resolve to cloud UUID
-      printerId: selectedPrinterId,
-      status: 'in_progress',
-      startTime: start.toISOString(),
-      endTime: end.toISOString(),
-      presetId: selectedPreset?.id || null,
-      unitsPlanned: units,
-      scheduledDate: format(start, 'yyyy-MM-dd'),
-      cycleIndex: 0,
+    toast({
+      title: language === 'he' ? 'הדפסה התחילה' : 'Print started',
+      description: language === 'he' 
+        ? `${plates} פלטות נוספו לתור (${plates * units} יחידות)`
+        : `${plates} plates added to queue (${plates * units} units)`,
     });
-    
-    if (syncResult.cloudSynced) {
-      console.log('[ManualStartPrintModal] Cycle synced to cloud');
-    } else if (syncResult.error) {
-      toast({
-        title: 'סנכרון לענן נכשל',
-        description: syncResult.error,
-        variant: 'destructive',
-      });
-    }
     
     // Schedule replan for planning updates
     scheduleAutoReplan('manual_cycle_added');
@@ -200,10 +211,19 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     setEstimatedHours('');
     setUnitsPlanned('');
     setSpoolGrams('');
+    setPlateCount('1');
     
     onComplete();
     onOpenChange(false);
   };
+
+  // Calculate total info for display
+  const totalPlates = Math.max(1, Math.min(10, parseInt(plateCount) || 1));
+  const hoursPerPlate = parseFloat(estimatedHours) || defaultHours;
+  const unitsPerPlate = parseInt(unitsPlanned) || defaultUnits;
+  const totalHours = totalPlates * hoursPerPlate;
+  const totalUnits = totalPlates * unitsPerPlate;
+  const estimatedEndTime = addHours(new Date(startTime), totalHours);
 
   const canSubmit = selectedProjectId && selectedPrinterId && !printerIsBusy;
 
@@ -334,14 +354,50 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
           {/* Duration & Units */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>{language === 'he' ? 'משך משוער (שעות)' : 'Est. Duration (hours)'}</Label>
+              <Label>{language === 'he' ? 'משך לפלטה (שעות)' : 'Duration per plate (hours)'}</Label>
               <Input type="number" placeholder={defaultHours.toString()} value={estimatedHours} onChange={(e) => setEstimatedHours(e.target.value)} min={0.5} step={0.5} />
             </div>
             <div className="space-y-2">
-              <Label>{language === 'he' ? 'יחידות' : 'Units'}</Label>
+              <Label>{language === 'he' ? 'יחידות לפלטה' : 'Units per plate'}</Label>
               <Input type="number" placeholder={defaultUnits.toString()} value={unitsPlanned} onChange={(e) => setUnitsPlanned(e.target.value)} min={1} />
             </div>
           </div>
+
+          {/* Plate Count */}
+          <div className="space-y-2">
+            <Label className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-muted-foreground" />
+              {language === 'he' ? 'מספר פלטות' : 'Number of Plates'}
+            </Label>
+            <Input 
+              type="number" 
+              value={plateCount} 
+              onChange={(e) => setPlateCount(e.target.value)} 
+              min={1}
+              max={10}
+            />
+            <p className="text-xs text-muted-foreground">
+              {language === 'he' 
+                ? 'פלטה אחת = העבודה הנוכחית. פלטות נוספות יתווספו לתור אחרי הראשונה'
+                : 'One plate = current job. Additional plates will be queued after the first one'}
+            </p>
+          </div>
+
+          {/* Total Summary */}
+          {totalPlates > 1 && (
+            <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
+              <div className="text-sm font-medium text-primary">
+                {language === 'he' 
+                  ? `סה״כ: ${totalPlates} פלטות × ${hoursPerPlate} שעות = ${totalHours} שעות עבודה`
+                  : `Total: ${totalPlates} plates × ${hoursPerPlate} hrs = ${totalHours} hrs of work`}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {language === 'he' 
+                  ? `${totalUnits} יחידות • סיום משוער: ${format(estimatedEndTime, 'HH:mm dd/MM')}`
+                  : `${totalUnits} units • Est. completion: ${format(estimatedEndTime, 'MM/dd HH:mm')}`}
+              </div>
+            </div>
+          )}
 
           {/* Spool Grams */}
           <div className="space-y-2">
