@@ -14,6 +14,7 @@ import {
   getDayScheduleForDate,
   getProduct,
   getTemporaryOverrides,
+  findProjectById,
 } from './storage';
 
 // ============= TYPES =============
@@ -281,7 +282,7 @@ const calculateImmediateImpact = (
   const affectedProjectIds = new Set<string>();
   
   for (const cycle of futureCycles) {
-    const project = projects.find(p => p.id === cycle.projectId);
+    const project = findProjectById(projects, cycle.projectId);
     const printer = printers.find(p => p.id === cycle.printerId);
     
     const originalStart = new Date(cycle.startTime);
@@ -383,7 +384,7 @@ const calculateDeferImpact = (
   cycles: PlannedCycle[],
   projects: Project[]
 ): DeferImpact => {
-  const project = projects.find(p => p.id === projectId);
+  const project = findProjectById(projects, projectId);
   if (!project) {
     return { 
       willMissDeadline: false, 
@@ -486,7 +487,7 @@ const findMergeCandidates = (
   const printers = getActivePrinters();
   const today = new Date();
   
-  const project = projects.find(p => p.id === projectId);
+  const project = findProjectById(projects, projectId);
   if (!project) {
     console.log('[findMergeCandidates] No project found for id:', projectId);
     return { 
@@ -632,7 +633,7 @@ const findMergeCandidates = (
     let previousNewEnd = newEnd;
     
     for (const subCycle of subsequentCycles.slice(0, 3)) {
-      const subProject = projects.find(p => p.id === subCycle.projectId);
+      const subProject = findProjectById(projects, subCycle.projectId);
       const subOriginalStart = new Date(subCycle.startTime);
       const subOriginalEnd = new Date(subCycle.endTime);
       const subDuration = getCycleDurationHours(subCycle);
@@ -733,7 +734,7 @@ export const analyzeDecisionOptions = (
 ): DecisionAnalysis => {
   const projects = getProjectsSync();
   const cycles = getPlannedCycles();
-  const project = projects.find(p => p.id === projectId);
+  const project = findProjectById(projects, projectId);
   
   if (!project) {
     throw new Error('Project not found');

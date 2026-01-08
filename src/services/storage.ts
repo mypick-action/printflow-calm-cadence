@@ -3,6 +3,7 @@
 
 import { scheduleAutoReplan } from './autoReplan';
 import { normalizeColor } from './colorNormalization';
+import { markProjectAsRecentlyCreated, setSyncInProgress } from './cloudBridge';
 
 // ============= TYPES =============
 
@@ -1044,17 +1045,21 @@ export const createProject = (project: Omit<Project, 'id' | 'createdAt' | 'quant
   // 1. Save locally first (always works)
   const projects = getProjectsLocal();
   setItem(KEYS.PROJECTS, [...projects, newProject]);
-  scheduleAutoReplan('project_created');
   
-  // 2. Try to save to cloud (async, non-blocking)
+  // 2. Mark as recently created to prevent hydration from overwriting
+  markProjectAsRecentlyCreated(newProject.id);
+  
+  // 3. Try to save to cloud (async, non-blocking)
   const workspaceId = getWorkspaceId();
   if (workspaceId) {
+    setSyncInProgress(true); // Prevent hydration during sync
     const cloudData = {
       ...mapLocalProjectToCloud(newProject),
       legacy_id: legacyId, // Store timestamp-based ID separately for migration
     };
     cloudStorage.createProjectWithId(workspaceId, cloudData)
       .then(result => {
+        setSyncInProgress(false);
         if (result) {
           console.log('[Projects] Saved to cloud:', newProject.id);
         } else {
@@ -1064,11 +1069,15 @@ export const createProject = (project: Omit<Project, 'id' | 'createdAt' | 'quant
         }
       })
       .catch((err) => {
+        setSyncInProgress(false);
         console.error('[Projects] Cloud save error:', err);
         toast.error('שגיאה בשמירת הפרויקט לענן');
         addToSyncQueue('create', 'project', newProject.id, cloudData);
       });
   }
+  
+  // 4. Schedule auto-replan after sync setup
+  scheduleAutoReplan('project_created');
   
   return newProject;
 };

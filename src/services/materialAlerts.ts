@@ -8,6 +8,7 @@ import {
   getProjectsSync,
   getProducts,
   getFactorySettings,
+  findProjectById,
   Spool,
   Printer,
   PlannedCycle,
@@ -99,7 +100,7 @@ const checkInsufficientForJobsAlerts = (): MaterialAlert[] => {
     if (needs.available < needs.needed) {
       const shortfall = needs.needed - needs.available;
       const projectNames = needs.projectIds
-        .map(id => allProjects.find(p => p.id === id)?.name || id)
+        .map(id => findProjectById(allProjects, id)?.name || id)
         .join(', ');
       
       alerts.push({

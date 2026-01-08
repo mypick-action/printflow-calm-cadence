@@ -19,6 +19,7 @@ import {
   getSpools,
   isMountedStateUnknown,
   isLoadedSpoolsInitialized,
+  findProjectById,
   Printer as PrinterType,
   PlannedCycle,
 } from '@/services/storage';
@@ -71,7 +72,7 @@ export const SetupRecommendationPanel: React.FC<SetupRecommendationPanelProps> =
     const printerRequirements = new Map<string, { color: string; cycles: PlannedCycle[] }>();
     
     dayCycles.forEach(cycle => {
-      const project = projects.find(p => p.id === cycle.projectId);
+      const project = findProjectById(projects, cycle.projectId);
       if (!project) return;
 
       const existing = printerRequirements.get(cycle.printerId);

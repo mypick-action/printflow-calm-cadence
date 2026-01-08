@@ -115,7 +115,40 @@ function nowMs(): number {
   return Date.now();
 }
 
-function shouldHydrate(workspaceId: string, minIntervalMs = 30_000): boolean {
+// Track recently created projects to prevent hydration from overwriting them
+const RECENT_CREATION_WINDOW_MS = 10_000; // 10 seconds grace period
+const recentlyCreatedProjects = new Map<string, number>(); // projectId → timestamp
+
+/**
+ * Mark a project as recently created to prevent hydration from overwriting it
+ */
+export function markProjectAsRecentlyCreated(projectId: string): void {
+  recentlyCreatedProjects.set(projectId, Date.now());
+  // Auto-cleanup after window expires
+  setTimeout(() => recentlyCreatedProjects.delete(projectId), RECENT_CREATION_WINDOW_MS);
+}
+
+/**
+ * Check if a project was recently created (within grace period)
+ */
+function isRecentlyCreated(projectId: string): boolean {
+  const createdAt = recentlyCreatedProjects.get(projectId);
+  if (!createdAt) return false;
+  return Date.now() - createdAt < RECENT_CREATION_WINDOW_MS;
+}
+
+// Flag to prevent hydration during sync operations
+let syncInProgress = false;
+
+/**
+ * Set sync in progress flag. This prevents hydration from running during sync.
+ */
+export function setSyncInProgress(value: boolean): void {
+  syncInProgress = value;
+  console.log('[CloudBridge] syncInProgress set to:', value);
+}
+
+function shouldHydrate(workspaceId: string, minIntervalMs = 60_000): boolean {
   const lastWs = localStorage.getItem(BRIDGE_KEYS.lastHydratedWorkspace);
   const lastAt = Number(localStorage.getItem(BRIDGE_KEYS.lastHydratedAt) || '0');
   if (lastWs !== workspaceId) return true;
@@ -227,6 +260,11 @@ export async function hydrateLocalFromCloud(
   }
 
   const force = Boolean(opts?.force);
+
+  // Skip hydration if sync or replan is in progress
+  if (!force && (replanInProgress || syncInProgress)) {
+    return { ok: true, reason: 'Skipped (operation in progress)' };
+  }
 
   if (!force && !shouldHydrate(workspaceId)) {
     return { ok: true, reason: 'Skipped (throttled)' };
@@ -386,8 +424,28 @@ export async function hydrateLocalFromCloud(
       });
     }
 
-    localStorage.setItem(KEYS.PROJECTS, JSON.stringify(mappedProjects));
-    console.log('[CloudBridge] OVERWRITE projects to localStorage:', mappedProjects.length);
+    // Get existing local projects to check for recently created ones
+    const existingLocalProjects = safeJsonParse<Project[]>(localStorage.getItem(KEYS.PROJECTS)) || [];
+    
+    // Keep local projects that were recently created and aren't in cloud yet
+    const localToKeep = existingLocalProjects.filter(localProj => {
+      // Check if recently created
+      if (!isRecentlyCreated(localProj.id)) return false;
+      
+      // Check if NOT in cloud projects
+      const inCloud = mappedProjects.some(cp => 
+        cp.id === localProj.id || 
+        cp.cloudUuid === localProj.id ||
+        cp.id === localProj.cloudUuid
+      );
+      return !inCloud;
+    });
+
+    // Merge: cloud projects + recently created local projects not in cloud
+    const mergedProjects = [...mappedProjects, ...localToKeep];
+    
+    localStorage.setItem(KEYS.PROJECTS, JSON.stringify(mergedProjects));
+    console.log('[CloudBridge] Projects hydration - cloud:', mappedProjects.length, 'kept local:', localToKeep.length, 'total:', mergedProjects.length);
     
     // Also hydrate planned cycles if requested
     if (opts?.includePlannedCycles) {
