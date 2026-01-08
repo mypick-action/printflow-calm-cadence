@@ -63,8 +63,10 @@ import {
   CircleSlash,
   Circle,
   Printer,
+  Split,
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
+import { SplitOrderPanel, SplitPart } from './SplitOrderPanel';
 import { toast } from '@/hooks/use-toast';
 import { 
   getProjects, 
@@ -239,6 +241,10 @@ export const ProjectsPage: React.FC = () => {
   // Custom color state
   const [useCustomColor, setUseCustomColor] = useState(false);
   const [customColorName, setCustomColorName] = useState('');
+  
+  // Split order state
+  const [splitMode, setSplitMode] = useState(false);
+  const [orderSplits, setOrderSplits] = useState<SplitPart[]>([]);
   
   // Filter state - Status filter (primary, default to pending + in_progress + on_hold)
   const [statusFilters, setStatusFilters] = useState<Record<ProjectStatus, boolean>>({
@@ -529,14 +535,24 @@ export const ProjectsPage: React.FC = () => {
   };
 
   const handleAddProject = () => {
-    if (!newProject.name || !newProject.productId || !newProject.dueDate) return;
+    if (!newProject.name || !newProject.productId) return;
     
     const product = products.find(p => p.id === newProject.productId);
     if (!product) return;
 
+    const effectiveColor = useCustomColor ? customColorName.trim() : newProject.color;
+    
+    // Handle split mode - create multiple sub-projects
+    if (splitMode && orderSplits.length >= 2) {
+      proceedWithSplitProjectCreation(effectiveColor, product);
+      return;
+    }
+    
+    // Normal single project creation
+    if (!newProject.dueDate) return;
+
     const calculatedUrgency = calculatePriorityFromDueDate(newProject.dueDate);
     const finalUrgency = newProject.manualUrgency || calculatedUrgency;
-    const effectiveColor = useCustomColor ? customColorName.trim() : newProject.color;
     
     // ============= DEADLINE GUARD: Check impact before creating =============
     if (isFeatureEnabled('DEADLINE_GUARD') && newProject.includeInPlanning) {
@@ -565,6 +581,92 @@ export const ProjectsPage: React.FC = () => {
     
     // Proceed with creation
     proceedWithProjectCreation(finalUrgency, effectiveColor, product);
+  };
+  
+  // Create multiple sub-projects from split order
+  const proceedWithSplitProjectCreation = (effectiveColor: string, product: Product) => {
+    // Save custom color if needed
+    if (useCustomColor && customColorName.trim()) {
+      const settings = getFactorySettings();
+      if (settings) {
+        const existingColors = settings.colors || [];
+        if (!existingColors.includes(customColorName.trim())) {
+          const updatedColors = [...existingColors, customColorName.trim()];
+          saveFactorySettings({ ...settings, colors: updatedColors });
+        }
+      }
+    }
+    
+    // Create parent project first (with total quantity, not included in planning)
+    const parentProject = createProject({
+      name: newProject.name,
+      productId: newProject.productId,
+      productName: product.name,
+      preferredPresetId: newProject.preferredPresetId || undefined,
+      quantityTarget: newProject.quantityTarget, // Total quantity
+      dueDate: orderSplits[orderSplits.length - 1].dueDate, // Latest deadline
+      urgency: 'normal',
+      urgencyManualOverride: false,
+      status: 'pending',
+      color: effectiveColor,
+      includeInPlanning: false, // Parent is not planned - only children are
+    });
+    
+    // Create child projects for each split
+    const createdChildren: Project[] = [];
+    for (const split of orderSplits) {
+      const childUrgency = calculatePriorityFromDueDate(split.dueDate);
+      const childProject = createProject({
+        name: `${newProject.name} - ${split.label}`,
+        productId: newProject.productId,
+        productName: product.name,
+        preferredPresetId: newProject.preferredPresetId || undefined,
+        quantityTarget: split.quantity,
+        dueDate: split.dueDate,
+        urgency: childUrgency,
+        urgencyManualOverride: false,
+        status: 'pending',
+        color: effectiveColor,
+        includeInPlanning: newProject.includeInPlanning,
+        parentProjectId: parentProject.id, // Link to parent
+      });
+      createdChildren.push(childProject);
+    }
+    
+    // Reset form
+    setDialogOpen(false);
+    setManualOverrideOpen(false);
+    setSplitMode(false);
+    setOrderSplits([]);
+    setNewProject({
+      name: '',
+      productId: '',
+      preferredPresetId: '',
+      quantityTarget: 100,
+      dueDate: '',
+      color: predefinedColors[0],
+      material: 'PLA',
+      manualUrgency: null,
+      includeInPlanning: true,
+    });
+    setUseCustomColor(false);
+    setCustomColorName('');
+    setProductSearchText('');
+    
+    refreshData();
+    
+    toast({
+      title: language === 'he' ? 'הזמנה פוצלה' : 'Order Split',
+      description: language === 'he' 
+        ? `נוצרו ${orderSplits.length} פרויקטי משנה מ-"${newProject.name}"`
+        : `Created ${orderSplits.length} sub-projects from "${newProject.name}"`,
+    });
+    
+    // Show assignment choice for first child (most urgent)
+    if (createdChildren.length > 0) {
+      setCreatedProject(createdChildren[0]);
+      setAssignmentChoiceOpen(true);
+    }
   };
   
   // Separate function to actually create the project (called directly or after user confirms impact)
@@ -598,6 +700,8 @@ export const ProjectsPage: React.FC = () => {
     // refreshData() below will update projects from cloud
     setDialogOpen(false);
     setManualOverrideOpen(false);
+    setSplitMode(false);
+    setOrderSplits([]);
     setNewProject({
       name: '',
       productId: '',
@@ -967,29 +1071,67 @@ export const ProjectsPage: React.FC = () => {
                   type="number"
                   min={1}
                   value={newProject.quantityTarget}
-                  onChange={(e) => setNewProject({ ...newProject, quantityTarget: parseInt(e.target.value) || 0 })}
+                  onChange={(e) => {
+                    const qty = parseInt(e.target.value) || 0;
+                    setNewProject({ ...newProject, quantityTarget: qty });
+                    // Reset split mode if quantity changes
+                    if (splitMode) {
+                      setSplitMode(false);
+                      setOrderSplits([]);
+                    }
+                  }}
+                  disabled={splitMode}
                 />
               </div>
               
-              {/* Due Date */}
-              <div className="space-y-2">
-                <Label htmlFor="dueDate">
-                  {language === 'he' ? 'תאריך יעד' : 'Due Date'}
-                </Label>
-                <Input
-                  id="dueDate"
-                  type="date"
-                  value={newProject.dueDate}
-                  onChange={(e) => setNewProject({ 
-                    ...newProject, 
-                    dueDate: e.target.value,
-                    manualUrgency: null
-                  })}
-                />
-              </div>
+              {/* Split Order Button - show when quantity > 10 and not in split mode */}
+              {newProject.quantityTarget > 10 && !splitMode && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSplitMode(true)}
+                  className="w-full gap-2 border-dashed"
+                >
+                  <Split className="w-4 h-4" />
+                  {language === 'he' ? 'פיצול לפי דדליין' : 'Split by Deadline'}
+                </Button>
+              )}
               
-              {/* Auto-calculated Priority Display */}
-              {newProject.dueDate && (
+              {/* Split Order Panel */}
+              {splitMode && (
+                <SplitOrderPanel
+                  totalQuantity={newProject.quantityTarget}
+                  initialDueDate={newProject.dueDate}
+                  onSplitsChange={setOrderSplits}
+                  onCancel={() => {
+                    setSplitMode(false);
+                    setOrderSplits([]);
+                  }}
+                />
+              )}
+              
+              {/* Due Date - hide in split mode (handled by split panel) */}
+              {!splitMode && (
+                <div className="space-y-2">
+                  <Label htmlFor="dueDate">
+                    {language === 'he' ? 'תאריך יעד' : 'Due Date'}
+                  </Label>
+                  <Input
+                    id="dueDate"
+                    type="date"
+                    value={newProject.dueDate}
+                    onChange={(e) => setNewProject({ 
+                      ...newProject, 
+                      dueDate: e.target.value,
+                      manualUrgency: null
+                    })}
+                  />
+                </div>
+              )}
+              
+              {/* Auto-calculated Priority Display - hide in split mode */}
+              {newProject.dueDate && !splitMode && (
                 <div className="p-3 bg-muted rounded-lg space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">
@@ -1078,9 +1220,16 @@ export const ProjectsPage: React.FC = () => {
               <Button 
                 onClick={handleAddProject} 
                 className="w-full"
-                disabled={!newProject.name || !newProject.productId || !newProject.dueDate}
+                disabled={
+                  !newProject.name || 
+                  !newProject.productId || 
+                  (splitMode ? orderSplits.length < 2 : !newProject.dueDate)
+                }
               >
-                {language === 'he' ? 'הוסף פרויקט' : 'Add Project'}
+                {splitMode 
+                  ? (language === 'he' ? `צור ${orderSplits.length} פרויקטי משנה` : `Create ${orderSplits.length} Sub-projects`)
+                  : (language === 'he' ? 'הוסף פרויקט' : 'Add Project')
+                }
               </Button>
             </div>
           </DialogContent>
