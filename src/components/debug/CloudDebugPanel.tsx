@@ -55,7 +55,8 @@ export const CloudDebugPanel: React.FC = () => {
     setHydrating(true);
     setError(null);
     try {
-      await hydrateLocalFromCloud(workspaceId, { force: true, includeProjects: true, includePlannedCycles: true, includeProducts: true });
+      // Manual debug button - intentionally uses force: true
+      await hydrateLocalFromCloud(workspaceId, { force: true, includeProjects: true, includePlannedCycles: true, includeProducts: true, source: 'CloudDebugPanel-forceHydrate' });
       await runComparison(); // Refresh data after hydration
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error');

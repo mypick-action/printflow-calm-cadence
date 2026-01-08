@@ -151,14 +151,15 @@ const PrintFlowApp: React.FC = () => {
           
           // C. Migration decision logic
           if (cloudHasData) {
-            // Cloud has data → ALWAYS hydrate from Cloud (no auto-migration)
+            // Cloud has data → hydrate from Cloud (no force, allow throttling)
             console.log('[Index] Cloud has data → hydrating from cloud');
             await hydrateLocalFromCloud(workspaceId, { 
-              force: true, 
+              force: false, 
               includeProjects: true, 
               includePlannedCycles: true, 
               includeProducts: true, 
               includeInventory: true,
+              source: 'Index-cloudHasData',
             });
             
             // Cleanup any orphaned cycles after hydration
@@ -186,11 +187,12 @@ const PrintFlowApp: React.FC = () => {
             // Both empty → just hydrate (will get empty data)
             console.log('[Index] Both empty → hydrating from cloud');
             await hydrateLocalFromCloud(workspaceId, { 
-              force: true, 
+              force: false, 
               includeProjects: true, 
               includePlannedCycles: true, 
               includeProducts: true, 
               includeInventory: true,
+              source: 'Index-bothEmpty',
             });
           }
           
@@ -221,11 +223,12 @@ const PrintFlowApp: React.FC = () => {
           // Another device handled it - refresh data
           console.log('[Index] Day change handled by another device, refreshing data');
           await hydrateLocalFromCloud(wsId, { 
-            force: true, 
+            force: false, 
             includeProjects: true, 
             includePlannedCycles: true, 
             includeProducts: true, 
             includeInventory: true,
+            source: 'Index-dayChange',
           });
         }
       }
@@ -251,11 +254,12 @@ const PrintFlowApp: React.FC = () => {
       
       // Hydrate from cloud after migration
       await hydrateLocalFromCloud(workspaceId, { 
-        force: true, 
+        force: false, 
         includeProjects: true, 
         includePlannedCycles: true, 
         includeProducts: true, 
         includeInventory: true,
+        source: 'Index-afterMigration',
       });
       
       // Run day-change detection
@@ -316,7 +320,7 @@ const PrintFlowApp: React.FC = () => {
     
     if (success) {
       // Hydrate localStorage from cloud so engines can work
-      await hydrateLocalFromCloud(workspaceId, { force: true, includeProjects: true, includePlannedCycles: true, includeProducts: true, includeInventory: true });
+      await hydrateLocalFromCloud(workspaceId, { force: false, includeProjects: true, includePlannedCycles: true, includeProducts: true, includeInventory: true, source: 'Index-onboarding' });
       
       toast.success(language === 'he' ? 'ההגדרות נשמרו בהצלחה!' : 'Settings saved successfully!');
       setPrinterNames(data.printerNames);

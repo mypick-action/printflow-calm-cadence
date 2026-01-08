@@ -77,13 +77,14 @@ export const SyncDebugPanel: React.FC = () => {
       console.log('[SyncDebugPanel] Step 1: Clearing local cache...');
       hardResetLocalCache();
       
-      // Step 2: Hydrate from cloud (OVERWRITE mode)
+      // Step 2: Hydrate from cloud (OVERWRITE mode) - manual reset action
       console.log('[SyncDebugPanel] Step 2: Hydrating from cloud (OVERWRITE)...');
       await hydrateLocalFromCloud(workspaceId, { 
         force: true, 
         includeProjects: true, 
         includePlannedCycles: true,
-        includeProducts: false
+        includeProducts: false,
+        source: 'SyncDebugPanel-localReset',
       });
       
       console.log('[SyncDebugPanel] === LOCAL RESET COMPLETE - RELOADING ===');
@@ -126,13 +127,14 @@ export const SyncDebugPanel: React.FC = () => {
       console.log('[SyncDebugPanel] Step 2: Clearing local cache...');
       hardResetLocalCache();
       
-      // Step 3: Hydrate projects from cloud (cycles are now empty)
+      // Step 3: Hydrate projects from cloud (cycles are now empty) - manual purge action
       console.log('[SyncDebugPanel] Step 3: Hydrating projects from cloud...');
       await hydrateLocalFromCloud(workspaceId, { 
         force: true, 
         includeProjects: true, 
         includePlannedCycles: true, // Will get empty list now
-        includeProducts: false
+        includeProducts: false,
+        source: 'SyncDebugPanel-purgeReplan',
       });
       
       // Step 4: Generate fresh plan - AWAIT the result

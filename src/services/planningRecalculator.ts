@@ -15,7 +15,7 @@ import { generatePlan, BlockingIssue, PlanningWarning } from './planningEngine';
 import { addPlanningLogEntry } from './planningLogger';
 import { pdebug } from './planningDebug';
 import { upsertPlannedCycleByLegacyId, deleteCloudCyclesByDateRange } from './cloudStorage';
-import { setReplanInProgress } from './cloudBridge';
+import { setReplanInProgress, pauseHydrationFor } from './cloudBridge';
 import { supabase } from '@/integrations/supabase/client';
 import { formatDateStringLocal } from './dateUtils';
 import { clearBlockLog, getBlockSummary } from './cycleBlockLogger';
@@ -189,6 +189,8 @@ export const recalculatePlan = async (
   
   // Set flag to prevent hydration from clearing cycles during sync
   setReplanInProgress(true);
+  // Also pause hydration for 20 seconds to cover the entire sync operation
+  pauseHydrationFor(20000, 'replan');
   
   try {
     const syncResult = await syncCyclesToCloud(newCycles, startDate);
