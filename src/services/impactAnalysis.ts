@@ -282,7 +282,7 @@ const calculateImmediateImpact = (
   const affectedProjectIds = new Set<string>();
   
   for (const cycle of futureCycles) {
-    const project = findProjectById(projects, cycle.projectId);
+    const project = findProjectById(projects, cycle.projectId, cycle.projectUuid);
     const printer = printers.find(p => p.id === cycle.printerId);
     
     const originalStart = new Date(cycle.startTime);
@@ -345,7 +345,7 @@ const calculateImmediateImpact = (
   const deadlineRisks: DeadlineRisk[] = dominoEffect
     .filter(d => d.crossesDeadline)
     .map(d => {
-      const project = projects.find(p => p.id === d.projectId);
+      const project = findProjectById(projects, d.projectId);
       const cycle = futureCycles.find(c => c.id === d.cycleId);
       return {
         projectId: d.projectId,
@@ -633,7 +633,7 @@ const findMergeCandidates = (
     let previousNewEnd = newEnd;
     
     for (const subCycle of subsequentCycles.slice(0, 3)) {
-      const subProject = findProjectById(projects, subCycle.projectId);
+      const subProject = findProjectById(projects, subCycle.projectId, subCycle.projectUuid);
       const subOriginalStart = new Date(subCycle.startTime);
       const subOriginalEnd = new Date(subCycle.endTime);
       const subDuration = getCycleDurationHours(subCycle);
