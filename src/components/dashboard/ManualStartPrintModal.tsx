@@ -37,6 +37,7 @@ import {
   deletePlannedCycle,
   updatePrinter,
   getPrinters,
+  cleanupStaleCycles,
 } from '@/services/storage';
 import { format, addHours } from 'date-fns';
 import { scheduleAutoReplan } from '@/services/autoReplan';
@@ -94,6 +95,16 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     // Default: recommended or first preset
     return availablePresets.find(p => p.isRecommended) || availablePresets[0];
   }, [selectedPresetId, availablePresets]);
+
+  // Cleanup stale cycles when modal opens
+  useEffect(() => {
+    if (open) {
+      const cleaned = cleanupStaleCycles();
+      if (cleaned.length > 0) {
+        console.log(`[ManualStartPrintModal] Auto-completed ${cleaned.length} stale cycles`);
+      }
+    }
+  }, [open]);
 
   // Reset preset when project changes
   useEffect(() => {
