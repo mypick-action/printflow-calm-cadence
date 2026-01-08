@@ -3,7 +3,7 @@
 // Separates UI from cloud logic and ensures consistent field mapping
 
 import { supabase } from '@/integrations/supabase/client';
-import { getProjectsSync } from '@/services/storage';
+import { getProjectsSync, findProjectById } from '@/services/storage';
 import { isUuid, getCachedWorkspaceId, setCachedWorkspaceId } from '@/services/cloudBridge';
 import type { DbPlannedCycle } from '@/services/cloudStorage';
 
@@ -45,7 +45,7 @@ export function resolveProjectCloudId(projectId: string): string | null {
   
   // Load projects from localStorage (sync call)
   const projects = getProjectsSync();
-  const project = projects.find(p => p.id === projectId);
+  const project = findProjectById(projects, projectId);
   
   if (!project) {
     console.error('[cycleOperationSync] Project not found:', projectId);

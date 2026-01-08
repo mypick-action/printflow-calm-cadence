@@ -6,7 +6,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ShoppingCart, AlertTriangle, Calendar, Package } from 'lucide-react';
-import { getPlannedCycles, getProjectsSync, getProducts, getFactorySettings } from '@/services/storage';
+import { getPlannedCycles, getProjectsSync, getProducts, getFactorySettings, findProjectById } from '@/services/storage';
 import { getAvailableGramsByColor } from '@/services/materialAdapter';
 import { normalizeColor } from '@/services/colorNormalization';
 import { format, addDays, addHours } from 'date-fns';
@@ -55,7 +55,7 @@ export const MaterialPurchasingPanel: React.FC<MaterialPurchasingPanelProps> = (
         return cycleDate >= now && cycleDate <= horizonEnd && c.status === 'planned';
       })
       .forEach(cycle => {
-        const project = projects.find(p => p.id === cycle.projectId);
+        const project = findProjectById(projects, cycle.projectId);
         if (!project?.color) return;
 
         const colorKey = normalizeColor(project.color);
