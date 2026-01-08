@@ -315,7 +315,7 @@ export const generateLoadRecommendations = (
       suggestedSpoolIds = suitableSpools.slice(0, 3).map(s => s.id);
     }
     
-    const project = findProjectById(allProjects, cycle.projectId);
+    const project = findProjectById(allProjects, cycle.projectId, cycle.projectUuid);
     const projectName = project?.name || 'Unknown';
 
     // Create recommendation with enhanced info

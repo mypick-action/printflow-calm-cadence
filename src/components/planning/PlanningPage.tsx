@@ -202,7 +202,7 @@ export const PlanningPage: React.FC<PlanningPageProps> = ({ onEndCycle }) => {
           return isSameLocalDay(cycleDate, date);
         })
         .map(cycle => {
-          const project = findProjectById(allProjects, cycle.projectId);
+          const project = findProjectById(allProjects, cycle.projectId, cycle.projectUuid);
           return {
             ...cycle,
             projectName: project?.name || 'Unknown',

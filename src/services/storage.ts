@@ -59,9 +59,35 @@ export interface Project {
 /**
  * Find a project by ID - handles both legacy_id and cloudUuid lookups
  * Use this instead of projects.find(p => p.id === projectId) to handle ID mismatches
+ * 
+ * @param projects - Array of projects to search
+ * @param projectId - Primary project ID to search for
+ * @param projectUuid - Optional: Cloud UUID from cycle (fallback if projectId not found)
  */
-export function findProjectById(projects: Project[], projectId: string): Project | undefined {
-  return projects.find(p => p.id === projectId || p.cloudUuid === projectId);
+export function findProjectById(
+  projects: Project[], 
+  projectId: string, 
+  projectUuid?: string
+): Project | undefined {
+  if (!projectId && !projectUuid) return undefined;
+  
+  // Try direct ID match first
+  if (projectId) {
+    const found = projects.find(p => p.id === projectId);
+    if (found) return found;
+    
+    // Try cloudUuid match (projectId might be the cloud UUID)
+    const foundByCloudUuid = projects.find(p => p.cloudUuid === projectId);
+    if (foundByCloudUuid) return foundByCloudUuid;
+  }
+  
+  // Fallback: try projectUuid from cycle if provided
+  if (projectUuid) {
+    const found = projects.find(p => p.id === projectUuid || p.cloudUuid === projectUuid);
+    if (found) return found;
+  }
+  
+  return undefined;
 }
 
 export interface AMSModes {
@@ -187,6 +213,9 @@ export interface PlannedCycle {
   // Physical plate constraint fields
   plateIndex?: number; // Which plate (1..4) this cycle uses
   plateReleaseTime?: string; // When this plate will be available again (ISO string)
+  // Cloud sync fields - stores cloud UUIDs for reference
+  projectUuid?: string; // Cloud UUID of the project
+  cycleUuid?: string; // Cloud UUID of the cycle itself
 }
 
 // Load recommendation for operators
