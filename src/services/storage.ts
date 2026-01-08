@@ -1308,11 +1308,14 @@ export const markPrinterCyclesAsFailed = (printerId: string): number => {
 export const cleanupOrphanedCycles = (): { removed: number; orphanedProjectIds: string[] } => {
   const cycles = getPlannedCycles();
   const projects = getProjectsLocal();
-  const validProjectIds = new Set(projects.map(p => p.id));
   
+  // CRITICAL FIX: Use findProjectById to handle ID mismatches (legacy_id vs cloudUuid)
+  // This prevents falsely identifying cycles as orphaned after hydration
   const orphanedProjectIds: string[] = [];
   const validCycles = cycles.filter(c => {
-    if (validProjectIds.has(c.projectId)) {
+    // Use findProjectById to check both projectId and projectUuid
+    const project = findProjectById(projects, c.projectId, c.projectUuid);
+    if (project) {
       return true;
     }
     if (!orphanedProjectIds.includes(c.projectId)) {
