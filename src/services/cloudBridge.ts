@@ -381,9 +381,9 @@ export async function hydrateLocalFromCloud(
         customCycleHours: p.custom_cycle_hours ?? undefined,
         isRecoveryProject: p.is_recovery_project ?? false,
         includeInPlanning: (p as any).include_in_planning !== false, // Default true
-        // Store UUID for future sync reference
+        // Store UUID for future sync reference - now a formal field
         cloudUuid: p.id,
-      } as Project & { cloudUuid?: string });
+      });
     }
 
     localStorage.setItem(KEYS.PROJECTS, JSON.stringify(mappedProjects));

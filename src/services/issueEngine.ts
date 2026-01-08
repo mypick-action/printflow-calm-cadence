@@ -15,6 +15,7 @@ import {
   getPlannedCycles,
   getActiveCycleForPrinter,
   getDayScheduleForDate,
+  findProjectById,
 } from './storage';
 import { getAvailableGramsByColor } from './materialAdapter';
 
@@ -382,7 +383,7 @@ export const analyzeIssue = (context: IssueContext): IssueAnalysis => {
   const printers = getPrinters();
   const settings = getFactorySettings();
   
-  const project = projects.find(p => p.id === context.projectId) || null;
+  const project = findProjectById(projects, context.projectId) || null;
   const printer = printers.find(p => p.id === context.printerId) || null;
   const product = project ? getProductForProject(project) : null;
   const activeCycle = getActiveCycleForPrinter(context.printerId);
@@ -548,7 +549,7 @@ export const checkCanProceed = (
   const printers = getPrinters();
   const settings = getFactorySettings();
   
-  const project = projects.find(p => p.id === projectId);
+  const project = findProjectById(projects, projectId);
   const printer = printers.find(p => p.id === printerId);
   const product = project ? getProductForProject(project) : null;
   

@@ -8,6 +8,7 @@ import {
   getProjectsSync, 
   getFactorySettings, 
   getPrinters,
+  findProjectById,
   PlannedCycle, 
   Project,
   getDayScheduleForDate,
@@ -192,7 +193,7 @@ export function getCycleWithDetails(cycle: PlannedCycle): CycleWithDetails {
   const projects = getProjectsSync();
   const printers = getPrinters();
   
-  const project = projects.find(p => p.id === cycle.projectId);
+  const project = findProjectById(projects, cycle.projectId);
   const printer = printers.find(p => p.id === cycle.printerId);
   
   return {
@@ -303,7 +304,7 @@ export function computeWeeklyStats(): WeeklyStats {
     
     totalUnits += cycle.unitsPlanned;
     
-    const project = projects.find(p => p.id === cycle.projectId);
+    const project = findProjectById(projects, cycle.projectId);
     if (crossesDeadline(cycle, project)) {
       cyclesCrossingDeadline++;
     }
@@ -363,7 +364,7 @@ export function getWeeklyProductSummary(): ProductWeeklySummary[] {
   for (const cycle of cycles) {
     if (cycle.status === 'completed' || cycle.status === 'failed') continue;
     
-    const project = projects.find(p => p.id === cycle.projectId);
+    const project = findProjectById(projects, cycle.projectId);
     if (!project) continue;
     
     // Use product name as key (or productId if available)

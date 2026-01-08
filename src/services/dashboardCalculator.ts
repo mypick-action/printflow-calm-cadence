@@ -12,6 +12,7 @@ import {
   getDayScheduleForDate,
   calculateDaysRemaining,
   calculatePriorityFromDueDate,
+  findProjectById,
   PlannedCycle,
   Printer,
   Project,
@@ -270,7 +271,7 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     console.log(`[DashboardCalculator] Printer "${printer.name}" (${printer.id}): ${printerCycles.length} cycles assigned`);
     
     const dashboardCycles: DashboardCycle[] = printerCycles.map(cycle => {
-      const project = allProjects.find(p => p.id === cycle.projectId);
+      const project = findProjectById(allProjects, cycle.projectId);
       const product = project ? productMap.get(project.productId) : undefined;
       const preset = product?.platePresets.find(p => p.isRecommended) || product?.platePresets[0];
       

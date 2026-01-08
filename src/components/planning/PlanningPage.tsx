@@ -36,6 +36,8 @@ import {
   getPlannedCycles,
   getProject,
   getPlanningMeta,
+  getProjectsSync,
+  findProjectById,
   FactorySettings,
   Printer as PrinterType,
   PlannedCycle
@@ -193,13 +195,14 @@ export const PlanningPage: React.FC<PlanningPageProps> = ({ onEndCycle }) => {
       }
       
       // Get cycles for this day
+      const allProjects = getProjectsSync();
       const dayCycles = plannedCycles
         .filter(cycle => {
           const cycleDate = new Date(cycle.startTime);
           return isSameLocalDay(cycleDate, date);
         })
         .map(cycle => {
-          const project = getProject(cycle.projectId);
+          const project = findProjectById(allProjects, cycle.projectId);
           return {
             ...cycle,
             projectName: project?.name || 'Unknown',
