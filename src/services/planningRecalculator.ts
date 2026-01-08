@@ -182,6 +182,10 @@ export const recalculatePlan = async (
   setItem(KEYS.PLANNED_CYCLES, newCycles);
   console.log(`[planningRecalculator] ✓ Saved ${newCycles.length} cycles to localStorage`);
 
+  // CRITICAL: Mark cycles as protected IMMEDIATELY after saving to localStorage
+  // This prevents hydration from overwriting them before cloud sync completes
+  markCyclesAsRecentlyGenerated();
+
   // CRITICAL: Sync cycles to cloud and WAIT for completion
   // This prevents race conditions where reload happens before cloud sync finishes
   let cloudSyncSuccess = false;
@@ -196,13 +200,9 @@ export const recalculatePlan = async (
     const syncResult = await syncCyclesToCloud(newCycles, startDate);
     cloudSyncSuccess = syncResult.success;
     cloudSyncError = syncResult.error;
-    cloudSyncSuccess = syncResult.success;
-    cloudSyncError = syncResult.error;
     
     if (cloudSyncSuccess) {
       console.log(`[planningRecalculator] ✓ Cloud sync completed: ${syncResult.synced} synced`);
-      // Mark cycles as recently generated to protect from hydration overwrite
-      markCyclesAsRecentlyGenerated();
       // Dispatch success event
       window.dispatchEvent(new CustomEvent('sync-cycles-complete', {
         detail: { synced: syncResult.synced, skipped: syncResult.skipped }
