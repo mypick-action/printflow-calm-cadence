@@ -1619,6 +1619,11 @@ interface PrinterTimeSlot {
   // ============= DEBUG FIELDS =============
   endOfDayTimeSource?: EndOfDayTimeSource;    // Why endOfDayTime was set to its value
   endOfDayTimeReason?: string;    // Additional human-readable reason
+  // ============= PRE-LOADED PLATES FOR OVERNIGHT/WEEKEND =============
+  // When operator leaves at end of work hours, they load up to 5 plates
+  // These plates are consumed one-by-one during night/weekend cycles
+  preLoadedPlatesRemaining: number;  // Starts at 0, set to 5 when operator loads
+  preLoadedAt?: Date;  // Track when plates were pre-loaded (for debugging)
 }
 
 const scheduleCyclesForDay = (
@@ -1828,6 +1833,9 @@ const scheduleCyclesForDay = (
       // Debug fields
       endOfDayTimeSource,
       endOfDayTimeReason,
+      // Pre-loaded plates for overnight runs (starts at 0, set when operator loads at end of day)
+      preLoadedPlatesRemaining: 0,
+      preLoadedAt: undefined,
     };
   });
   
@@ -2009,6 +2017,27 @@ const scheduleCyclesForDay = (
         
         const PLATE_CLEANUP_MINUTES = 10;
         const isWithinWorkHoursLocal = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
+        const isNightSlotLocal = slot.currentTime >= slot.endOfWorkHours;
+        
+        // ============= END OF DAY LOADING LOGIC =============
+        // When we're in night slot, check if we're consuming pre-loaded plates
+        // Pre-loaded plates are set when we transition from work hours to night
+        if (isNightSlotLocal) {
+          // Check if we have pre-loaded plates to consume
+          const preLoaded = slot.preLoadedPlatesRemaining ?? 0;
+          if (preLoaded <= 0) {
+            // No pre-loaded plates left - this printer is done for the night/weekend
+            console.log('[EndOfDayLoad] 🛑 No pre-loaded plates remaining:', {
+              printer: slot.printerName,
+              currentTime: slot.currentTime.toISOString(),
+              endOfDayTime: slot.endOfDayTime.toISOString(),
+            });
+            slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted
+            continue;
+          }
+          // We have pre-loaded plates - continue to scheduling
+          // (will be decremented when cycle is actually scheduled)
+        }
         
         // During work hours: release plates whose cleanup time has passed
         if (isWithinWorkHoursLocal) {
@@ -2122,13 +2151,67 @@ const scheduleCyclesForDay = (
             continue;
           }
           
+          // ============= END OF DAY LOADING TRIGGER =============
+          // If we're during work hours but cycle would END after work hours:
+          // This means the operator won't be able to load new plates after this cycle.
+          // INSTEAD of scheduling this cycle now, we should:
+          // 1. Skip to end of work hours
+          // 2. Simulate operator loading 5 plates
+          // 3. Schedule this cycle as the first "pre-loaded" cycle
+          const isWithinWorkHoursNow = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
+          const cycleEndsAfterWorkHours = cycleEndTime > slot.endOfWorkHours;
+          
+          if (isWithinWorkHoursNow && cycleEndsAfterWorkHours && slot.preLoadedPlatesRemaining === 0) {
+            // Check if night automation is supported for this cycle
+            const canRunAtNight = settings.afterHoursBehavior === 'FULL_AUTOMATION' &&
+                                  printer?.canStartNewCyclesAfterHours &&
+                                  activePreset.allowedForNightCycle;
+            
+            if (canRunAtNight) {
+              // Trigger end-of-day loading: operator loads 5 plates at end of work hours
+              console.log('[EndOfDayLoad] 🌙 Triggering end-of-day plate loading:', {
+                printer: slot.printerName,
+                currentTime: slot.currentTime.toISOString(),
+                endOfWorkHours: slot.endOfWorkHours.toISOString(),
+                cycleEndTime: cycleEndTime.toISOString(),
+                cycleHours,
+                project: state.project.name,
+              });
+              
+              // Advance to end of work hours
+              slot.currentTime = new Date(slot.endOfWorkHours);
+              // Clear existing plates (operator clears all before loading new ones)
+              slot.platesInUse = [];
+              // Set 5 pre-loaded plates
+              slot.preLoadedPlatesRemaining = 5;
+              slot.preLoadedAt = new Date(slot.endOfWorkHours);
+              
+              // Now continue with the scheduling loop - the cycle will be scheduled
+              // from the pre-loaded plates since we're now in night slot
+            } else {
+              // Night automation not supported - skip this cycle
+              console.log('[EndOfDayLoad] 🚫 Cycle would end after work hours but night not allowed:', {
+                printer: slot.printerName,
+                cycleEndTime: cycleEndTime.toISOString(),
+                endOfWorkHours: slot.endOfWorkHours.toISOString(),
+                afterHoursBehavior: settings.afterHoursBehavior,
+                printerCanStartAfterHours: printer?.canStartNewCyclesAfterHours,
+                presetAllowedForNight: activePreset.allowedForNightCycle,
+              });
+              continue;
+            }
+          }
+          
           // ============= 3-LEVEL NIGHT CONTROL CHECK =============
           // Level 1: Factory setting (afterHoursBehavior)
           // Level 2: Printer setting (canStartNewCyclesAfterHours)
           // Level 3: Preset setting (allowedForNightCycle)
           
+          // Recalculate night slot after potential end-of-day loading trigger
+          const isNightSlotUpdated = slot.currentTime >= slot.endOfWorkHours;
+          
           // Check if this is a night slot and if the cycle can start there
-          if (isNightSlot) {
+          if (isNightSlotUpdated) {
             // Level 1: Check factory allows automation
             if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
               // Log block reason
@@ -2417,16 +2500,30 @@ const scheduleCyclesForDay = (
           });
           slot.lastScheduledColor = state.project.color; // Track for non-AMS color lock
           
+          // ============= PRE-LOADED PLATE CONSUMPTION =============
+          // If we're in night mode and using pre-loaded plates, decrement the count
+          const isNightCycle = slot.currentTime >= slot.endOfWorkHours || isNightSlotUpdated;
+          if (isNightCycle && slot.preLoadedPlatesRemaining > 0) {
+            slot.preLoadedPlatesRemaining--;
+            console.log('[EndOfDayLoad] 🔄 Consumed pre-loaded plate:', {
+              printer: slot.printerName,
+              preLoadedPlatesRemaining: slot.preLoadedPlatesRemaining,
+              cycleId: scheduledCycle.id,
+              project: state.project.name,
+            });
+          }
+          
           const platesRemaining = slot.physicalPlateCapacity - slot.platesInUse.length;
           
           console.log('[PlateConstraint] 📋 Plate used:', {
             printer: slot.printerName,
             plateIndex: `${plateIndex}/${slot.physicalPlateCapacity}`,
             platesRemaining,
+            preLoadedPlatesRemaining: slot.preLoadedPlatesRemaining,
             color: state.project.color,
             cycleEnd: cycleEndTime.toISOString(),
             plateReleaseTime: plateReleaseTime.toISOString(),
-            isNightSlot,
+            isNightSlot: isNightSlotUpdated,
             isWithinWorkHours: slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours,
           });
           

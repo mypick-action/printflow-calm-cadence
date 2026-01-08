@@ -41,6 +41,12 @@ export interface PrinterTimeSlot {
   // NEW: Debug field - explains why endOfDayTime was set
   endOfDayTimeSource?: EndOfDayTimeSource;
   endOfDayTimeReason?: string;  // Additional human-readable reason
+  // NEW: Pre-loaded plates for overnight/weekend runs
+  // When operator leaves at end of work hours, they load up to 5 plates
+  // These plates are consumed one-by-one during night/weekend cycles
+  preLoadedPlatesRemaining?: number;  // Optional - defaults to 0
+  // Track when plates were pre-loaded (for debugging)
+  preLoadedAt?: Date;
 }
 
 // ============= HELPER: Parse time string =============
