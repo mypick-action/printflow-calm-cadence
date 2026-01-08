@@ -151,38 +151,22 @@ serve(async (req) => {
         }
       }
 
-      // Find and update waiting/planned cycle to in_progress
-      // PRIORITY: Prefer cycles with legacy_id (synced from planning) over NULL legacy_id
+      // Find the next scheduled/planned cycle for this printer
+      // Use UPDATE instead of INSERT to avoid duplicates (DB has unique constraint)
       const { data: cycles, error: cycleError } = await supabase
         .from('planned_cycles')
         .select('*')
         .eq('printer_id', printer.id)
         .in('status', ['planned', 'scheduled'])
         .order('start_time', { ascending: true })
-        .limit(10); // Get more to find the right one
+        .limit(1);
 
       if (cycleError) {
         console.error('[bambu-events] Error fetching cycles:', cycleError);
       } else if (cycles && cycles.length > 0) {
-        // Prefer cycle with legacy_id (synced version) to avoid duplicates
-        const syncedCycle = cycles.find(c => c.legacy_id !== null);
-        const cycle = syncedCycle || cycles[0];
+        const cycle = cycles[0];
         
-        // Check if there's a duplicate: one cycle's legacy_id matches another's id
-        // If so, delete the duplicate before proceeding
-        const duplicateCycle = cycles.find(c => 
-          c.id !== cycle.id && 
-          (c.legacy_id === cycle.id || cycle.legacy_id === c.id)
-        );
-        
-        if (duplicateCycle) {
-          console.log('[bambu-events] Found duplicate cycle, deleting:', duplicateCycle.id);
-          await supabase
-            .from('planned_cycles')
-            .delete()
-            .eq('id', duplicateCycle.id);
-        }
-        
+        // UPDATE the existing cycle to in_progress (never INSERT new)
         const { error: cycleUpdateError } = await supabase
           .from('planned_cycles')
           .update({ 
@@ -194,8 +178,10 @@ serve(async (req) => {
         if (cycleUpdateError) {
           console.error('[bambu-events] Error updating cycle:', cycleUpdateError);
         } else {
-          console.log('[bambu-events] Marked cycle as in_progress:', cycle.id, '(legacy_id:', cycle.legacy_id, ')');
+          console.log('[bambu-events] Marked cycle as in_progress:', cycle.id);
         }
+      } else {
+        console.log('[bambu-events] No scheduled/planned cycle found for printer:', printer.id);
       }
 
       return new Response(

@@ -199,19 +199,38 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     });
   }
   
-  // DEDUPLICATION: Remove duplicate cycles (same printer + overlapping times)
-  // This prevents showing the same logical cycle twice if sync created duplicates
-  const seenCycleKeys = new Set<string>();
-  const deduplicatedPlannedCycles = plannedCycles.filter(cycle => {
-    // Create a unique key based on printer + start time + project
+  // DEDUPLICATION: Remove duplicate cycles (same printer + start time + project)
+  // Priority: in_progress > scheduled/planned > completed
+  // Also filter out stale in_progress cycles (end_time has passed)
+  const now = new Date();
+  const cyclesByKey = new Map<string, PlannedCycle>();
+  
+  plannedCycles.forEach(cycle => {
     const key = `${cycle.printerId}-${cycle.startTime}-${cycle.projectId}`;
-    if (seenCycleKeys.has(key)) {
-      console.log(`[DashboardCalculator] Filtering duplicate cycle: ${cycle.id}`);
-      return false;
+    const existing = cyclesByKey.get(key);
+    
+    // Check if this in_progress cycle is stale (end_time passed)
+    if (cycle.status === 'in_progress' && cycle.endTime) {
+      const endTime = new Date(cycle.endTime);
+      if (endTime < now) {
+        console.log(`[DashboardCalculator] Skipping stale in_progress cycle: ${cycle.id} (end_time: ${cycle.endTime})`);
+        return; // Skip stale cycles entirely
+      }
     }
-    seenCycleKeys.add(key);
-    return true;
+    
+    if (!existing) {
+      cyclesByKey.set(key, cycle);
+    } else {
+      // Priority: in_progress > planned/scheduled
+      const statusPriority = (s: string) => s === 'in_progress' ? 0 : s === 'scheduled' ? 1 : s === 'planned' ? 2 : 3;
+      if (statusPriority(cycle.status) < statusPriority(existing.status)) {
+        console.log(`[DashboardCalculator] Replacing ${existing.status} cycle with ${cycle.status}: ${cycle.id}`);
+        cyclesByKey.set(key, cycle);
+      }
+    }
   });
+  
+  const deduplicatedPlannedCycles = Array.from(cyclesByKey.values());
   
   // Filter cycles for today - only show active cycles (planned or in_progress)
   // Completed/failed/cancelled cycles should not appear in the dashboard
