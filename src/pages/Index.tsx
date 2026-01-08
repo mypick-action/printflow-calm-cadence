@@ -20,7 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Construction, Loader2, Upload, AlertCircle, RefreshCw } from 'lucide-react';
 import { isOnboardingCompleteCloud, saveOnboardingToCloud, getPrinters, getProjects } from '@/services/cloudStorage';
-import { hydrateLocalFromCloud, migrateAllLocalDataToCloud, FullMigrationReport } from '@/services/cloudBridge';
+import { hydrateLocalFromCloud, migrateAllLocalDataToCloud, FullMigrationReport, shouldProtectLocalCycles } from '@/services/cloudBridge';
 import { checkAndHandleDayChange } from '@/services/dayChangeDetector';
 import { KEYS, cleanupOrphanedCycles } from '@/services/storage';
 import { syncCycleOperation, CycleOperationPayload, OperationType } from '@/services/cycleOperationSync';
@@ -162,10 +162,14 @@ const PrintFlowApp: React.FC = () => {
               source: 'Index-cloudHasData',
             });
             
-            // Cleanup any orphaned cycles after hydration
-            const cleanupResult = cleanupOrphanedCycles();
-            if (cleanupResult.removed > 0) {
-              console.log(`[Index] Cleaned up ${cleanupResult.removed} orphaned cycles`);
+            // Cleanup any orphaned cycles after hydration - BUT NOT IF cycles were just generated
+            if (!shouldProtectLocalCycles()) {
+              const cleanupResult = cleanupOrphanedCycles();
+              if (cleanupResult.removed > 0) {
+                console.log(`[Index] Cleaned up ${cleanupResult.removed} orphaned cycles`);
+              }
+            } else {
+              console.log('[Index] Skipping orphan cleanup - cycles recently generated');
             }
             
             // Run day-change detection after hydration

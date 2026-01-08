@@ -15,7 +15,7 @@ import { generatePlan, BlockingIssue, PlanningWarning } from './planningEngine';
 import { addPlanningLogEntry } from './planningLogger';
 import { pdebug } from './planningDebug';
 import { upsertPlannedCycleByLegacyId, deleteCloudCyclesByDateRange } from './cloudStorage';
-import { setReplanInProgress, pauseHydrationFor } from './cloudBridge';
+import { setReplanInProgress, pauseHydrationFor, markCyclesAsRecentlyGenerated } from './cloudBridge';
 import { supabase } from '@/integrations/supabase/client';
 import { formatDateStringLocal } from './dateUtils';
 import { clearBlockLog, getBlockSummary } from './cycleBlockLogger';
@@ -201,6 +201,8 @@ export const recalculatePlan = async (
     
     if (cloudSyncSuccess) {
       console.log(`[planningRecalculator] ✓ Cloud sync completed: ${syncResult.synced} synced`);
+      // Mark cycles as recently generated to protect from hydration overwrite
+      markCyclesAsRecentlyGenerated();
       // Dispatch success event
       window.dispatchEvent(new CustomEvent('sync-cycles-complete', {
         detail: { synced: syncResult.synced, skipped: syncResult.skipped }

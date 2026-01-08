@@ -147,6 +147,28 @@ function isRecentlyCreatedProject(project: { localCreatedAt?: number }): boolean
   return Date.now() - project.localCreatedAt < RECENT_CREATION_WINDOW_MS;
 }
 
+// ============= CYCLES PROTECTION =============
+// Prevents hydration from overwriting locally-generated cycles
+let lastLocalCyclesGeneratedAt = 0;
+const CYCLES_PROTECTION_WINDOW_MS = 30_000; // 30 seconds protection after replan
+
+/**
+ * Mark cycles as recently generated locally (call after replan completes).
+ * Prevents hydration from overwriting these cycles for 30 seconds.
+ */
+export function markCyclesAsRecentlyGenerated(): void {
+  lastLocalCyclesGeneratedAt = Date.now();
+  console.log('[CloudBridge] Cycles marked as recently generated (protected for 30s)');
+}
+
+/**
+ * Check if local cycles should be protected from hydration overwrite.
+ * Returns true if cycles were generated within the last 30 seconds.
+ */
+export function shouldProtectLocalCycles(): boolean {
+  return Date.now() - lastLocalCyclesGeneratedAt < CYCLES_PROTECTION_WINDOW_MS;
+}
+
 // Flag to prevent hydration during sync operations
 let syncInProgress = false;
 
@@ -500,7 +522,11 @@ export async function hydrateLocalFromCloud(
       
       // CLOUD IS SSOT - Always overwrite local with cloud data
       // But ONLY if fetch succeeded - don't clear local on network errors!
-      if (cloudCycles.length > 0) {
+      // ALSO protect recently generated local cycles from being overwritten
+      if (shouldProtectLocalCycles()) {
+        console.log('[CloudBridge] Skipping cycles overwrite - recently generated locally (protected)');
+        // Don't overwrite - local cycles are fresh from replan
+      } else if (cloudCycles.length > 0) {
         // Cloud has cycles - proceed with hydration
         console.log('[CloudBridge] Cloud has cycles → overwriting localStorage');
         
