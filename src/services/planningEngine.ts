@@ -2023,7 +2023,20 @@ const scheduleCyclesForDay = (
         // When we're in night slot, check if we're consuming pre-loaded plates
         // Pre-loaded plates are set when we transition from work hours to night
         if (isNightSlotLocal) {
-          // Check if we have pre-loaded plates to consume
+          // FIRST: Set pre-loaded plates if this is the first night cycle
+          // (must happen BEFORE the exhaustion check)
+          if ((slot.preLoadedPlatesRemaining ?? 0) === 0 && !slot.preLoadedAt) {
+            // First time entering night slot - operator loads 5 plates at end of work hours
+            console.log('[EndOfDayLoad] 🌙 Entering night slot - operator loads 5 plates:', {
+              printer: slot.printerName,
+              currentTime: slot.currentTime.toISOString(),
+              endOfWorkHours: slot.endOfWorkHours.toISOString(),
+            });
+            slot.preLoadedPlatesRemaining = 5;
+            slot.preLoadedAt = new Date(slot.endOfWorkHours);
+          }
+          
+          // NOW check if we have pre-loaded plates to consume
           const preLoaded = slot.preLoadedPlatesRemaining ?? 0;
           if (preLoaded <= 0) {
             // No pre-loaded plates left - this printer is done for the night/weekend
@@ -2186,17 +2199,8 @@ const scheduleCyclesForDay = (
           // Check if this is a night slot (cycle STARTS after work hours)
           const isNightSlotUpdated = slot.currentTime >= slot.endOfWorkHours;
           
-          // If cycle STARTS in night slot, we need pre-loaded plates
-          if (isNightSlotUpdated && (slot.preLoadedPlatesRemaining ?? 0) === 0) {
-            // First night cycle - operator loads 5 plates at end of work hours
-            console.log('[EndOfDayLoad] 🌙 First night cycle - operator loads 5 plates:', {
-              printer: slot.printerName,
-              currentTime: slot.currentTime.toISOString(),
-              endOfWorkHours: slot.endOfWorkHours.toISOString(),
-            });
-            slot.preLoadedPlatesRemaining = 5;
-            slot.preLoadedAt = new Date(slot.endOfWorkHours);
-          }
+          // NOTE: Pre-loaded plates initialization moved to earlier in the loop
+          // (before the exhaustion check at lines ~2025-2050)
           
           // Check if this is a night slot and if the cycle can start there
           if (isNightSlotUpdated) {
