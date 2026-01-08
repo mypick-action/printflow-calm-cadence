@@ -2165,64 +2165,38 @@ const scheduleCyclesForDay = (
             continue;
           }
           
-          // ============= END OF DAY LOADING TRIGGER =============
-          // If we're during work hours but cycle would END after work hours:
-          // This means the operator won't be able to load new plates after this cycle.
-          // INSTEAD of scheduling this cycle now, we should:
-          // 1. Skip to end of work hours
-          // 2. Simulate operator loading 5 plates
-          // 3. Schedule this cycle as the first "pre-loaded" cycle
-          const isWithinWorkHoursNow = slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours;
-          const cycleEndsAfterWorkHours = cycleEndTime > slot.endOfWorkHours;
-          
-          if (isWithinWorkHoursNow && cycleEndsAfterWorkHours && slot.preLoadedPlatesRemaining === 0) {
-            // Check if night automation is supported for this cycle
-            const canRunAtNight = settings.afterHoursBehavior === 'FULL_AUTOMATION' &&
-                                  printer?.canStartNewCyclesAfterHours &&
-                                  activePreset.allowedForNightCycle;
-            
-            if (canRunAtNight) {
-              // Trigger end-of-day loading: operator loads 5 plates at end of work hours
-              console.log('[EndOfDayLoad] 🌙 Triggering end-of-day plate loading:', {
-                printer: slot.printerName,
-                currentTime: slot.currentTime.toISOString(),
-                endOfWorkHours: slot.endOfWorkHours.toISOString(),
-                cycleEndTime: cycleEndTime.toISOString(),
-                cycleHours,
-                project: state.project.name,
-              });
-              
-              // Advance to end of work hours
-              slot.currentTime = new Date(slot.endOfWorkHours);
-              // Clear existing plates (operator clears all before loading new ones)
-              slot.platesInUse = [];
-              // Set 5 pre-loaded plates
-              slot.preLoadedPlatesRemaining = 5;
-              slot.preLoadedAt = new Date(slot.endOfWorkHours);
-              
-              // Now continue with the scheduling loop - the cycle will be scheduled
-              // from the pre-loaded plates since we're now in night slot
-            } else {
-              // Night automation not supported - skip this cycle
-              console.log('[EndOfDayLoad] 🚫 Cycle would end after work hours but night not allowed:', {
-                printer: slot.printerName,
-                cycleEndTime: cycleEndTime.toISOString(),
-                endOfWorkHours: slot.endOfWorkHours.toISOString(),
-                afterHoursBehavior: settings.afterHoursBehavior,
-                printerCanStartAfterHours: printer?.canStartNewCyclesAfterHours,
-                presetAllowedForNight: activePreset.allowedForNightCycle,
-              });
-              continue;
-            }
-          }
+          // ============= END OF DAY LOADING - ONLY AT NIGHT SLOT TRANSITION =============
+          // The End of Day Loading logic is handled EARLIER in the loop (lines 2022-2040)
+          // when we're already in night slot and need pre-loaded plates.
+          //
+          // IMPORTANT: A cycle that STARTS during work hours can END after work hours!
+          // The operator loads the plate during work hours, so it's fine.
+          // We do NOT skip cycles just because they end after 17:30.
+          //
+          // Example: 14:00 start → 17:30 end = OK (plate loaded at 14:00)
+          //          16:00 start → 19:30 end = OK (plate loaded at 16:00)
+          //
+          // The only restriction: if we're IN night slot (past 17:30), we need pre-loaded plates.
           
           // ============= 3-LEVEL NIGHT CONTROL CHECK =============
           // Level 1: Factory setting (afterHoursBehavior)
           // Level 2: Printer setting (canStartNewCyclesAfterHours)
           // Level 3: Preset setting (allowedForNightCycle)
           
-          // Recalculate night slot after potential end-of-day loading trigger
+          // Check if this is a night slot (cycle STARTS after work hours)
           const isNightSlotUpdated = slot.currentTime >= slot.endOfWorkHours;
+          
+          // If cycle STARTS in night slot, we need pre-loaded plates
+          if (isNightSlotUpdated && (slot.preLoadedPlatesRemaining ?? 0) === 0) {
+            // First night cycle - operator loads 5 plates at end of work hours
+            console.log('[EndOfDayLoad] 🌙 First night cycle - operator loads 5 plates:', {
+              printer: slot.printerName,
+              currentTime: slot.currentTime.toISOString(),
+              endOfWorkHours: slot.endOfWorkHours.toISOString(),
+            });
+            slot.preLoadedPlatesRemaining = 5;
+            slot.preLoadedAt = new Date(slot.endOfWorkHours);
+          }
           
           // Check if this is a night slot and if the cycle can start there
           if (isNightSlotUpdated) {
