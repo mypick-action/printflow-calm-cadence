@@ -523,7 +523,15 @@ export async function hydrateLocalFromCloud(
       // CLOUD IS SSOT - Always overwrite local with cloud data
       // But ONLY if fetch succeeded - don't clear local on network errors!
       // ALSO protect recently generated local cycles from being overwritten
-      if (shouldProtectLocalCycles()) {
+      const cyclesProtected = shouldProtectLocalCycles();
+      const msSinceGenerated = Date.now() - lastLocalCyclesGeneratedAt;
+      console.log('[CloudBridge] Cycles protection check:', { 
+        protected: cyclesProtected, 
+        msSinceGenerated,
+        window: CYCLES_PROTECTION_WINDOW_MS 
+      });
+      
+      if (cyclesProtected) {
         console.log('[CloudBridge] Skipping cycles overwrite - recently generated locally (protected)');
         // Don't overwrite - local cycles are fresh from replan
       } else if (cloudCycles.length > 0) {
