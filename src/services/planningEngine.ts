@@ -1624,6 +1624,8 @@ interface PrinterTimeSlot {
   // These plates are consumed one-by-one during night/weekend cycles
   preLoadedPlatesRemaining: number;  // Starts at 0, set to 5 when operator loads
   preLoadedAt?: Date;  // Track when plates were pre-loaded (for debugging)
+  // ============= AUTONOMOUS DAY FLAG =============
+  isAutonomousDay: boolean;  // True for non-working days (Fri/Sat) - no operator to load plates
 }
 
 const scheduleCyclesForDay = (
@@ -1836,6 +1838,8 @@ const scheduleCyclesForDay = (
       // Pre-loaded plates for overnight runs (starts at 0, set when operator loads at end of day)
       preLoadedPlatesRemaining: 0,
       preLoadedAt: undefined,
+      // Autonomous day flag - no operator available to load plates
+      isAutonomousDay,
     };
   });
   
@@ -2022,18 +2026,32 @@ const scheduleCyclesForDay = (
         // ============= END OF DAY LOADING LOGIC =============
         // When we're in night slot, check if we're consuming pre-loaded plates
         // Pre-loaded plates are set when we transition from work hours to night
+        // IMPORTANT: On autonomous days (Fri/Sat), there's no operator to load plates!
         if (isNightSlotLocal) {
-          // FIRST: Set pre-loaded plates if this is the first night cycle
+          // FIRST: Set pre-loaded plates if this is the first night cycle on a WORK DAY
           // (must happen BEFORE the exhaustion check)
+          // On autonomous days, we don't load plates - printer should be exhausted
           if ((slot.preLoadedPlatesRemaining ?? 0) === 0 && !slot.preLoadedAt) {
-            // First time entering night slot - operator loads 5 plates at end of work hours
-            console.log('[EndOfDayLoad] 🌙 Entering night slot - operator loads 5 plates:', {
-              printer: slot.printerName,
-              currentTime: slot.currentTime.toISOString(),
-              endOfWorkHours: slot.endOfWorkHours.toISOString(),
-            });
-            slot.preLoadedPlatesRemaining = 5;
-            slot.preLoadedAt = new Date(slot.endOfWorkHours);
+            if (slot.isAutonomousDay) {
+              // Autonomous day - no operator to load plates!
+              // Mark as exhausted immediately
+              console.log('[EndOfDayLoad] 🚫 Autonomous day - no operator to load plates:', {
+                printer: slot.printerName,
+                currentTime: slot.currentTime.toISOString(),
+                isAutonomousDay: true,
+              });
+              slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted
+              continue;
+            } else {
+              // Work day transitioning to night - operator loads 5 plates at end of work hours
+              console.log('[EndOfDayLoad] 🌙 Work day ending - operator loads 5 plates:', {
+                printer: slot.printerName,
+                currentTime: slot.currentTime.toISOString(),
+                endOfWorkHours: slot.endOfWorkHours.toISOString(),
+              });
+              slot.preLoadedPlatesRemaining = 5;
+              slot.preLoadedAt = new Date(slot.endOfWorkHours);
+            }
           }
           
           // NOW check if we have pre-loaded plates to consume
