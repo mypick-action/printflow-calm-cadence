@@ -199,11 +199,25 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     });
   }
   
+  // DEDUPLICATION: Remove duplicate cycles (same printer + overlapping times)
+  // This prevents showing the same logical cycle twice if sync created duplicates
+  const seenCycleKeys = new Set<string>();
+  const deduplicatedPlannedCycles = plannedCycles.filter(cycle => {
+    // Create a unique key based on printer + start time + project
+    const key = `${cycle.printerId}-${cycle.startTime}-${cycle.projectId}`;
+    if (seenCycleKeys.has(key)) {
+      console.log(`[DashboardCalculator] Filtering duplicate cycle: ${cycle.id}`);
+      return false;
+    }
+    seenCycleKeys.add(key);
+    return true;
+  });
+  
   // Filter cycles for today - only show active cycles (planned or in_progress)
   // Completed/failed/cancelled cycles should not appear in the dashboard
   // IMPORTANT: Dashboard works with LOCAL data - no UUID validation required
   // FILTER: Don't show blocked_inventory in Today view - only ready + waiting_for_spool
-  const todayCycles = plannedCycles.filter(cycle => {
+  const todayCycles = deduplicatedPlannedCycles.filter(cycle => {
     const cycleDate = new Date(cycle.startTime);
     const isToday = isSameLocalDay(cycleDate, targetDate);
     const isActiveStatus = cycle.status === 'planned' || cycle.status === 'in_progress';

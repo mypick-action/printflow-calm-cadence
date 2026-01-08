@@ -971,18 +971,36 @@ export const deleteCloudCyclesByDateRange = async (
 ): Promise<number> => {
   console.log(`[CloudStorage] Deleting cloud cycles from ${fromDate} to ${toDate || 'end'}`);
   
+  // Delete scheduled/planned cycles, plus in_progress cycles that have legacy_id
+  // (those are synced versions, not edge-function-created ones)
+  // Edge-function cycles have legacy_id = NULL and should be preserved
   let query = supabase
     .from('planned_cycles')
     .delete()
     .eq('workspace_id', workspaceId)
     .gte('scheduled_date', fromDate)
-    .in('status', ['scheduled', 'planned']); // Only delete non-completed
+    .in('status', ['scheduled', 'planned']);
   
   if (toDate) {
     query = query.lte('scheduled_date', toDate);
   }
   
   const { error, count } = await query;
+  
+  // Also delete in_progress cycles WITH legacy_id (synced duplicates, not edge-function ones)
+  const { error: ipError, count: ipCount } = await supabase
+    .from('planned_cycles')
+    .delete()
+    .eq('workspace_id', workspaceId)
+    .gte('scheduled_date', fromDate)
+    .eq('status', 'in_progress')
+    .not('legacy_id', 'is', null);  // Only delete synced duplicates
+  
+  if (ipError) {
+    console.error('[CloudStorage] Error deleting in_progress duplicates:', ipError);
+  } else if (ipCount && ipCount > 0) {
+    console.log(`[CloudStorage] Deleted ${ipCount} in_progress synced duplicates`);
+  }
   
   if (error) {
     console.error('[CloudStorage] Error deleting cycles by date range:', error);

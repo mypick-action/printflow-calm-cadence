@@ -152,18 +152,37 @@ serve(async (req) => {
       }
 
       // Find and update waiting/planned cycle to in_progress
+      // PRIORITY: Prefer cycles with legacy_id (synced from planning) over NULL legacy_id
       const { data: cycles, error: cycleError } = await supabase
         .from('planned_cycles')
         .select('*')
         .eq('printer_id', printer.id)
         .in('status', ['planned', 'scheduled'])
         .order('start_time', { ascending: true })
-        .limit(1);
+        .limit(10); // Get more to find the right one
 
       if (cycleError) {
         console.error('[bambu-events] Error fetching cycles:', cycleError);
       } else if (cycles && cycles.length > 0) {
-        const cycle = cycles[0];
+        // Prefer cycle with legacy_id (synced version) to avoid duplicates
+        const syncedCycle = cycles.find(c => c.legacy_id !== null);
+        const cycle = syncedCycle || cycles[0];
+        
+        // Check if there's a duplicate: one cycle's legacy_id matches another's id
+        // If so, delete the duplicate before proceeding
+        const duplicateCycle = cycles.find(c => 
+          c.id !== cycle.id && 
+          (c.legacy_id === cycle.id || cycle.legacy_id === c.id)
+        );
+        
+        if (duplicateCycle) {
+          console.log('[bambu-events] Found duplicate cycle, deleting:', duplicateCycle.id);
+          await supabase
+            .from('planned_cycles')
+            .delete()
+            .eq('id', duplicateCycle.id);
+        }
+        
         const { error: cycleUpdateError } = await supabase
           .from('planned_cycles')
           .update({ 
@@ -175,7 +194,7 @@ serve(async (req) => {
         if (cycleUpdateError) {
           console.error('[bambu-events] Error updating cycle:', cycleUpdateError);
         } else {
-          console.log('[bambu-events] Marked cycle as in_progress:', cycle.id);
+          console.log('[bambu-events] Marked cycle as in_progress:', cycle.id, '(legacy_id:', cycle.legacy_id, ')');
         }
       }
 

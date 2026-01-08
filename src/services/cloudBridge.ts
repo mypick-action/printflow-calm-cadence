@@ -538,8 +538,24 @@ export async function hydrateLocalFromCloud(
         // Cloud has cycles - proceed with hydration
         console.log('[CloudBridge] Cloud has cycles → overwriting localStorage');
         
+        // DEDUPLICATION: Filter out duplicate cycles
+        // If cycle.legacy_id matches another cycle.id, skip it (it's a synced duplicate)
+        const cycleIdSet = new Set(cloudCycles.map(c => c.id));
+        const deduplicatedCycles = cloudCycles.filter(c => {
+          // If this cycle has a legacy_id that matches another cycle's id, it's a duplicate
+          if (c.legacy_id && cycleIdSet.has(c.legacy_id)) {
+            console.log(`[CloudBridge] Skipping duplicate cycle: ${c.id} (legacy_id=${c.legacy_id} matches existing)`);
+            return false;
+          }
+          return true;
+        });
+        
+        if (deduplicatedCycles.length < cloudCycles.length) {
+          console.log(`[CloudBridge] Deduplicated: ${cloudCycles.length} → ${deduplicatedCycles.length} cycles`);
+        }
+        
         // Map cycles: cloud format → localStorage format
-        const mappedCycles: PlannedCycle[] = (cloudCycles || []).map((c) => {
+        const mappedCycles: PlannedCycle[] = (deduplicatedCycles || []).map((c) => {
           // Map project UUID to legacy_id
           const projectLegacyId = projectUuidToLegacyId.get(c.project_id) || c.project_id;
           
