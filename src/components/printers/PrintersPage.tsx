@@ -134,7 +134,7 @@ export const PrintersPage: React.FC = () => {
     const init = async () => {
       // Hydrate localStorage from cloud before refreshing data
       if (workspaceId) {
-        await hydrateLocalFromCloud(workspaceId, { force: false });
+        await hydrateLocalFromCloud(workspaceId, { force: false, source: 'PrintersPage-init' });
       }
       refreshData();
     };
@@ -189,7 +189,7 @@ export const PrintersPage: React.FC = () => {
     updatePrinter(editingPrinter.id, editingPrinter);
     
     // Sync localStorage from cloud
-    await hydrateLocalFromCloud(workspaceId, { force: true });
+    await hydrateLocalFromCloud(workspaceId, { force: false, source: 'PrintersPage-savePrinter' });
     
     refreshData();
     setSheetOpen(false);
@@ -250,7 +250,7 @@ export const PrintersPage: React.FC = () => {
     }
     
     // Sync localStorage from cloud to keep engines in sync
-    await hydrateLocalFromCloud(workspaceId, { force: true });
+    await hydrateLocalFromCloud(workspaceId, { force: false, source: 'PrintersPage-addPrinter' });
     
     // Mark capacity as changed
     markCapacityChanged(language === 'he' 
@@ -327,7 +327,7 @@ export const PrintersPage: React.FC = () => {
     }
     
     // Sync localStorage from cloud
-    await hydrateLocalFromCloud(workspaceId, { force: true });
+    await hydrateLocalFromCloud(workspaceId, { force: false, source: 'PrintersPage-confirmDisable' });
     
     // Mark capacity as changed
     markCapacityChanged(language === 'he' ? 'מדפסת הושבתה' : 'Printer disabled');
@@ -362,7 +362,7 @@ export const PrintersPage: React.FC = () => {
     });
     
     // Sync localStorage from cloud
-    await hydrateLocalFromCloud(workspaceId, { force: true });
+    await hydrateLocalFromCloud(workspaceId, { force: false, source: 'PrintersPage-reactivate' });
     
     // Mark capacity as changed
     markCapacityChanged(language === 'he' ? 'מדפסת הופעלה מחדש' : 'Printer reactivated');
@@ -623,7 +623,7 @@ export const PrintersPage: React.FC = () => {
     
     if (success) {
       // Sync localStorage
-      await hydrateLocalFromCloud(workspaceId, { force: true });
+      await hydrateLocalFromCloud(workspaceId, { force: false, source: 'PrintersPage-updateOrder' });
       
       toast({
         title: language === 'he' ? 'הסדר עודכן' : 'Order updated',

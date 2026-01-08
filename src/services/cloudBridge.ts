@@ -115,26 +115,36 @@ function nowMs(): number {
   return Date.now();
 }
 
-// Track recently created projects to prevent hydration from overwriting them
-const RECENT_CREATION_WINDOW_MS = 10_000; // 10 seconds grace period
-const recentlyCreatedProjects = new Map<string, number>(); // projectId → timestamp
+// ============= HYDRATION LOCK (KILL SWITCH) =============
+// Prevents ALL hydration (even force:true) during critical operations
+let hydrationLockUntil = 0;
 
 /**
- * Mark a project as recently created to prevent hydration from overwriting it
+ * Pause hydration for a specified duration. Overrides even force:true.
+ * Use during critical operations like replan, project creation, local edits.
  */
-export function markProjectAsRecentlyCreated(projectId: string): void {
-  recentlyCreatedProjects.set(projectId, Date.now());
-  // Auto-cleanup after window expires
-  setTimeout(() => recentlyCreatedProjects.delete(projectId), RECENT_CREATION_WINDOW_MS);
+export function pauseHydrationFor(ms: number, reason: string): void {
+  hydrationLockUntil = Math.max(hydrationLockUntil, Date.now() + ms);
+  console.log('[CloudBridge] Hydration paused', { ms, reason, until: new Date(hydrationLockUntil).toISOString() });
 }
 
 /**
- * Check if a project was recently created (within grace period)
+ * Check if hydration is currently locked
  */
-function isRecentlyCreated(projectId: string): boolean {
-  const createdAt = recentlyCreatedProjects.get(projectId);
-  if (!createdAt) return false;
-  return Date.now() - createdAt < RECENT_CREATION_WINDOW_MS;
+function hydrationIsLocked(): boolean {
+  return Date.now() < hydrationLockUntil;
+}
+
+// Track recently created projects using localCreatedAt timestamp instead of ID
+const RECENT_CREATION_WINDOW_MS = 60_000; // 60 seconds grace period for new projects
+
+/**
+ * Check if a project was recently created (within grace period)
+ * Uses localCreatedAt field instead of tracking by ID to handle ID changes
+ */
+function isRecentlyCreatedProject(project: { localCreatedAt?: number }): boolean {
+  if (!project.localCreatedAt) return false;
+  return Date.now() - project.localCreatedAt < RECENT_CREATION_WINDOW_MS;
 }
 
 // Flag to prevent hydration during sync operations
@@ -253,16 +263,34 @@ export interface HydrateResult {
  */
 export async function hydrateLocalFromCloud(
   workspaceId: string,
-  opts?: HydrateOptions
+  opts?: HydrateOptions & { source?: string }
 ): Promise<HydrateResult> {
+  const source = opts?.source ?? 'unknown';
+  const force = Boolean(opts?.force);
+  
+  // Log every hydration request with source for debugging
+  console.log('[CloudBridge] hydrate requested', { 
+    source, 
+    force, 
+    ts: new Date().toISOString(),
+    locked: hydrationIsLocked(),
+    replanInProgress,
+    syncInProgress
+  });
+
   if (!workspaceId) {
     return { ok: false, reason: 'Missing workspaceId' };
   }
 
-  const force = Boolean(opts?.force);
+  // KILL SWITCH: Skip hydration if locked (even if force:true)
+  if (hydrationIsLocked()) {
+    console.log('[CloudBridge] hydrate SKIPPED (locked)', { source });
+    return { ok: true, reason: 'Skipped (hydration locked)' };
+  }
 
-  // Skip hydration if sync or replan is in progress
-  if (!force && (replanInProgress || syncInProgress)) {
+  // Skip hydration if sync or replan is in progress (no exceptions)
+  if (replanInProgress || syncInProgress) {
+    console.log('[CloudBridge] hydrate SKIPPED (operation in progress)', { source, replanInProgress, syncInProgress });
     return { ok: true, reason: 'Skipped (operation in progress)' };
   }
 
@@ -428,9 +456,10 @@ export async function hydrateLocalFromCloud(
     const existingLocalProjects = safeJsonParse<Project[]>(localStorage.getItem(KEYS.PROJECTS)) || [];
     
     // Keep local projects that were recently created and aren't in cloud yet
+    // Uses localCreatedAt timestamp instead of tracking by ID to handle ID changes
     const localToKeep = existingLocalProjects.filter(localProj => {
-      // Check if recently created
-      if (!isRecentlyCreated(localProj.id)) return false;
+      // Check if recently created using localCreatedAt field
+      if (!isRecentlyCreatedProject(localProj as any)) return false;
       
       // Check if NOT in cloud projects
       const inCloud = mappedProjects.some(cp => 

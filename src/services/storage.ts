@@ -3,7 +3,7 @@
 
 import { scheduleAutoReplan } from './autoReplan';
 import { normalizeColor } from './colorNormalization';
-import { markProjectAsRecentlyCreated, setSyncInProgress } from './cloudBridge';
+import { pauseHydrationFor, setSyncInProgress } from './cloudBridge';
 
 // ============= TYPES =============
 
@@ -54,6 +54,8 @@ export interface Project {
   includeInPlanning?: boolean; // If false, project is excluded from planning engine (default: true)
   // Cloud sync field - stores the cloud UUID when id is legacy_id
   cloudUuid?: string;
+  // Local creation timestamp for hydration protection (prevents cloud overwriting new local projects)
+  localCreatedAt?: number;
 }
 
 /**
@@ -1069,14 +1071,15 @@ export const createProject = (project: Omit<Project, 'id' | 'createdAt' | 'quant
     createdAt: new Date().toISOString().split('T')[0],
     quantityGood: 0,
     quantityScrap: 0,
+    localCreatedAt: Date.now(), // Track creation time for hydration protection
   };
   
   // 1. Save locally first (always works)
   const projects = getProjectsLocal();
   setItem(KEYS.PROJECTS, [...projects, newProject]);
   
-  // 2. Mark as recently created to prevent hydration from overwriting
-  markProjectAsRecentlyCreated(newProject.id);
+  // 2. Pause hydration for 15 seconds to allow cloud sync to complete
+  pauseHydrationFor(15000, 'project_create');
   
   // 3. Try to save to cloud (async, non-blocking)
   const workspaceId = getWorkspaceId();
