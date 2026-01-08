@@ -34,6 +34,7 @@ import {
   PlatePreset,
   addManualCycle,
   getPlannedCycles,
+  deletePlannedCycle,
   updatePrinter,
   getPrinters,
 } from '@/services/storage';
@@ -125,6 +126,38 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     const units = parseInt(unitsPlanned) || defaultUnits;
     const plates = Math.max(1, Math.min(10, parseInt(plateCount) || 1));
     const spoolGramsNum = parseInt(spoolGrams) || undefined;
+    
+    // Calculate estimated end time for conflict detection
+    const manualEndTime = addHours(start, plates * hours);
+    
+    // Remove conflicting scheduled cycles on this printer BEFORE creating manual cycles
+    const existingCycles = getPlannedCycles();
+    const conflictingCycles = existingCycles.filter(c => 
+      c.printerId === selectedPrinterId && 
+      c.status === 'planned' && // Only auto-planned, not in_progress or completed
+      c.source !== 'manual' && // Don't delete other manual cycles
+      c.startTime && 
+      new Date(c.startTime) >= start && 
+      new Date(c.startTime) < manualEndTime
+    );
+    
+    // Delete conflicting cycles locally and sync deletions to cloud
+    for (const conflict of conflictingCycles) {
+      console.log('[ManualStartPrintModal] Removing conflicting cycle:', conflict.id);
+      deletePlannedCycle(conflict.id);
+      
+      // Sync deletion to cloud
+      await syncCycleOperation('cancel', {
+        cycleId: conflict.id,
+        projectId: conflict.projectId,
+        printerId: conflict.printerId,
+        status: 'cancelled',
+      });
+    }
+    
+    if (conflictingCycles.length > 0) {
+      console.log(`[ManualStartPrintModal] Removed ${conflictingCycles.length} conflicting cycles`);
+    }
 
     // Create multiple cycles based on plate count
     const cyclesToCreate: PlannedCycle[] = [];
