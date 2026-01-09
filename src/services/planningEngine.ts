@@ -167,7 +167,8 @@ export interface ProjectPlanningState {
 // ============= HELPER FUNCTIONS =============
 
 const generateId = (): string => {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  // Use proper UUID for database compatibility
+  return crypto.randomUUID();
 };
 
 const parseTime = (timeStr: string): { hours: number; minutes: number } => {

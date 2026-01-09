@@ -218,6 +218,10 @@ export interface PlannedCycle {
   // Cloud sync fields - stores cloud UUIDs for reference
   projectUuid?: string; // Cloud UUID of the project
   cycleUuid?: string; // Cloud UUID of the cycle itself
+  // Sync protection fields - prevents hydration from overwriting unsynced changes
+  pendingCloudSync?: boolean; // true = local change waiting to be synced to cloud
+  lastSyncAttempt?: string; // ISO timestamp of last sync attempt (for retry logic)
+  syncError?: string; // Last sync error message (for debugging)
 }
 
 // Load recommendation for operators
