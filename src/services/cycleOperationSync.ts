@@ -3,7 +3,7 @@
 // Separates UI from cloud logic and ensures consistent field mapping
 
 import { supabase } from '@/integrations/supabase/client';
-import { getProjectsSync, findProjectById, getPrinters } from '@/services/storage';
+import { getProjectsSync, findProjectById, getPrinters, getPlannedCycles, KEYS, PlannedCycle } from '@/services/storage';
 import { isUuid, getCachedWorkspaceId, setCachedWorkspaceId } from '@/services/cloudBridge';
 import type { DbPlannedCycle } from '@/services/cloudStorage';
 
@@ -14,6 +14,43 @@ export interface CycleOperationResult {
   localSaved: boolean;
   cloudSynced: boolean;
   error?: string;
+}
+
+// ============= PENDING SYNC HELPERS =============
+
+/**
+ * Mark a cycle as pending cloud sync (when sync fails)
+ * This prevents hydration from overwriting the local change
+ */
+export function markCycleAsPendingSync(cycleId: string, error?: string): void {
+  const cycles = getPlannedCycles();
+  const updated = cycles.map(c => 
+    c.id === cycleId 
+      ? { ...c, pendingCloudSync: true, lastSyncAttempt: new Date().toISOString(), syncError: error }
+      : c
+  );
+  localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(updated));
+  console.log('[cycleOperationSync] Marked cycle as pendingCloudSync:', cycleId);
+}
+
+/**
+ * Clear pending sync flag (after successful sync)
+ */
+export function clearCyclePendingSync(cycleId: string): void {
+  const cycles = getPlannedCycles();
+  const updated = cycles.map(c => 
+    c.id === cycleId 
+      ? { ...c, pendingCloudSync: false, syncError: undefined }
+      : c
+  );
+  localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(updated));
+}
+
+/**
+ * Get all cycles that need to be synced (for retry queue)
+ */
+export function getPendingSyncCycles(): PlannedCycle[] {
+  return getPlannedCycles().filter(c => c.pendingCloudSync === true);
 }
 
 export type OperationType = 'start_print' | 'manual_start' | 'complete' | 'cancel';
@@ -303,6 +340,9 @@ async function performCloudSync(
       if (error) {
         console.error('[cycleOperationSync] Upsert failed:', error);
         
+        // Mark cycle as pending sync to protect from hydration overwrite
+        markCycleAsPendingSync(payload.cycleId, error.message);
+        
         window.dispatchEvent(new CustomEvent('cycle-sync-result', {
           detail: { 
             type, 
@@ -324,6 +364,9 @@ async function performCloudSync(
         };
       }
       
+      // Sync succeeded - clear pending flag
+      clearCyclePendingSync(payload.cycleId);
+      
       console.log('[cycleOperationSync] Manual cycle synced:', data?.id);
     } else {
       // For updates to existing cycles (start_print, complete, cancel)
@@ -340,6 +383,9 @@ async function performCloudSync(
       
       if (error) {
         console.error('[cycleOperationSync] Update failed:', error);
+        
+        // Mark cycle as pending sync to protect from hydration overwrite
+        markCycleAsPendingSync(payload.cycleId, error.message);
         
         window.dispatchEvent(new CustomEvent('cycle-sync-result', {
           detail: { 
@@ -362,6 +408,8 @@ async function performCloudSync(
         };
       }
       
+      // Sync succeeded - clear pending flag
+      clearCyclePendingSync(payload.cycleId);
       console.log('[cycleOperationSync] Cycle updated:', data?.id);
     }
     
@@ -384,6 +432,9 @@ async function performCloudSync(
     
   } catch (err) {
     console.error('[cycleOperationSync] Unexpected error:', err);
+    
+    // Mark cycle as pending sync to protect from hydration overwrite
+    markCycleAsPendingSync(payload.cycleId, String(err));
     
     // Dispatch failure event with retry info
     window.dispatchEvent(new CustomEvent('cycle-sync-result', {

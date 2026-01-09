@@ -578,11 +578,57 @@ export async function hydrateLocalFromCloud(
             locked: false,
             projectUuid: c.project_id,
             cycleUuid: c.id,
+            // Cloud cycles are synced - no pending sync
+            pendingCloudSync: false,
           } as PlannedCycle & { projectUuid?: string; cycleUuid?: string };
         });
 
-        localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
-        console.log('[CloudBridge] OVERWRITE cycles to localStorage:', mappedCycles.length);
+        // CRITICAL: Preserve local cycles that have pendingCloudSync=true
+        // These are local changes that haven't synced yet - don't overwrite!
+        const pendingSyncCycles = existingLocalCycles.filter(
+          (c: PlannedCycle) => c.pendingCloudSync === true
+        );
+        
+        if (pendingSyncCycles.length > 0) {
+          console.log('[CloudBridge] Preserving', pendingSyncCycles.length, 'cycles with pendingCloudSync=true');
+          
+          // Build a map of cloud cycle IDs for quick lookup
+          const cloudCycleIds = new Set(mappedCycles.map(c => c.id));
+          const cloudCycleUuids = new Set(mappedCycles.map(c => c.cycleUuid).filter(Boolean));
+          
+          // Add pending cycles that aren't already in cloud data
+          for (const pending of pendingSyncCycles) {
+            const existsInCloud = cloudCycleIds.has(pending.id) || 
+                                  (pending.cycleUuid && cloudCycleUuids.has(pending.cycleUuid));
+            if (!existsInCloud) {
+              mappedCycles.push(pending);
+              console.log('[CloudBridge] Keeping pendingSync cycle:', pending.id, 'status:', pending.status);
+            }
+          }
+        }
+        
+        // Also preserve local in_progress cycles that cloud shows as planned
+        // (This handles the case where status update sync failed)
+        const localInProgressIds = new Set(
+          existingLocalCycles
+            .filter((c: PlannedCycle) => c.status === 'in_progress')
+            .map((c: PlannedCycle) => c.id)
+        );
+        
+        const finalCycles = mappedCycles.map(cloudCycle => {
+          if (localInProgressIds.has(cloudCycle.id) && cloudCycle.status === 'planned') {
+            // Local says in_progress, cloud says planned - trust local
+            const localCycle = existingLocalCycles.find((c: PlannedCycle) => c.id === cloudCycle.id);
+            if (localCycle) {
+              console.log('[CloudBridge] Preserving local in_progress status for cycle:', cloudCycle.id);
+              return { ...cloudCycle, ...localCycle, pendingCloudSync: true };
+            }
+          }
+          return cloudCycle;
+        });
+
+        localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(finalCycles));
+        console.log('[CloudBridge] OVERWRITE cycles to localStorage:', finalCycles.length, '(preserved', pendingSyncCycles.length, 'pending)');
       } else {
         // Cloud returned empty - but why?
         if (!fetchSucceeded) {
