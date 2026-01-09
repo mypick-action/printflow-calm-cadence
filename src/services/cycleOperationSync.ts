@@ -53,7 +53,7 @@ export function getPendingSyncCycles(): PlannedCycle[] {
   return getPlannedCycles().filter(c => c.pendingCloudSync === true);
 }
 
-export type OperationType = 'start_print' | 'manual_start' | 'complete' | 'cancel';
+export type OperationType = 'start_print' | 'manual_start' | 'complete' | 'cancel' | 'auto_start';
 
 export interface CycleOperationPayload {
   cycleId: string;

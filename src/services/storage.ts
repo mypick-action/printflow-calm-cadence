@@ -1336,6 +1336,50 @@ export const markPrinterCyclesAsFailed = (printerId: string): number => {
 };
 
 /**
+ * Automatically start the next planned/scheduled cycle for a printer.
+ * Called after a cycle completes (manually or automatically) to begin the next one in queue.
+ * Returns the started cycle, or null if no cycle available.
+ */
+export const startNextCycleForPrinter = (printerId: string): PlannedCycle | null => {
+  const cycles = getPlannedCycles();
+  const now = new Date();
+  
+  // Find the next planned cycle for this printer
+  // Note: 'scheduled' is cloud status, 'planned' is local status - both mean "ready to start"
+  // Sorted by startTime to get the earliest one
+  const nextCycle = cycles
+    .filter(c => 
+      c.printerId === printerId && 
+      c.status === 'planned'
+    )
+    .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+    [0];
+  
+  if (!nextCycle) {
+    console.log(`[storage] No next cycle to auto-start for printer ${printerId}`);
+    return null;
+  }
+  
+  // Calculate new end time based on cycle duration
+  const originalStart = new Date(nextCycle.startTime);
+  const originalEnd = new Date(nextCycle.endTime);
+  const durationMs = originalEnd.getTime() - originalStart.getTime();
+  const newEndTime = new Date(now.getTime() + durationMs);
+  
+  // Update the cycle to in_progress with new start time
+  const updatedCycle = updatePlannedCycle(nextCycle.id, {
+    status: 'in_progress',
+    startTime: now.toISOString(),
+    actualStartTime: now.toISOString(),
+    endTime: newEndTime.toISOString(),
+  });
+  
+  console.log(`[storage] Auto-started cycle ${nextCycle.id} for printer ${printerId}`);
+  
+  return updatedCycle || null;
+};
+
+/**
  * Clean up stale "in_progress" cycles whose end_time has passed.
  * These cycles are auto-completed to prevent "printer busy" false positives.
  * Returns the IDs of cycles that were cleaned up.
@@ -1383,6 +1427,25 @@ export const cleanupStaleCycles = async (): Promise<string[]> => {
         console.log(`[storage] Synced stale cycle ${cycle.id} to cloud as completed`);
       } catch (err) {
         console.error(`[storage] Failed to sync stale cycle ${cycle.id} to cloud:`, err);
+      }
+      
+      // AUTO-START next cycle for this printer
+      const startedNext = startNextCycleForPrinter(cycle.printerId);
+      if (startedNext) {
+        console.log(`[storage] Auto-started next cycle ${startedNext.id} after stale cleanup for printer ${cycle.printerId}`);
+        // Sync the auto-started cycle to cloud
+        try {
+          await syncCycleOperation('auto_start', {
+            cycleId: startedNext.id,
+            projectId: startedNext.projectId,
+            printerId: startedNext.printerId,
+            status: 'in_progress',
+            startTime: startedNext.startTime,
+            endTime: startedNext.endTime,
+          });
+        } catch (err) {
+          console.error(`[storage] Failed to sync auto-started cycle ${startedNext.id} to cloud:`, err);
+        }
       }
     }
   }
@@ -1633,6 +1696,14 @@ export const logCycle = (log: Omit<CycleLog, 'id' | 'timestamp'>): LogCycleWithR
     updatePlannedCycle(log.plannedCycleId, {
       status: (log.result === 'failed' || log.result === 'cancelled') ? 'failed' : 'completed',
     });
+  }
+  
+  // AUTO-START next cycle for this printer (if cycle completed successfully)
+  if (log.result !== 'cancelled' && log.result !== 'failed') {
+    const startedNext = startNextCycleForPrinter(log.printerId);
+    if (startedNext) {
+      console.log(`[storage] Auto-started next cycle ${startedNext.id} for printer ${log.printerId}`);
+    }
   }
   
   return { log: newLog, remakeProject };
