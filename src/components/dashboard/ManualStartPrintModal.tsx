@@ -190,6 +190,8 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     // Create multiple cycles based on plate count
     const cyclesToCreate: PlannedCycle[] = [];
     
+    console.log(`[ManualStartPrintModal] Creating ${plates} plates for printer ${selectedPrinterId}`);
+    
     for (let i = 0; i < plates; i++) {
       const cycleStart = addHours(start, i * hours);
       const cycleEnd = addHours(cycleStart, hours);
@@ -209,7 +211,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
         source: 'manual',
         locked: true,
         actualStartTime: i === 0 ? cycleStart.toISOString() : undefined,
-        readinessState: i === 0 ? 'ready' : undefined,
+        readinessState: 'ready', // All manual cycles are ready
         requiredColor: selectedProject.color,
         requiredMaterial: 'PLA',
         requiredGrams: units * gramsPerUnit,
@@ -221,6 +223,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
         presetSelectionReason: 'manual_selection',
       };
 
+      console.log(`[ManualStartPrintModal] Created cycle ${i + 1}/${plates}: ${cycle.id}, status: ${cycle.status}`);
       cyclesToCreate.push(cycle);
     }
 
@@ -284,6 +287,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
   const unitsPerPlate = parseInt(unitsPlanned) || defaultUnits;
   const totalHours = totalPlates * hoursPerPlate;
   const totalUnits = totalPlates * unitsPerPlate;
+  const totalGrams = totalUnits * gramsPerUnit;
   const estimatedEndTime = addHours(new Date(startTime), totalHours);
 
   const canSubmit = selectedProjectId && selectedPrinterId && !printerIsBusy;
@@ -454,8 +458,8 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
               </div>
               <div className="text-xs text-muted-foreground mt-1">
                 {language === 'he' 
-                  ? `${totalUnits} יחידות • סיום משוער: ${format(estimatedEndTime, 'HH:mm dd/MM')}`
-                  : `${totalUnits} units • Est. completion: ${format(estimatedEndTime, 'MM/dd HH:mm')}`}
+                  ? `${totalUnits} יחידות • ${totalGrams}g • סיום משוער: ${format(estimatedEndTime, 'HH:mm dd/MM')}`
+                  : `${totalUnits} units • ${totalGrams}g • Est. completion: ${format(estimatedEndTime, 'MM/dd HH:mm')}`}
               </div>
             </div>
           )}
