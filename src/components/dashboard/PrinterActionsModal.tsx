@@ -203,129 +203,37 @@ export const PrinterActionsModal: React.FC<PrinterActionsModalProps> = ({
   };
 
   // Handle switching to manual print
-  const handleSwitchToManual = () => {
-    // Always close this modal first
-    onOpenChange(false);
-    
-    // If there's any current cycle (planned or in_progress), open manual print modal
+  // Always cancels current cycle (if any) and opens manual print modal
+  const handleSwitchToManual = async () => {
+    // If there's a current cycle (planned or in_progress), cancel it first
+    // This means: "ignore planned work, I want to do something different"
     if (currentCycle) {
-      if (onOpenManualPrint) {
-        // Small delay to let this modal close first
-        setTimeout(() => {
-          onOpenManualPrint(printerId);
-        }, 100);
-      }
-    } else {
-      // If printer is completely idle (no cycles), auto-generate optimal job
-      const projects = getActiveProjects();
-      const products = getProducts();
-      const printerObj = getPrinter(printerId);
-      
-      if (!projects.length || !products.length || !printerObj) {
-        toast.error(
-          language === 'he' ? 'אין פרויקטים זמינים' : 'No projects available'
-        );
-        return;
-      }
-      
-      // Find best project for this printer (prioritize by urgency, then deadline)
-      const sortedProjects = projects
-        .filter(p => p.quantityTarget > p.quantityGood)
-        .sort((a, b) => {
-          const urgencyOrder = { critical: 0, urgent: 1, normal: 2 };
-          if (urgencyOrder[a.urgency] !== urgencyOrder[b.urgency]) {
-            return urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
-          }
-          return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-        });
-      
-      const bestProject = sortedProjects[0];
-      if (!bestProject) {
-        toast.error(
-          language === 'he' ? 'אין פרויקטים זמינים להדפסה' : 'No projects available for printing'
-        );
-        return;
-      }
-      
-      const product = products.find(p => p.id === bestProject.productId);
-      if (!product || !product.platePresets?.length) {
-        toast.error(
-          language === 'he' ? 'המוצר חסר פריסות' : 'Product missing presets'
-        );
-        return;
-      }
-      
-      // Calculate optimal preset
-      const remainingUnits = bestProject.quantityTarget - bestProject.quantityGood;
-      const availableGrams = getAvailableGramsByColor(bestProject.color);
-      
-      const presetResult = selectOptimalPreset(
-        product,
-        remainingUnits,
-        24, // Max available hours for auto-start
-        availableGrams,
-        false, // Not a night slot
-        bestProject.preferredPresetId
-      );
-      
-      if (!presetResult) {
-        toast.error(
-          language === 'he' ? 'לא נמצאה פריסה מתאימה' : 'No suitable preset found'
-        );
-        return;
-      }
-      
-      const { preset, reason } = presetResult;
-      const start = new Date();
-      const end = addHours(start, preset.cycleHours);
-      const unitsForCycle = Math.min(preset.unitsPerPlate, remainingUnits);
-      const gramsForCycle = unitsForCycle * product.gramsPerUnit;
-      
-      // Create the cycle
-      const newCycle: PlannedCycle = {
-        id: `auto-manual-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        projectId: bestProject.id,
-        printerId: printerId,
-        unitsPlanned: unitsForCycle,
-        gramsPlanned: gramsForCycle,
-        plateType: unitsForCycle < preset.unitsPerPlate ? 'reduced' : 'full',
-        startTime: start.toISOString(),
-        endTime: end.toISOString(),
-        shift: 'day',
-        status: 'in_progress',
-        source: 'manual',
-        locked: true,
-        actualStartTime: start.toISOString(),
-        readinessState: 'ready',
-        requiredColor: bestProject.color,
-        requiredMaterial: 'PLA',
-        requiredGrams: gramsForCycle,
-        presetId: preset.id,
-        presetName: preset.name,
-        presetSelectionReason: reason,
-      };
-      
-      addManualCycle(newCycle);
-      
-      // Update printer state
-      updatePrinter(printerId, { 
-        mountState: 'in_use',
-        mountedColor: bestProject.color,
-        currentMaterial: 'PLA',
+      // Cancel the current cycle locally
+      updatePlannedCycle(currentCycle.id, {
+        status: 'cancelled',
+        cancelledAt: new Date().toISOString(),
+        cancelReason: 'switched_to_manual',
       });
       
-      scheduleAutoReplan('auto_manual_cycle_added');
+      // Sync cancellation to cloud
+      await syncCycleOperation('cancel', {
+        cycleId: currentCycle.id,
+        projectId: currentCycle.projectId,
+        printerId: printerId,
+        status: 'cancelled',
+      });
       
-      toast.success(
-        language === 'he' ? 'העבודה הושמה אוטומטית' : 'Job auto-assigned',
-        { description: language === 'he' 
-          ? `${bestProject.name} - ${preset.name} (${unitsForCycle} יחידות)`
-          : `${bestProject.name} - ${preset.name} (${unitsForCycle} units)`
-        }
-      );
-      
-      onComplete();
-      onOpenChange(false);
+      console.log('[PrinterActionsModal] Cancelled cycle before switching to manual:', currentCycle.id);
+    }
+    
+    // Close this modal and open manual print modal
+    onOpenChange(false);
+    
+    if (onOpenManualPrint) {
+      // Small delay to let this modal close first
+      setTimeout(() => {
+        onOpenManualPrint(printerId);
+      }, 100);
     }
   };
 
