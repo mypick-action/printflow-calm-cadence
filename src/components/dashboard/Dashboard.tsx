@@ -86,11 +86,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     setManualStartModalOpen(true);
   };
 
-  const refreshData = useCallback(() => {
+  const refreshData = useCallback(async () => {
     setIsLoading(true);
     
     // Cleanup stale in_progress cycles before calculating the plan
-    const cleaned = cleanupStaleCycles();
+    // This is now async to sync changes to cloud
+    const cleaned = await cleanupStaleCycles();
     if (cleaned.length > 0) {
       console.log(`[Dashboard] Auto-completed ${cleaned.length} stale cycles`);
     }
