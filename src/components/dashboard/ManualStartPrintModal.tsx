@@ -152,8 +152,11 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     const start = new Date(startTime);
     const hours = parseFloat(estimatedHours) || defaultHours;
     const units = parseInt(unitsPlanned) || defaultUnits;
-    const plates = Math.max(1, Math.min(10, parseInt(plateCount) || 1));
+    const rawPlateCount = parseInt(plateCount) || 1;
+    const plates = Math.max(1, Math.min(10, rawPlateCount));
     const spoolGramsNum = parseInt(spoolGrams) || undefined;
+    
+    console.log(`[ManualStartPrintModal] 🔵 handleSubmit called - plateCount state: "${plateCount}", parsed: ${rawPlateCount}, final plates: ${plates}`);
     
     // Calculate estimated end time for conflict detection
     const manualEndTime = addHours(start, plates * hours);
@@ -190,7 +193,7 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     // Create multiple cycles based on plate count
     const cyclesToCreate: PlannedCycle[] = [];
     
-    console.log(`[ManualStartPrintModal] Creating ${plates} plates for printer ${selectedPrinterId}`);
+    console.log(`[ManualStartPrintModal] ⭐ Creating ${plates} plates for printer ${selectedPrinterId}, plateCount input: "${plateCount}", parsed: ${parseInt(plateCount) || 1}`);
     
     for (let i = 0; i < plates; i++) {
       const cycleStart = addHours(start, i * hours);
