@@ -704,55 +704,88 @@ export const upsertProjectByLegacyId = async (
 };
 
 // Upsert planned cycle by legacy_id (for idempotent local migration)
+// FIXED: Now checks if cycle exists by id OR legacy_id to prevent duplicates
 export type UpsertPlannedCycleData = Omit<DbPlannedCycle, 'id' | 'workspace_id' | 'legacy_id' | 'created_at' | 'updated_at'>;
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const upsertPlannedCycleByLegacyId = async (
   workspaceId: string,
   legacyId: string,
   cycle: UpsertPlannedCycleData
 ): Promise<{ data: DbPlannedCycle | null; created: boolean }> => {
+  // STEP 1: Check if cycle already exists by legacy_id
+  const { data: existingByLegacy } = await supabase
+    .from('planned_cycles')
+    .select('*')
+    .eq('workspace_id', workspaceId)
+    .eq('legacy_id', legacyId)
+    .maybeSingle();
+  
+  if (existingByLegacy) {
+    // UPDATE existing (don't create new)
+    const { data: updated, error: updateErr } = await supabase
+      .from('planned_cycles')
+      .update({ ...cycle, updated_at: new Date().toISOString() })
+      .eq('id', existingByLegacy.id)
+      .select()
+      .single();
+    
+    if (updateErr) {
+      console.error('[cloudStorage] Error updating cycle by legacy_id:', updateErr);
+      return { data: null, created: false };
+    }
+    console.log('[cloudStorage] Updated existing cycle by legacy_id:', existingByLegacy.id);
+    return { data: updated, created: false };
+  }
+  
+  // STEP 2: Check if legacyId is actually a UUID that exists as id
+  const isUuid = UUID_REGEX.test(legacyId);
+  if (isUuid) {
+    const { data: existingById } = await supabase
+      .from('planned_cycles')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .eq('id', legacyId)
+      .maybeSingle();
+    
+    if (existingById) {
+      // UPDATE using the actual id - don't create duplicate!
+      const { data: updated, error: updateErr } = await supabase
+        .from('planned_cycles')
+        .update({ ...cycle, updated_at: new Date().toISOString() })
+        .eq('id', legacyId)
+        .select()
+        .single();
+      
+      if (updateErr) {
+        console.error('[cloudStorage] Error updating cycle by id:', updateErr);
+        return { data: null, created: false };
+      }
+      console.log('[cloudStorage] Updated existing cycle by id:', legacyId);
+      return { data: updated, created: false };
+    }
+  }
+  
+  // STEP 3: Insert new with new UUID
+  const newId = crypto.randomUUID();
   const { data, error } = await supabase
     .from('planned_cycles')
-    .upsert({
+    .insert({
       ...cycle,
-      id: crypto.randomUUID(),
+      id: newId,
       workspace_id: workspaceId,
       legacy_id: legacyId,
-    }, {
-      onConflict: 'workspace_id,legacy_id',
-      ignoreDuplicates: false,
     })
     .select()
     .single();
   
   if (error) {
-    if (error.code === '23505') {
-      const { data: existing } = await supabase
-        .from('planned_cycles')
-        .select('*')
-        .eq('workspace_id', workspaceId)
-        .eq('legacy_id', legacyId)
-        .single();
-      
-      if (existing) {
-        const { data: updated, error: updateErr } = await supabase
-          .from('planned_cycles')
-          .update(cycle)
-          .eq('id', existing.id)
-          .select()
-          .single();
-        
-        if (updateErr) {
-          console.error('Error updating planned cycle by legacy_id:', updateErr);
-          return { data: null, created: false };
-        }
-        return { data: updated, created: false };
-      }
-    }
-    console.error('Error upserting planned cycle by legacy_id:', error);
+    console.error('[cloudStorage] Error inserting new cycle:', error);
     return { data: null, created: false };
   }
   
+  console.log('[cloudStorage] Created new cycle:', newId, 'legacy_id:', legacyId);
   return { data, created: true };
 };
 
