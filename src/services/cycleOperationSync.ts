@@ -3,7 +3,7 @@
 // Separates UI from cloud logic and ensures consistent field mapping
 
 import { supabase } from '@/integrations/supabase/client';
-import { getProjectsSync, findProjectById } from '@/services/storage';
+import { getProjectsSync, findProjectById, getPrinters } from '@/services/storage';
 import { isUuid, getCachedWorkspaceId, setCachedWorkspaceId } from '@/services/cloudBridge';
 import type { DbPlannedCycle } from '@/services/cloudStorage';
 
@@ -61,6 +61,41 @@ export function resolveProjectCloudId(projectId: string): string | null {
   if (isUuid(project.id)) return project.id;
   
   console.error('[cycleOperationSync] No valid UUID for project:', projectId, { cloudId, cloudUuid });
+  return null;
+}
+
+// ============= PRINTER ID RESOLUTION =============
+
+/**
+ * Resolve a local printer ID to a valid cloud UUID
+ * Priority: if already UUID → use as is, else find printer by ID or printer number
+ */
+export function resolvePrinterCloudId(printerId: string): string | null {
+  // Already a valid UUID
+  if (isUuid(printerId)) {
+    return printerId;
+  }
+  
+  // Load printers from localStorage
+  const printers = getPrinters();
+  
+  // Try exact ID match first
+  const exactMatch = printers.find(p => p.id === printerId);
+  if (exactMatch && isUuid(exactMatch.id)) {
+    return exactMatch.id;
+  }
+  
+  // Try parsing printer-X format (e.g., "printer-10" → 10)
+  const match = printerId.match(/^printer-(\d+)$/);
+  if (match) {
+    const printerNum = parseInt(match[1], 10);
+    const byNumber = printers.find(p => p.printerNumber === printerNum);
+    if (byNumber && isUuid(byNumber.id)) {
+      return byNumber.id;
+    }
+  }
+  
+  console.error('[cycleOperationSync] Could not resolve printer UUID for:', printerId);
   return null;
 }
 
@@ -215,6 +250,32 @@ async function performCloudSync(
       };
     }
     
+    // Resolve printer ID to cloud UUID
+    const printerUuid = resolvePrinterCloudId(payload.printerId);
+    
+    if (!printerUuid) {
+      console.error('[cycleOperationSync] Could not resolve printer UUID for:', payload.printerId);
+      
+      window.dispatchEvent(new CustomEvent('cycle-sync-result', {
+        detail: { 
+          type, 
+          cycleId: payload.cycleId, 
+          success: true, 
+          localSaved: true,
+          cloudSynced: false, 
+          error: 'לא נמצא UUID למדפסת',
+          canRetry: false,
+        },
+      }));
+      
+      return {
+        success: true,
+        localSaved: true,
+        cloudSynced: false,
+        error: 'לא נמצא UUID למדפסת - נשמר מקומית בלבד',
+      };
+    }
+    
     // Map fields to cloud format
     const cloudFields = mapLocalToCloudFields(payload);
     
@@ -226,7 +287,7 @@ async function performCloudSync(
           id: payload.cycleId,
           workspace_id: workspaceId,
           project_id: projectUuid,
-          printer_id: payload.printerId,
+          printer_id: printerUuid,
           scheduled_date: payload.scheduledDate || new Date().toISOString().split('T')[0],
           units_planned: payload.unitsPlanned || 1,
           cycle_index: payload.cycleIndex || 0,
