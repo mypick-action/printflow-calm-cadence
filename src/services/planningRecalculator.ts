@@ -14,7 +14,7 @@ import {
 import { generatePlan, BlockingIssue, PlanningWarning } from './planningEngine';
 import { addPlanningLogEntry } from './planningLogger';
 import { pdebug } from './planningDebug';
-import { upsertPlannedCycleByLegacyId, deleteCloudCyclesByDateRange } from './cloudStorage';
+import { upsertPlannedCycleByLegacyId, deleteCloudCyclesByDateRange, cleanupOldScheduledCycles, cleanupDuplicateCycles } from './cloudStorage';
 import { setReplanInProgress, pauseHydrationFor, markCyclesAsRecentlyGenerated } from './cloudBridge';
 import { supabase } from '@/integrations/supabase/client';
 import { formatDateStringLocal } from './dateUtils';
@@ -197,6 +197,7 @@ export const recalculatePlan = async (
   pauseHydrationFor(20000, 'replan');
   
   try {
+    // Sync includes cleanup of old cycles and duplicates
     const syncResult = await syncCyclesToCloud(newCycles, startDate);
     cloudSyncSuccess = syncResult.success;
     cloudSyncError = syncResult.error;
@@ -327,6 +328,15 @@ async function syncCyclesToCloud(cycles: PlannedCycle[], startDate?: Date): Prom
   if (!workspaceId) {
     console.log('[planningRecalculator] No workspace, skipping cloud sync');
     return { success: false, synced: 0, errors: 0, skipped: 0, error: 'No workspace' };
+  }
+  
+  // STEP 0: Clean up old scheduled cycles and duplicates before syncing new ones
+  const [oldCleaned, dupesCleaned] = await Promise.all([
+    cleanupOldScheduledCycles(workspaceId),
+    cleanupDuplicateCycles(workspaceId),
+  ]);
+  if (oldCleaned > 0 || dupesCleaned > 0) {
+    console.log(`[planningRecalculator] Cleanup: ${oldCleaned} old + ${dupesCleaned} duplicates removed`);
   }
   
   // STEP 1: DELETE old planned/scheduled cycles from the planning range

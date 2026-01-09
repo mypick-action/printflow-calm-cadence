@@ -1044,6 +1044,82 @@ export const deleteCloudCyclesByDateRange = async (
   return count || 0;
 };
 
+/**
+ * Clean up old scheduled/planned cycles from past dates.
+ * These are stale cycles that should have been completed or removed.
+ */
+export const cleanupOldScheduledCycles = async (workspaceId: string): Promise<number> => {
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  
+  console.log('[CloudStorage] Cleaning up old scheduled cycles before:', today);
+  
+  const { data, error } = await supabase
+    .from('planned_cycles')
+    .delete()
+    .eq('workspace_id', workspaceId)
+    .in('status', ['scheduled', 'planned'])
+    .lt('scheduled_date', today)
+    .select('id');
+  
+  if (error) {
+    console.error('[CloudStorage] Error cleaning up old cycles:', error);
+    return 0;
+  }
+  
+  const deletedCount = data?.length || 0;
+  if (deletedCount > 0) {
+    console.log(`[CloudStorage] Cleaned up ${deletedCount} old scheduled cycles`);
+  }
+  
+  return deletedCount;
+};
+
+/**
+ * Clean up duplicate cycles where legacy_id matches another cycle's id.
+ * This handles duplicates created by the old upsertPlannedCycleByLegacyId bug.
+ */
+export const cleanupDuplicateCycles = async (workspaceId: string): Promise<number> => {
+  console.log('[CloudStorage] Cleaning up duplicate cycles...');
+  
+  // Get all cycles for this workspace
+  const { data: allCycles, error: fetchErr } = await supabase
+    .from('planned_cycles')
+    .select('id, legacy_id')
+    .eq('workspace_id', workspaceId);
+  
+  if (fetchErr || !allCycles) {
+    console.error('[CloudStorage] Error fetching cycles for dedup:', fetchErr);
+    return 0;
+  }
+  
+  // Build set of all IDs
+  const allIds = new Set(allCycles.map(c => c.id));
+  
+  // Find cycles where legacy_id matches an existing id (duplicates)
+  const duplicateIds = allCycles
+    .filter(c => c.legacy_id && allIds.has(c.legacy_id))
+    .map(c => c.id);
+  
+  if (duplicateIds.length === 0) {
+    console.log('[CloudStorage] No duplicate cycles found');
+    return 0;
+  }
+  
+  // Delete duplicates
+  const { error: deleteErr } = await supabase
+    .from('planned_cycles')
+    .delete()
+    .in('id', duplicateIds);
+  
+  if (deleteErr) {
+    console.error('[CloudStorage] Error deleting duplicate cycles:', deleteErr);
+    return 0;
+  }
+  
+  console.log(`[CloudStorage] Cleaned up ${duplicateIds.length} duplicate cycles`);
+  return duplicateIds.length;
+};
+
 // ============= CYCLE LOGS =============
 
 export const getCycleLogs = async (workspaceId: string): Promise<DbCycleLog[]> => {
