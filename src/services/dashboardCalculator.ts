@@ -199,10 +199,10 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     });
   }
   
-  // DEDUPLICATION: Remove duplicate cycles (same printer + start time + project)
+  // DEDUPLICATION: Remove duplicate cycles (same printer + start time)
   // Priority: in_progress > scheduled/planned > completed
   // Also filter out stale in_progress cycles (end_time has passed)
-  // IMPORTANT: Use cycle ID as part of key to prevent manual multi-plate sequences from being deduplicated
+  // IMPORTANT: Use printerId + startTime ONLY (ignore projectId - can differ due to UUID/legacy mismatch)
   const now = new Date();
   const cyclesByKey = new Map<string, PlannedCycle>();
   
@@ -223,7 +223,8 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
     // For manual cycles with plateIndex, include plateIndex in key to prevent deduplication
     // This allows multiple plates from the same manual sequence to coexist
     const plateKey = cycle.source === 'manual' && cycle.plateIndex ? `-plate${cycle.plateIndex}` : '';
-    const key = `${cycle.printerId}-${cycle.startTime}-${cycle.projectId}${plateKey}`;
+    // FIXED: Use printerId + startTime ONLY - ignore projectId (can differ due to UUID/legacy mismatch)
+    const key = `${cycle.printerId}-${cycle.startTime}${plateKey}`;
     const existing = cyclesByKey.get(key);
     
     // Check if this in_progress cycle is stale (end_time passed)
@@ -244,7 +245,7 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
         console.log(`[DashboardCalculator] Replacing ${existing.status} cycle with ${cycle.status}: ${cycle.id}`);
         cyclesByKey.set(key, cycle);
       } else {
-        console.log(`[DashboardCalculator] DUPLICATE FOUND - existing: ${existing.id.substring(0,8)}, new: ${cycle.id.substring(0,8)}, key: ${key}, plateIndex: ${cycle.plateIndex}`);
+        console.log(`[DashboardCalculator] DUPLICATE REMOVED - key: ${key}, kept: ${existing.id.substring(0,8)}, removed: ${cycle.id.substring(0,8)}`);
       }
     }
   });
