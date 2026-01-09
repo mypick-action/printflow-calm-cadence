@@ -96,15 +96,27 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
     return availablePresets.find(p => p.isRecommended) || availablePresets[0];
   }, [selectedPresetId, availablePresets]);
 
-  // Cleanup stale cycles when modal opens
+  // Reset state when modal opens, and set defaults from props
   useEffect(() => {
     if (open) {
+      // Cleanup stale cycles first
       const cleaned = cleanupStaleCycles();
       if (cleaned.length > 0) {
         console.log(`[ManualStartPrintModal] Auto-completed ${cleaned.length} stale cycles`);
       }
+      
+      // Set defaults from props
+      if (defaultPrinterId) {
+        setSelectedPrinterId(defaultPrinterId);
+      }
+      if (defaultProjectId) {
+        setSelectedProjectId(defaultProjectId);
+      }
+      
+      // Reset time to now
+      setStartTime(format(new Date(), "yyyy-MM-dd'T'HH:mm"));
     }
-  }, [open]);
+  }, [open, defaultPrinterId, defaultProjectId]);
 
   // Reset preset when project changes
   useEffect(() => {
@@ -118,10 +130,15 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
   const defaultUnits = selectedPreset?.unitsPerPlate || 1;
   const gramsPerUnit = selectedProduct?.gramsPerUnit || 10;
 
+  // Check if the printer has an in_progress cycle that wasn't cancelled
+  // Note: If user came from PrinterActionsModal, the cycle should already be cancelled
   const printerIsBusy = useMemo(() => {
     if (!selectedPrinterId) return false;
     const cycles = getPlannedCycles();
-    return cycles.some(c => c.printerId === selectedPrinterId && c.status === 'in_progress');
+    return cycles.some(c => 
+      c.printerId === selectedPrinterId && 
+      c.status === 'in_progress'
+    );
   }, [selectedPrinterId, open]);
 
   const handleProjectChange = (projectId: string) => {
