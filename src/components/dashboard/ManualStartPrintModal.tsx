@@ -261,11 +261,25 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
       });
     }
 
+    // Calculate how many plates are today vs tomorrow
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const platesToday = cyclesToCreate.filter(c => format(new Date(c.startTime), 'yyyy-MM-dd') === todayStr).length;
+    const platesTomorrow = plates - platesToday;
+    
+    let toastDescription: string;
+    if (platesTomorrow > 0) {
+      toastDescription = language === 'he'
+        ? `${plates} פלטות נוספו (${platesToday} היום, ${platesTomorrow} מחר) - ${plates * units} יחידות`
+        : `${plates} plates added (${platesToday} today, ${platesTomorrow} tomorrow) - ${plates * units} units`;
+    } else {
+      toastDescription = language === 'he' 
+        ? `${plates} פלטות נוספו לתור (${plates * units} יחידות)`
+        : `${plates} plates added to queue (${plates * units} units)`;
+    }
+    
     toast({
       title: language === 'he' ? 'הדפסה התחילה' : 'Print started',
-      description: language === 'he' 
-        ? `${plates} פלטות נוספו לתור (${plates * units} יחידות)`
-        : `${plates} plates added to queue (${plates * units} units)`,
+      description: toastDescription,
     });
     
     // Schedule replan for planning updates
