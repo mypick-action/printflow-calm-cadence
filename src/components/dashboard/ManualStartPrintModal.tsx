@@ -99,11 +99,12 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
   // Reset state when modal opens, and set defaults from props
   useEffect(() => {
     if (open) {
-      // Cleanup stale cycles first
-      const cleaned = cleanupStaleCycles();
-      if (cleaned.length > 0) {
-        console.log(`[ManualStartPrintModal] Auto-completed ${cleaned.length} stale cycles`);
-      }
+      // Cleanup stale cycles first (async - fire and forget for modal open)
+      cleanupStaleCycles().then(cleaned => {
+        if (cleaned.length > 0) {
+          console.log(`[ManualStartPrintModal] Auto-completed ${cleaned.length} stale cycles`);
+        }
+      });
       
       // Set defaults from props
       if (defaultPrinterId) {

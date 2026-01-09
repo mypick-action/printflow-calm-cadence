@@ -1335,11 +1335,15 @@ export const markPrinterCyclesAsFailed = (printerId: string): number => {
  * Clean up stale "in_progress" cycles whose end_time has passed.
  * These cycles are auto-completed to prevent "printer busy" false positives.
  * Returns the IDs of cycles that were cleaned up.
+ * 
+ * ASYNC version: Also syncs the status change to cloud to prevent
+ * hydration from restoring stale in_progress status.
  */
-export const cleanupStaleCycles = (): string[] => {
+export const cleanupStaleCycles = async (): Promise<string[]> => {
   const now = new Date();
   const cycles = getPlannedCycles();
   const cleanedIds: string[] = [];
+  const cleanedCycles: PlannedCycle[] = [];
   
   const updatedCycles = cycles.map(c => {
     if (c.status === 'in_progress' && c.endTime) {
@@ -1347,17 +1351,36 @@ export const cleanupStaleCycles = (): string[] => {
       if (now > endTime) {
         console.log(`[storage] Auto-completing stale cycle ${c.id} (ended at ${c.endTime})`);
         cleanedIds.push(c.id);
-        return {
-          ...c,
-          status: 'completed' as const,
-        };
+        const updated = { ...c, status: 'completed' as const };
+        cleanedCycles.push(updated);
+        return updated;
       }
     }
     return c;
   });
   
   if (cleanedIds.length > 0) {
+    // Update local storage first
     setItem(KEYS.PLANNED_CYCLES, updatedCycles);
+    
+    // Sync each cleaned cycle to cloud
+    // Import dynamically to avoid circular dependency
+    const { syncCycleOperation } = await import('./cycleOperationSync');
+    
+    for (const cycle of cleanedCycles) {
+      try {
+        await syncCycleOperation('complete', {
+          cycleId: cycle.id,
+          projectId: cycle.projectId,
+          printerId: cycle.printerId,
+          status: 'completed',
+          endTime: cycle.endTime,
+        });
+        console.log(`[storage] Synced stale cycle ${cycle.id} to cloud as completed`);
+      } catch (err) {
+        console.error(`[storage] Failed to sync stale cycle ${cycle.id} to cloud:`, err);
+      }
+    }
   }
   
   return cleanedIds;
