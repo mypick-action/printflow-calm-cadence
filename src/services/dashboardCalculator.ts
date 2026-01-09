@@ -206,6 +206,19 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
   const now = new Date();
   const cyclesByKey = new Map<string, PlannedCycle>();
   
+  // DEBUG: Log all manual cycles before deduplication
+  const manualCycles = plannedCycles.filter(c => c.source === 'manual');
+  if (manualCycles.length > 0) {
+    console.log(`[DashboardCalculator] MANUAL CYCLES BEFORE DEDUP (${manualCycles.length}):`, 
+      manualCycles.map(c => ({
+        id: c.id.substring(0, 8),
+        plateIndex: c.plateIndex,
+        startTime: c.startTime,
+        status: c.status,
+      }))
+    );
+  }
+
   plannedCycles.forEach(cycle => {
     // For manual cycles with plateIndex, include plateIndex in key to prevent deduplication
     // This allows multiple plates from the same manual sequence to coexist
@@ -231,7 +244,7 @@ export const calculateTodayPlan = (targetDate: Date = new Date()): TodayPlanResu
         console.log(`[DashboardCalculator] Replacing ${existing.status} cycle with ${cycle.status}: ${cycle.id}`);
         cyclesByKey.set(key, cycle);
       } else {
-        console.log(`[DashboardCalculator] DUPLICATE FOUND - existing: ${existing.id.substring(0,8)}, new: ${cycle.id.substring(0,8)}, key: ${key}`);
+        console.log(`[DashboardCalculator] DUPLICATE FOUND - existing: ${existing.id.substring(0,8)}, new: ${cycle.id.substring(0,8)}, key: ${key}, plateIndex: ${cycle.plateIndex}`);
       }
     }
   });
