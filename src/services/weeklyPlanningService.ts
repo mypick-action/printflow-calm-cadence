@@ -401,14 +401,45 @@ export interface CyclesByDayAndPrinter {
 
 /**
  * Get cycles organized by printer and day for the grid view
+ * IMPORTANT: Uses deduplication to prevent duplicate cycles from appearing
  */
 export function getCyclesByDayAndPrinter(): CyclesByDayAndPrinter {
   const weekDays = getWeekRange();
   const startDate = weekDays[0].dateStr;
   const endDate = weekDays[6].dateStr;
   
-  const cycles = getPlannedCyclesForWeek(startDate, endDate);
+  const allCycles = getPlannedCyclesForWeek(startDate, endDate);
   const printers = getPrinters();
+  
+  // DEDUPLICATION: Remove duplicate cycles by printerId + startTime
+  // Priority: in_progress > planned > scheduled > completed
+  const cyclesByKey = new Map<string, PlannedCycle>();
+  
+  for (const cycle of allCycles) {
+    // Use printerId + startTime as key (ignore projectId - it can differ due to UUID/legacy mismatch)
+    const key = `${cycle.printerId}-${cycle.startTime}`;
+    const existing = cyclesByKey.get(key);
+    
+    if (!existing) {
+      cyclesByKey.set(key, cycle);
+    } else {
+      // Priority: in_progress > planned > scheduled > other
+      const statusPriority = (s: string) => {
+        if (s === 'in_progress') return 0;
+        if (s === 'planned') return 1;
+        if (s === 'scheduled') return 2;
+        return 3; // completed, failed, cancelled
+      };
+      
+      if (statusPriority(cycle.status) < statusPriority(existing.status)) {
+        console.log(`[WeeklyPlanning] Replacing ${existing.status} with ${cycle.status} for key: ${key}`);
+        cyclesByKey.set(key, cycle);
+      }
+    }
+  }
+  
+  const cycles = Array.from(cyclesByKey.values());
+  console.log(`[WeeklyPlanning] Deduplicated: ${allCycles.length} → ${cycles.length} cycles`);
   
   const result: CyclesByDayAndPrinter = {};
   

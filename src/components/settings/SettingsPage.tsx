@@ -25,7 +25,9 @@ import {
   AlertTriangle,
   RotateCcw,
   Zap,
-  Scale
+  Scale,
+  CloudDownload,
+  Loader2
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { 
@@ -36,8 +38,10 @@ import {
   isDemoMode,
   getFactorySettings,
   saveFactorySettings,
-  SchedulingStrategy
+  SchedulingStrategy,
+  KEYS
 } from '@/services/storage';
+import { hydrateLocalFromCloud, getCachedWorkspaceId } from '@/services/cloudBridge';
 import { WorkScheduleSection } from './WorkScheduleSection';
 import { CloudDebugPanel } from '@/components/debug/CloudDebugPanel';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
@@ -51,6 +55,7 @@ export const SettingsPage: React.FC = () => {
   const [schedulingStrategy, setSchedulingStrategy] = useState<SchedulingStrategy>('compress');
   const [hasChanges, setHasChanges] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const demoMode = isDemoMode();
 
   useEffect(() => {
@@ -104,6 +109,71 @@ export const SettingsPage: React.FC = () => {
       // Reload the page to show bootstrap screen
       window.location.reload();
     }, 300);
+  };
+
+  const handleRefreshFromCloud = async () => {
+    setIsRefreshing(true);
+    
+    try {
+      const workspaceId = getCachedWorkspaceId();
+      
+      if (!workspaceId) {
+        toast({
+          title: language === 'he' ? 'שגיאה' : 'Error',
+          description: language === 'he' 
+            ? 'אין חיבור לענן. נסה להתחבר מחדש.'
+            : 'No cloud connection. Try logging in again.',
+          variant: 'destructive',
+        });
+        setIsRefreshing(false);
+        return;
+      }
+      
+      // Clear local cycles before refresh
+      localStorage.removeItem(KEYS.PLANNED_CYCLES);
+      console.log('[Settings] Cleared local planned_cycles');
+      
+      // Force hydration from cloud
+      const result = await hydrateLocalFromCloud(workspaceId, {
+        force: true,
+        includeProjects: true,
+        includePlannedCycles: true,
+        includeProducts: true,
+        includeInventory: true,
+        source: 'settings-refresh'
+      });
+      
+      if (result.ok) {
+        toast({
+          title: language === 'he' ? 'רענון הצליח' : 'Refresh Successful',
+          description: language === 'he' 
+            ? 'הנתונים עודכנו מהענן. הדף ירענן כעת.'
+            : 'Data refreshed from cloud. Page will reload now.',
+        });
+        
+        // Reload to apply changes
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        toast({
+          title: language === 'he' ? 'שגיאה ברענון' : 'Refresh Error',
+          description: result.reason || (language === 'he' ? 'נכשל בטעינת נתונים מהענן' : 'Failed to load data from cloud'),
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('[Settings] Refresh from cloud failed:', error);
+      toast({
+        title: language === 'he' ? 'שגיאה' : 'Error',
+        description: language === 'he' 
+          ? 'שגיאה לא צפויה. נסה שוב.'
+          : 'Unexpected error. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const updateRules = (updates: Partial<PriorityRules>) => {
@@ -283,6 +353,54 @@ export const SettingsPage: React.FC = () => {
           >
             <Save className="w-4 h-4" />
             {language === 'he' ? 'שמור שינויים' : 'Save Changes'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Refresh from Cloud Card */}
+      <Card variant="elevated" className="border-primary/20">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg text-primary">
+            <CloudDownload className="w-5 h-5" />
+            {language === 'he' ? 'רענון מהענן' : 'Refresh from Cloud'}
+          </CardTitle>
+          <CardDescription>
+            {language === 'he' 
+              ? 'מחיקת הנתונים המקומיים ומשיכת נתונים טריים מהענן'
+              : 'Clear local data and pull fresh data from cloud'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="p-4 bg-primary/5 rounded-lg border border-primary/20 mb-4">
+            <div className="flex items-start gap-3">
+              <CloudDownload className="w-5 h-5 text-primary mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">
+                  {language === 'he' ? 'פתרון לבעיות סנכרון' : 'Fix sync issues'}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {language === 'he' 
+                    ? 'אם אתה רואה כפילויות או נתונים לא מעודכנים, לחץ כאן כדי לסנכרן מחדש מהענן.'
+                    : 'If you see duplicates or outdated data, click here to re-sync from cloud.'}
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <Button 
+            onClick={handleRefreshFromCloud}
+            disabled={isRefreshing}
+            className="w-full gap-2"
+            variant="outline"
+          >
+            {isRefreshing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <CloudDownload className="w-4 h-4" />
+            )}
+            {isRefreshing 
+              ? (language === 'he' ? 'מרענן...' : 'Refreshing...') 
+              : (language === 'he' ? 'רענן מהענן' : 'Refresh from Cloud')}
           </Button>
         </CardContent>
       </Card>
