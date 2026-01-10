@@ -54,6 +54,7 @@ import {
   PrinterTimeSlot as SchedulingSlot,
   PlateReleaseInfo,
   EndOfDayTimeSource,
+  getNightWindow,       // NEW: Get night window for slot override
 } from './schedulingHelpers';
 import {
   logPlanningDecision,
@@ -2185,16 +2186,46 @@ const scheduleCyclesForDay = (
           const cycleHours = activePreset.cycleHours;
           const cycleEndTime = addHours(slot.currentTime, cycleHours);
           
-          // Validate cycle fits in remaining slot
-          if (cycleEndTime > slot.endOfDayTime) {
-            console.log('[Planning] ⏩ Cycle too long for slot:', {
-              project: state.project.name,
-              currentTime: slot.currentTime.toISOString(),
-              cycleEndTime: cycleEndTime.toISOString(),
-              endOfDayTime: slot.endOfDayTime.toISOString(),
-              cycleHours,
-            });
-            continue;
+          // ============= NIGHT SLOT OVERRIDE =============
+          // For night slots: validate against nightWindow.totalHours, not endOfDayTime
+          // No plate exhaustion check, no operator check (already handled by pre-loaded plates)
+          const isNightSlotForValidation = slot.currentTime >= slot.endOfWorkHours;
+          
+          if (isNightSlotForValidation) {
+            // Get night window from the current slot time
+            const nightWindow = getNightWindow(slot.currentTime, settings);
+            
+            // Calculate remaining night hours from current time
+            const remainingNightHours = Math.max(0, (nightWindow.end.getTime() - slot.currentTime.getTime()) / (1000 * 60 * 60));
+            
+            // Validate cycle fits in remaining night window
+            if (cycleHours > remainingNightHours) {
+              logCycleBlock({
+                reason: 'cycle_too_long_night',
+                projectId: state.project.id,
+                projectName: state.project.name,
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                presetId: activePreset.id,
+                presetName: activePreset.name,
+                details: `מחזור ${cycleHours}h ארוך מחלון הלילה הנותר ${remainingNightHours.toFixed(1)}h (סה"כ ${nightWindow.totalHours.toFixed(1)}h)`,
+                scheduledDate: dateString,
+                cycleHours,
+              });
+              continue;
+            }
+          } else {
+            // During work hours: validate against endOfDayTime as before
+            if (cycleEndTime > slot.endOfDayTime) {
+              console.log('[Planning] ⏩ Cycle too long for slot:', {
+                project: state.project.name,
+                currentTime: slot.currentTime.toISOString(),
+                cycleEndTime: cycleEndTime.toISOString(),
+                endOfDayTime: slot.endOfDayTime.toISOString(),
+                cycleHours,
+              });
+              continue;
+            }
           }
           
           // ============= END OF DAY LOADING - ONLY AT NIGHT SLOT TRANSITION =============

@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Bug, ChevronDown, RefreshCw, Trash2, AlertCircle, CheckCircle2, Copy, Zap } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Bug, ChevronDown, RefreshCw, Trash2, AlertCircle, CheckCircle2, Copy, Zap, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import {
@@ -20,6 +21,7 @@ import {
   getPlanningMeta,
 } from '@/services/storage';
 import { getPlanningLog, getLastReplanInfo, clearPlanningLog, PlanningLogEntry } from '@/services/planningLogger';
+import { getBlockSummary, CycleBlockReason, clearBlockLog, BlockSummary } from '@/services/cycleBlockLogger';
 
 interface OriginInfo {
   href: string;
@@ -59,6 +61,7 @@ export const PlanningDebugPanel: React.FC = () => {
   const [stats, setStats] = useState<DebugStats | null>(null);
   const [logEntries, setLogEntries] = useState<PlanningLogEntry[]>([]);
   const [showFullLog, setShowFullLog] = useState(false);
+  const [blockSummary, setBlockSummary] = useState<BlockSummary | null>(null);
 
   const getOriginInfo = (): OriginInfo => {
     let topHref: string | null = null;
@@ -163,6 +166,7 @@ export const PlanningDebugPanel: React.FC = () => {
     });
 
     setLogEntries(log);
+    setBlockSummary(getBlockSummary());
   };
 
   useEffect(() => {
@@ -173,6 +177,7 @@ export const PlanningDebugPanel: React.FC = () => {
 
   const handleClearLog = () => {
     clearPlanningLog();
+    clearBlockLog();
     refreshStats();
   };
 
@@ -472,6 +477,75 @@ export const PlanningDebugPanel: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Block Summary - Why cycles weren't scheduled */}
+                {blockSummary && blockSummary.total > 0 && (
+                  <div className="space-y-2 p-3 bg-destructive/10 rounded-lg border border-destructive/30">
+                    <div className="text-xs font-bold mb-2 text-destructive flex items-center gap-2">
+                      <XCircle className="w-4 h-4" />
+                      {language === 'he' ? `חסימות תכנון (${blockSummary.total})` : `Blocked Cycles (${blockSummary.total})`}
+                    </div>
+                    
+                    <TooltipProvider>
+                      <div className="flex flex-wrap gap-2">
+                        {(Object.entries(blockSummary.byReason) as [CycleBlockReason, number][])
+                          .filter(([_, count]) => count > 0)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([reason, count]) => {
+                            const reasonLabels: Record<CycleBlockReason, { he: string; en: string; tooltip: string }> = {
+                              plates_limit: { he: 'הגבלת פלטות', en: 'Plate limit', tooltip: 'לא נותרו פלטות פנויות למחזור הזה' },
+                              material_insufficient: { he: 'חוסר חומר', en: 'No material', tooltip: 'אין מספיק פילמנט בצבע הנדרש' },
+                              spool_parallel_limit: { he: 'מקביליות גלילים', en: 'Spool parallel', tooltip: 'יותר מדי מדפסות צריכות את אותו צבע בו זמנית' },
+                              after_hours_policy: { he: 'מדיניות לילה', en: 'Night policy', tooltip: 'הגדרות המפעל לא מאפשרות הדפסה אחרי שעות העבודה' },
+                              no_night_preset: { he: 'פריסט לא לילה', en: 'No night preset', tooltip: 'הפריסט לא מוגדר כמותר להדפסת לילה' },
+                              printer_inactive: { he: 'מדפסת לא פעילה', en: 'Printer inactive', tooltip: 'המדפסת מכובה או לא זמינה' },
+                              no_matching_preset: { he: 'אין פריסט מתאים', en: 'No preset', tooltip: 'לא נמצא פריסט שמתאים לפרויקט' },
+                              deadline_passed: { he: 'דדליין עבר', en: 'Deadline passed', tooltip: 'תאריך היעד של הפרויקט כבר עבר' },
+                              project_complete: { he: 'פרויקט הושלם', en: 'Project done', tooltip: 'הפרויקט כבר הושלם' },
+                              color_lock_night: { he: 'נעילת צבע לילה', en: 'Color lock night', tooltip: 'מדפסת ללא AMS לא יכולה לשנות צבע בלילה' },
+                              cycle_too_long_night: { he: 'מחזור ארוך ללילה', en: 'Too long for night', tooltip: 'משך המחזור ארוך מחלון הלילה הזמין' },
+                            };
+                            const label = reasonLabels[reason];
+                            
+                            return (
+                              <Tooltip key={reason}>
+                                <TooltipTrigger asChild>
+                                  <Badge 
+                                    variant="destructive" 
+                                    className="text-xs cursor-help"
+                                  >
+                                    {language === 'he' ? label.he : label.en}: {count}
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs">
+                                  <p className="text-sm">{label.tooltip}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            );
+                          })
+                        }
+                      </div>
+                    </TooltipProvider>
+                    
+                    {/* Recent block details */}
+                    {blockSummary.recentBlocks.length > 0 && (
+                      <div className="mt-3 space-y-1 max-h-32 overflow-y-auto text-xs font-mono bg-background/50 rounded p-2">
+                        {blockSummary.recentBlocks.slice(0, 5).map((block, idx) => (
+                          <div key={idx} className="flex items-start gap-2 text-muted-foreground">
+                            <span className="text-destructive">❌</span>
+                            <span className="flex-1">
+                              <span className="text-foreground">{block.projectName || block.projectId}</span>
+                              {' → '}
+                              <span className="text-warning">{block.printerName || block.printerId}</span>
+                              {': '}
+                              <span className="text-muted-foreground">{block.details}</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Log Entries */}
                 {logEntries.length > 0 && (
