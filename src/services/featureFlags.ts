@@ -45,8 +45,8 @@ const FLAG_CONFIGS: Record<FeatureFlagName, FeatureFlagConfig> = {
   },
   PLANNER_V2_PROJECT_CENTRIC: {
     name: 'PLANNER_V2_PROJECT_CENTRIC',
-    description: 'אלגוריתם תכנון חדש - Project-Centric עם מינימום מדפסות',
-    defaultValue: false, // OFF by default - experimental
+    description: 'אלגוריתם תכנון V2 - Project-Centric (LEGACY REMOVED)',
+    defaultValue: true, // V2-ONLY: Legacy algorithm has been removed
   },
   PLANNING_HYBRID_OBJECTIVE: {
     name: 'PLANNING_HYBRID_OBJECTIVE',

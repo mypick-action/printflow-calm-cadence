@@ -15,6 +15,7 @@ import {
   FeatureFlagName,
 } from '@/services/featureFlags';
 import { getBlockSummary, clearBlockLog, formatBlockSummary } from '@/services/cycleBlockLogger';
+import { AlgorithmStatusPanel } from '@/components/dashboard/AlgorithmStatusPanel';
 import {
   Tooltip,
   TooltipContent,
@@ -71,7 +72,7 @@ export const FeatureFlagsPanel: React.FC = () => {
     WEEKEND_AUTONOMY_BUDGET: { he: 'תקציב אוטונומיה לסופ"ש', en: 'Weekend Autonomy Budget' },
     OVERNIGHT_SPOOL_PREP_MODAL: { he: 'מודל הכנת גלילים ללילה', en: 'Overnight Spool Prep Modal' },
     OVERNIGHT_OPEN_SPOOL_ALLOWED: { he: 'גליל פתוח למחזור לילה', en: 'Open Spool for Night Cycle' },
-    PLANNER_V2_PROJECT_CENTRIC: { he: 'תכנון V2 - מינימום מדפסות', en: 'Planner V2 - Minimum Printers' },
+    PLANNER_V2_PROJECT_CENTRIC: { he: 'V2 בלבד (Legacy הוסר)', en: 'V2 Only (Legacy Removed)' },
     PLANNING_HYBRID_OBJECTIVE: { he: 'HYBRID - ניצול קיבולת', en: 'HYBRID Objective' },
     DEADLINE_GUARD: { he: 'הגנת דדליין - התראה על פגיעה', en: 'Deadline Guard - Impact Alerts' },
   };
@@ -93,6 +94,9 @@ export const FeatureFlagsPanel: React.FC = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Algorithm Status Panel */}
+        <AlgorithmStatusPanel className="mb-4" />
+        
         {/* Feature Flags List */}
         <div className="space-y-3">
           {Object.entries(flags).map(([flag, { enabled, description }]) => (
