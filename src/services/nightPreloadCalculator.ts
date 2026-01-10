@@ -269,7 +269,7 @@ export function calculateNightPreload(
     }, 0);
 
     // Build cycle details for operator display (only allocated cycles)
-    // CONDITION 3: Calculate grams per cycle, use null if not available
+    // CONDITION 3: Calculate grams per cycle - ONLY from source of truth, never estimate
     const cycleDetails = printerCycles.slice(0, allocated).map(cycle => {
       let cycleHours = 3; // Default
       if (cycle.startTime && cycle.endTime) {
@@ -278,15 +278,10 @@ export function calculateNightPreload(
         cycleHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
       }
       
-      // CONDITION 3: Try to get grams from cycle metadata or calculate
-      // Grams can come from: cycle.gramsPlanned, or preset.gramsPerUnit * unitsPlanned
-      let gramsNeeded: number | null = null;
-      if (cycle.unitsPlanned && cycle.unitsPlanned > 0) {
-        // Try to estimate grams: assume ~8g per unit if no other info (common for small parts)
-        // This is a rough estimate - real value should come from preset/product
-        const defaultGramsPerUnit = 8;
-        gramsNeeded = cycle.unitsPlanned * defaultGramsPerUnit;
-      }
+      // CONDITION 3 FIX: Only use actual source of truth for grams
+      // Sources: cycle.gramsPlanned (from preset) - NO estimation allowed!
+      // If no source of truth exists, gramsNeeded = null → displays as "N/A"
+      const gramsNeeded: number | null = (cycle as any).gramsPlanned ?? null;
       
       return {
         projectName: cycle.projectId, // Will be resolved to name in UI
@@ -297,7 +292,7 @@ export function calculateNightPreload(
     });
     
     // CONDITION 3: Calculate total grams for this printer
-    // Sum all cycle grams, or null if any cycle has null grams
+    // Sum all cycle grams, or null if ANY cycle has null grams (can't show partial)
     const allGramsKnown = cycleDetails.every(c => c.gramsNeeded !== null);
     const totalGramsNeeded = allGramsKnown
       ? cycleDetails.reduce((sum, c) => sum + (c.gramsNeeded || 0), 0)
@@ -312,8 +307,8 @@ export function calculateNightPreload(
       nightCycleCount: allocated,  // Only the ones that will actually run
       totalNightHours: totalHours,
       nightWindow,
-      // CRITICAL: Use confirmedSpoolColor as fallback (set on Start Print)
-      physicalLockedColor: printer.mountedColor ?? (printer as any).confirmedSpoolColor ?? undefined,
+      // Use confirmedSpoolColor as fallback (set on Start Print)
+      physicalLockedColor: printer.mountedColor ?? printer.confirmedSpoolColor ?? undefined,
       hasAMS: printer.hasAMS === true,
       totalGramsNeeded,
       cycles: cycleDetails,
