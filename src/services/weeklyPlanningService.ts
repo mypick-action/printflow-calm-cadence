@@ -453,7 +453,9 @@ export function getCyclesByDayAndPrinter(): CyclesByDayAndPrinter {
   
   // Populate with cycles
   for (const cycle of cycles) {
-    const cycleDate = formatDateStringLocal(new Date(cycle.startTime));
+    // Use scheduledDate (business day) instead of startTime date for grid placement
+    // This ensures night cycles that start at 23:00 on Saturday appear under Sunday
+    const cycleDate = cycle.scheduledDate || formatDateStringLocal(new Date(cycle.startTime));
     const cycleWithDetails = getCycleWithDetails(cycle);
     
     if (result[cycle.printerId] && result[cycle.printerId][cycleDate]) {
