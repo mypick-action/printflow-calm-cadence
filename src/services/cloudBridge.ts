@@ -914,10 +914,11 @@ export async function migrateLocalCyclesToCloud(
     }
     
     try {
-      // Extract scheduled_date from startTime using LOCAL time (not UTC)
-      const scheduledDate = cycle.startTime 
-        ? formatDateStringLocal(new Date(cycle.startTime)) 
-        : formatDateStringLocal(new Date());
+      // Use pre-calculated business day if available, fallback to calendar date
+      const scheduledDate = cycle.scheduledDate 
+        || (cycle.startTime 
+          ? formatDateStringLocal(new Date(cycle.startTime)) 
+          : formatDateStringLocal(new Date()));
       
       const cycleData: UpsertPlannedCycleData = {
         project_id: cloudProjectId,

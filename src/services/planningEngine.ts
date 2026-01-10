@@ -37,7 +37,7 @@ import {
 } from './storage';
 import { normalizeColor } from './colorNormalization';
 import { getAvailableGramsByColor } from './materialAdapter';
-import { formatDateStringLocal } from './dateUtils';
+import { formatDateStringLocal, getBusinessDay } from './dateUtils';
 import { logCycleBlock, getBlockSummary } from './cycleBlockLogger';
 import { isFeatureEnabled } from './featureFlags';
 import { MinHeap } from './minHeap';
@@ -153,6 +153,9 @@ export interface ScheduledCycle {
   gramsPlanned: number;
   startTime: Date;
   endTime: Date;
+  // Business date - the day this cycle "counts" for planning purposes
+  // Night cycles (after work hours) belong to the NEXT business day
+  scheduledDate?: string; // YYYY-MM-DD
   plateType: 'full' | 'reduced' | 'closeout';
   shift: 'day' | 'end_of_day';
   isEndOfDayCycle: boolean;
@@ -1826,6 +1829,8 @@ function scheduleProjectOnPrinters(
       gramsPlanned: gramsThisCycle,
       startTime: new Date(slot.currentTime),
       endTime: cycleEndTime,
+      // NEW: Pre-calculate business day (night cycles belong to next workday)
+      scheduledDate: getBusinessDay(slot.currentTime, settings),
       plateType: unitsThisCycle < project.preset.unitsPerPlate 
         ? (remainingUnits <= unitsThisCycle ? 'closeout' : 'reduced')
         : 'full',
