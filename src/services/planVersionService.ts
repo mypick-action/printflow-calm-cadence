@@ -291,12 +291,30 @@ export async function checkForPlanUpdate(workspaceId: string): Promise<PlanUpdat
   const productsRaw = localStorage.getItem(KEYS.PRODUCTS);
   const products = productsRaw ? JSON.parse(productsRaw) : [];
   
+  // Fetch presets for units-per-plate lookup
+  const { data: cloudPresets } = await supabase
+    .from('plate_presets')
+    .select('id, product_id, units_per_plate, grams_per_unit')
+    .eq('workspace_id', workspaceId);
+  
   // Helper to calculate gramsPlanned
-  const calculateGramsPlanned = (projectId: string, unitsPlanned: number): number => {
+  // gramsPlanned = gramsPerUnit * unitsPlanned
+  // NOTE: unitsPlanned is already the number of units in the cycle (from units_per_plate)
+  // So gramsPlanned = gramsPerUnit * unitsPlanned is correct
+  const calculateGramsPlanned = (projectId: string, unitsPlanned: number, presetId?: string): number => {
+    // Try preset first (most accurate)
+    if (presetId) {
+      const preset = cloudPresets?.find(p => p.id === presetId);
+      if (preset?.grams_per_unit) {
+        return preset.grams_per_unit * unitsPlanned;
+      }
+    }
+    
+    // Fallback to product gramsPerUnit
     const project = cloudProjects?.find(p => p.id === projectId || p.legacy_id === projectId);
     if (!project?.product_id) return 0;
     
-    const product = products.find((p: any) => p.id === project.product_id);
+    const product = products.find((p: any) => p.id === project.product_id || p.cloudUuid === project.product_id);
     if (!product?.gramsPerUnit) return 0;
     
     return product.gramsPerUnit * unitsPlanned;
@@ -305,7 +323,7 @@ export async function checkForPlanUpdate(workspaceId: string): Promise<PlanUpdat
   // Map cloud cycles to localStorage format with gramsPlanned calculation
   const mappedCycles: PlannedCycle[] = (cloudCycles || []).map((c: any) => {
     const projectLegacyId = projectUuidToLegacyId.get(c.project_id) || c.project_id;
-    const gramsPlanned = calculateGramsPlanned(c.project_id, c.units_planned ?? 1);
+    const gramsPlanned = calculateGramsPlanned(c.project_id, c.units_planned ?? 1, c.preset_id);
     
     return {
       id: c.legacy_id || c.id,
