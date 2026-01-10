@@ -16,7 +16,8 @@ export type CycleBlockReason =
   | 'no_matching_preset'     // No preset fits constraints
   | 'deadline_passed'        // Project deadline already passed
   | 'project_complete'       // Project already completed
-  | 'color_lock_night';      // Non-AMS printer locked to different color during night
+  | 'color_lock_night'       // Non-AMS printer locked to different color during night
+  | 'cycle_too_long_night';  // Cycle duration exceeds night window
 
 export interface CycleBlockEntry {
   timestamp: string;
@@ -96,6 +97,7 @@ export const getBlockSummary = (): BlockSummary => {
     deadline_passed: 0,
     project_complete: 0,
     color_lock_night: 0,
+    cycle_too_long_night: 0,
   };
   
   for (const entry of entries) {
@@ -141,6 +143,7 @@ export const formatBlockSummary = (summary: BlockSummary): string => {
     deadline_passed: 'דדליין עבר',
     project_complete: 'פרויקט הושלם',
     color_lock_night: 'נעילת צבע בלילה (ללא AMS)',
+    cycle_too_long_night: 'מחזור ארוך מחלון הלילה',
   };
   
   for (const [reason, count] of Object.entries(summary.byReason)) {
