@@ -390,3 +390,93 @@ export function getActualPlateReleaseTime(
   // Forward to new implementation - ignores workDayStart/endOfWorkHours params
   return getNextOperatorTime(releaseTime, settings);
 }
+
+// ============= NIGHT WINDOW =============
+
+export type NightMode = 'none' | 'one_cycle' | 'full';
+
+export interface NightWindow {
+  start: Date;           // End of work hours
+  end: Date;             // Start of next workday
+  totalHours: number;    // Hours available in night window
+  isWeekendNight: boolean; // Friday→Sunday type night
+  mode: NightMode;       // After-hours behavior mode
+}
+
+/**
+ * Get the night window for a given date based on factory settings.
+ * 
+ * Returns a NightWindow object that includes:
+ * - start: When work hours end
+ * - end: When next workday starts
+ * - totalHours: Duration of night window
+ * - mode: 'none' | 'one_cycle' | 'full' based on afterHoursBehavior
+ * 
+ * The mode determines what's allowed:
+ * - 'none': No after-hours work (afterHoursBehavior = 'NONE')
+ * - 'one_cycle': Only one cycle after hours (afterHoursBehavior = 'ONE_CYCLE_END_OF_DAY')
+ * - 'full': Full automation until next workday (afterHoursBehavior = 'FULL_AUTOMATION')
+ * 
+ * @param date - The date to get night window for
+ * @param settings - Factory settings with schedule and afterHoursBehavior
+ * @returns NightWindow with mode, even for 'none' mode
+ */
+export function getNightWindow(
+  date: Date,
+  settings: FactorySettings
+): NightWindow {
+  // Get schedule for this day
+  const schedule = getDayScheduleForDate(date, settings, []);
+  
+  // Determine mode from afterHoursBehavior
+  let mode: NightMode = 'none';
+  if (settings.afterHoursBehavior === 'FULL_AUTOMATION') {
+    mode = 'full';
+  } else if (settings.afterHoursBehavior === 'ONE_CYCLE_END_OF_DAY') {
+    mode = 'one_cycle';
+  }
+  
+  // If no schedule or not a working day, return minimal window
+  if (!schedule?.enabled) {
+    const nextWorkday = advanceToNextWorkdayStart(date, settings);
+    return {
+      start: date,
+      end: nextWorkday ?? addDays(date, 1),
+      totalHours: 0,
+      isWeekendNight: true,
+      mode,
+    };
+  }
+  
+  // Calculate end of work hours
+  const endOfWorkHours = createDateWithTime(date, schedule.endTime);
+  
+  // Handle cross-midnight shifts
+  const startMinutes = parseTime(schedule.startTime).hours * 60 + parseTime(schedule.startTime).minutes;
+  const endMinutes = parseTime(schedule.endTime).hours * 60 + parseTime(schedule.endTime).minutes;
+  let adjustedEndOfWork = endOfWorkHours;
+  if (endMinutes < startMinutes) {
+    adjustedEndOfWork = new Date(endOfWorkHours.getTime() + 24 * 60 * 60 * 1000);
+  }
+  
+  // Find next workday start (from end of work hours, not from date)
+  const nextWorkday = advanceToNextWorkdayStart(adjustedEndOfWork, settings);
+  const nightEnd = nextWorkday ?? addDays(adjustedEndOfWork, 1);
+  
+  // Calculate total hours
+  const totalHours = (nightEnd.getTime() - adjustedEndOfWork.getTime()) / (1000 * 60 * 60);
+  
+  // Check if this is a weekend night (e.g., Thursday→Sunday in Israel, Friday→Monday elsewhere)
+  const dayOfWeek = date.getDay();
+  // Weekend nights: Friday (5), Saturday (6) in most locales
+  // For Israel: Thursday (4) night goes into Saturday
+  const isWeekendNight = dayOfWeek === 4 || dayOfWeek === 5 || dayOfWeek === 6;
+  
+  return {
+    start: adjustedEndOfWork,
+    end: nightEnd,
+    totalHours: Math.max(0, totalHours),
+    isWeekendNight,
+    mode,
+  };
+}
