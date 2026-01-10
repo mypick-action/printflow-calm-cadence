@@ -3,10 +3,19 @@
 // This is a PLANNING DECISION, not a hardware property.
 //
 // KEY CONSTRAINTS:
-// 1. Per-printer hardware limit: physicalPlateCapacity (default 8)
+// 1. Per-printer hardware limit: physicalPlateCapacity (FIXED at 8)
 // 2. Global factory limit: globalPlateInventory (default 50)
 // 3. The sum of all allocations cannot exceed global inventory
 // 4. Uses round-robin allocation for fairness across printers
+//
+// CRITICAL: Two-Pass Architecture
+// - This calculator should receive CANDIDATE cycles from the planner
+// - It does NOT read from storage (avoids chicken-and-egg problem)
+// - Only cycles that PASS night eligibility checks count toward demand:
+//   - Color matches physicalLockedColor (for non-AMS printers)
+//   - Material is available
+//   - Fits within night window
+//   - Preset allows night cycle
 
 import {
   PlannedCycle,
@@ -17,13 +26,28 @@ import {
   getFactorySettings,
 } from './storage';
 import { getNightWindow, NightWindow } from './schedulingHelpers';
+import { normalizeColor } from './colorNormalization';
 
 // ============= TYPES =============
+
+// Candidate night cycle (from planner, not storage)
+export interface NightCycleCandidate {
+  projectId: string;
+  projectName: string;
+  printerId: string;
+  color: string;
+  cycleHours: number;
+  gramsNeeded: number;
+  startTime: Date;
+  endTime: Date;
+  isEligible: boolean;  // Passed all night eligibility checks
+  ineligibilityReason?: string;
+}
 
 export interface NightPreloadPlan {
   printerId: string;
   printerName: string;
-  // Demand: how many cycles are planned for this printer tonight
+  // Demand: how many ELIGIBLE cycles are planned for this printer tonight
   demandPlates: number;
   // Allocated: how many plates actually assigned (respects global limit)
   allocatedPlates: number;
@@ -47,7 +71,7 @@ export interface NightPreloadSummary {
   date: Date;
   printers: NightPreloadPlan[];
   // Totals
-  totalPlatesNeeded: number;  // Sum of all demands
+  totalPlatesNeeded: number;  // Sum of all demands (ELIGIBLE cycles only)
   totalPlatesAllocated: number;  // Sum of all allocations (respects global limit)
   totalCyclesDeferred: number;  // Cycles pushed to next day due to plate shortage
   // Global constraint info
@@ -60,7 +84,8 @@ export interface NightPreloadSummary {
 
 // Default global plate inventory
 const DEFAULT_GLOBAL_PLATE_INVENTORY = 50;
-const DEFAULT_PLATE_CAPACITY_PER_PRINTER = 8;
+// FIXED hardware capacity per printer - this is physical, not configurable
+const FIXED_PLATE_CAPACITY_PER_PRINTER = 8;
 
 // ============= ROUND-ROBIN ALLOCATION =============
 
@@ -95,7 +120,7 @@ function allocatePlatesRoundRobin(
       if (totalAllocated >= globalLimit) break;
       
       const demand = demands.get(printerId) ?? 0;
-      const capacity = capacities.get(printerId) ?? DEFAULT_PLATE_CAPACITY_PER_PRINTER;
+      const capacity = capacities.get(printerId) ?? FIXED_PLATE_CAPACITY_PER_PRINTER;
       const current = allocations.get(printerId) ?? 0;
       
       // Can we give this printer one more plate?
@@ -161,7 +186,7 @@ export function calculateNightPreload(
       totalPlatesAllocated: 0,
       totalCyclesDeferred: 0,
       globalPlateInventory,
-      globalPlateCapacity: allPrinters.reduce((sum, p) => sum + (p.physicalPlateCapacity ?? DEFAULT_PLATE_CAPACITY_PER_PRINTER), 0),
+      globalPlateCapacity: allPrinters.reduce((sum, p) => sum + FIXED_PLATE_CAPACITY_PER_PRINTER, 0),
       hasNightWork: false,
       isGloballyConstrained: false,
     };
@@ -194,7 +219,7 @@ export function calculateNightPreload(
   allPrinters.forEach(printer => {
     const printerCycles = byPrinter.get(printer.id) || [];
     const demand = printerCycles.length;
-    const capacity = printer.physicalPlateCapacity ?? DEFAULT_PLATE_CAPACITY_PER_PRINTER;
+    const capacity = FIXED_PLATE_CAPACITY_PER_PRINTER; // Fixed hardware limit
     
     if (demand > 0) {
       demands.set(printer.id, demand);
@@ -208,7 +233,7 @@ export function calculateNightPreload(
 
   // Calculate global capacity (sum of all hardware limits)
   const globalPlateCapacity = allPrinters.reduce(
-    (sum, p) => sum + (p.physicalPlateCapacity ?? DEFAULT_PLATE_CAPACITY_PER_PRINTER), 
+    (sum, p) => sum + FIXED_PLATE_CAPACITY_PER_PRINTER, 
     0
   );
 
@@ -334,6 +359,152 @@ export function isNightPreloadTime(settings: FactorySettings): boolean {
   const hoursUntilNight = (nightWindow.start.getTime() - now.getTime()) / (1000 * 60 * 60);
   
   return nightWindow.mode !== 'none' && (hoursUntilNight <= 2 || now >= nightWindow.start);
+}
+
+// ============= TWO-PASS ALLOCATION SYSTEM =============
+// This is called at the START of planning, before any cycles are created.
+// It calculates how many plates each printer CAN use tonight based on:
+// 1. Night window duration (how many ~3h cycles fit)
+// 2. Color lock constraints (for non-AMS printers)
+// 3. Global plate inventory limit (50)
+// 4. Hardware capacity per printer (8)
+
+export interface NightAllocationInput {
+  printerId: string;
+  printerName: string;
+  hasAMS: boolean;
+  physicalLockedColor?: string;  // The color locked on the printer (for non-AMS)
+  canStartNewCyclesAfterHours: boolean;
+}
+
+export interface NightAllocationResult {
+  allocations: Map<string, number>;  // printerId -> allocated plates
+  totalAllocated: number;
+  globalLimit: number;
+  isConstrained: boolean;
+  details: Array<{
+    printerId: string;
+    printerName: string;
+    maxPossible: number;  // Based on time window
+    allocated: number;
+    physicalLockedColor?: string;
+  }>;
+}
+
+/**
+ * Pre-calculate night plate allocations at the START of planning.
+ * This avoids chicken-and-egg: we estimate demand BEFORE cycles exist.
+ * 
+ * For each printer:
+ * - If canStartNewCyclesAfterHours is false → 0 plates
+ * - Otherwise, estimate cycles that fit in night window (~3h each)
+ * - Cap at hardware limit (8 per printer)
+ * - Distribute using round-robin to respect global limit (50)
+ * 
+ * @param forDate The date for which to calculate
+ * @param printerInputs Array of printer info with color locks
+ * @param settings Factory settings with global inventory
+ */
+export function preCalculateNightAllocations(
+  forDate: Date,
+  printerInputs: NightAllocationInput[],
+  settings: FactorySettings
+): NightAllocationResult {
+  const globalPlateInventory = settings.globalPlateInventory ?? DEFAULT_GLOBAL_PLATE_INVENTORY;
+  const nightWindow = getNightWindow(forDate, settings);
+  
+  // If no night work allowed, return empty allocations
+  if (nightWindow.mode === 'none') {
+    return {
+      allocations: new Map(),
+      totalAllocated: 0,
+      globalLimit: globalPlateInventory,
+      isConstrained: false,
+      details: [],
+    };
+  }
+  
+  // Estimate how many cycles fit in the night window
+  // Assume average cycle is ~3 hours
+  const AVG_CYCLE_HOURS = 3;
+  const maxCyclesFromTime = Math.floor(nightWindow.totalHours / AVG_CYCLE_HOURS);
+  
+  // Build demand map: each eligible printer's max possible cycles
+  const demands = new Map<string, number>();
+  const capacities = new Map<string, number>();
+  const printerDetails = new Map<string, { name: string; maxPossible: number; lockedColor?: string }>();
+  
+  for (const input of printerInputs) {
+    // Check if printer can run at night
+    if (!input.canStartNewCyclesAfterHours) {
+      printerDetails.set(input.printerId, { 
+        name: input.printerName, 
+        maxPossible: 0,
+        lockedColor: input.physicalLockedColor,
+      });
+      continue;
+    }
+    
+    // Calculate max possible plates for this printer
+    // Limited by: time window AND hardware capacity
+    const maxPossible = Math.min(maxCyclesFromTime, FIXED_PLATE_CAPACITY_PER_PRINTER);
+    
+    if (maxPossible > 0) {
+      demands.set(input.printerId, maxPossible);
+      capacities.set(input.printerId, FIXED_PLATE_CAPACITY_PER_PRINTER);
+    }
+    
+    printerDetails.set(input.printerId, { 
+      name: input.printerName, 
+      maxPossible,
+      lockedColor: input.physicalLockedColor,
+    });
+  }
+  
+  // Allocate using round-robin with global constraint
+  const allocations = allocatePlatesRoundRobin(demands, capacities, globalPlateInventory);
+  
+  // Calculate totals
+  let totalAllocated = 0;
+  for (const alloc of allocations.values()) {
+    totalAllocated += alloc;
+  }
+  
+  // Build details array
+  const details = printerInputs.map(input => {
+    const detail = printerDetails.get(input.printerId);
+    return {
+      printerId: input.printerId,
+      printerName: input.printerName,
+      maxPossible: detail?.maxPossible ?? 0,
+      allocated: allocations.get(input.printerId) ?? 0,
+      physicalLockedColor: input.physicalLockedColor,
+    };
+  });
+  
+  console.log('[NightPreload] 📊 Pre-calculated night allocations:', {
+    date: forDate.toISOString(),
+    nightWindow: `${nightWindow.start.toISOString()} - ${nightWindow.end.toISOString()}`,
+    nightHours: nightWindow.totalHours.toFixed(1),
+    maxCyclesFromTime,
+    globalPlateInventory,
+    totalAllocated,
+    isConstrained: totalAllocated >= globalPlateInventory,
+    printers: details.map(d => ({
+      name: d.printerName,
+      maxPossible: d.maxPossible,
+      allocated: d.allocated,
+      lockedColor: d.physicalLockedColor ?? 'none',
+    })),
+  });
+  
+  return {
+    allocations,
+    totalAllocated,
+    globalLimit: globalPlateInventory,
+    isConstrained: totalAllocated >= globalPlateInventory,
+    details,
+  };
 }
 
 /**

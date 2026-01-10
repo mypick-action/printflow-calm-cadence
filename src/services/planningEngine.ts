@@ -61,7 +61,7 @@ import {
   clearDecisionLog,
   PrinterScoreDetails,
 } from './planningDecisionLog';
-import { getPreloadForPrinter } from './nightPreloadCalculator';
+import { preCalculateNightAllocations, NightAllocationResult } from './nightPreloadCalculator';
 
 // ============= TYPES =============
 
@@ -1869,12 +1869,12 @@ const scheduleCyclesForDay = (
       : effectiveStart;
     
     // ============= PLATE CONSTRAINT INITIALIZATION =============
-    // NEW MODEL: Plates are a parallel resource (capacity = 4)
+    // FIXED HARDWARE CAPACITY: All printers have 8 plate capacity
+    // Global allocation (50 plates total) is handled by nightPreloadCalculator
     // - During work hours: plates recycle after cycle ends + 10min cleanup
     // - Outside work hours: plates don't recycle, hard stop after capacity exhausted
-    // Default to 4 if not set, or if set to 999 (legacy "unlimited")
-    const rawCapacity = p.physicalPlateCapacity ?? 4;
-    const plateCapacity = rawCapacity >= 999 ? 4 : rawCapacity; // Treat 999 as "use default 4"
+    const FIXED_PLATE_CAPACITY = 8;
+    const plateCapacity = FIXED_PLATE_CAPACITY;
     
     // Initialize plates in use from locked cycles
     // Each locked cycle "holds" a plate until its end time + cleanup delay
@@ -2175,32 +2175,35 @@ const scheduleCyclesForDay = (
               slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted
               continue;
             } else {
-              // Work day transitioning to night - get allocated plates from night preload calculator
-              // This respects BOTH per-printer capacity AND global plate inventory constraint!
-              // The calculator uses round-robin allocation to distribute plates fairly.
+              // Work day transitioning to night - use PRE-CALCULATED allocations
+              // This avoids chicken-and-egg: allocations were computed at start of day planning
+              // based on night window duration, global inventory (50), and hardware limit (8)
               
               // Get night window for reference logging
               const nightWindow = getNightWindow(slot.workDayStart, settings);
               
-              // Get allocated plates for this printer (respects global limit)
-              // Note: We pass undefined for cycles since we're calculating demand during planning
-              // The calculator will use planned cycles so far
-              const allocatedPlates = getPreloadForPrinter(
-                slot.printerId,
+              // Pre-calculate night allocations for ALL printers at once
+              // This ensures fair round-robin distribution of the global 50-plate limit
+              const printerInputs = printerSlots.map(s => ({
+                printerId: s.printerId,
+                printerName: s.printerName,
+                hasAMS: s.hasAMS,
+                physicalLockedColor: s.physicalLockedColor,
+                canStartNewCyclesAfterHours: s.canStartNewCyclesAfterHours,
+              }));
+              
+              const allocationResult = preCalculateNightAllocations(
                 slot.workDayStart,
-                undefined, // Will use getPlannedCycles() internally
+                printerInputs,
                 settings
               );
               
-              // Fallback: if no allocation yet (first pass), use physical capacity
-              // This will be refined as cycles are scheduled
+              // Get this printer's allocation from the pre-calculated result
+              const allocatedPlates = allocationResult.allocations.get(slot.printerId) ?? 0;
               const physicalLimit = slot.physicalPlateCapacity;
-              const platesToPreload = allocatedPlates > 0 ? allocatedPlates : Math.min(
-                Math.floor(nightWindow.totalHours / 3), // Cycles that fit
-                physicalLimit
-              );
+              const platesToPreload = Math.min(allocatedPlates, physicalLimit);
               
-              console.log('[EndOfDayLoad] 🌙 Work day ending - using allocated plates (respects global inventory):', {
+              console.log('[EndOfDayLoad] 🌙 Work day ending - using PRE-CALCULATED plates (avoids chicken-and-egg):', {
                 printer: slot.printerName,
                 currentTime: slot.currentTime.toISOString(),
                 endOfWorkHours: slot.endOfWorkHours.toISOString(),
@@ -2208,7 +2211,9 @@ const scheduleCyclesForDay = (
                 allocatedPlates,
                 physicalLimit,
                 platesToPreload,
-                note: 'Allocation respects globalPlateInventory constraint',
+                globalLimit: allocationResult.globalLimit,
+                totalAllocatedGlobally: allocationResult.totalAllocated,
+                isGloballyConstrained: allocationResult.isConstrained,
               });
               slot.preLoadedPlatesRemaining = platesToPreload;
               slot.preLoadedAt = new Date(slot.endOfWorkHours);
