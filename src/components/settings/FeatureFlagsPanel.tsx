@@ -76,6 +76,7 @@ export const FeatureFlagsPanel: React.FC = () => {
     PLANNER_V2_PROJECT_CENTRIC: { he: 'V2 בלבד (Legacy הוסר)', en: 'V2 Only (Legacy Removed)' },
     PLANNING_HYBRID_OBJECTIVE: { he: 'HYBRID - ניצול קיבולת', en: 'HYBRID Objective' },
     DEADLINE_GUARD: { he: 'הגנת דדליין - התראה על פגיעה', en: 'Deadline Guard - Impact Alerts' },
+    TRUST_CURRENT_COLOR_FOR_NIGHT: { he: 'סמוך על currentColor ללילה', en: 'Trust Current Color for Night' },
   };
 
   return (

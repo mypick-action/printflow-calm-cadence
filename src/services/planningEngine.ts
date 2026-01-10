@@ -2242,24 +2242,36 @@ const scheduleCyclesForDay = (
     // PRIORITY ORDER for determining physical color:
     // 1. mountedColor - explicit spool loading (most current)
     // 2. confirmedSpoolColor - set on Start Print (persists between prints)
-    // 3. undefined - truly no physical color known
-    const physicalLockedColor = p.mountedColor ?? p.confirmedSpoolColor ?? undefined;
+    // 3. currentColor - ONLY if TRUST_CURRENT_COLOR_FOR_NIGHT flag is enabled (best effort)
+    // 4. undefined - truly no physical color known
+    const trustCurrentColor = isFeatureEnabled('TRUST_CURRENT_COLOR_FOR_NIGHT');
+    const physicalLockedColor = 
+      p.mountedColor ?? 
+      p.confirmedSpoolColor ?? 
+      (trustCurrentColor ? p.currentColor : undefined);
     
     // Diagnostic log: show which source was used
+    const colorSource = p.mountedColor ? 'mountedColor' 
+      : p.confirmedSpoolColor ? 'confirmedSpoolColor' 
+      : (trustCurrentColor && p.currentColor) ? 'currentColor (FALLBACK)' 
+      : 'NO_SOURCE';
+    
     console.log('[Planning] 🔒 physicalLockedColor for', p.name, ':', {
       mountedColor: p.mountedColor ?? 'undefined',
       confirmedSpoolColor: p.confirmedSpoolColor ?? 'undefined',
-      confirmedSpoolAt: p.confirmedSpoolAt ?? 'never',
+      currentColor: p.currentColor ?? 'undefined',
+      trustCurrentColorFlag: trustCurrentColor,
+      source: colorSource,
       resolved: physicalLockedColor ?? 'NO_PHYSICAL_COLOR',
     });
     
-    // Warning if currentColor exists but neither mounted nor confirmed color
-    if (p.currentColor && !p.mountedColor && !p.confirmedSpoolColor) {
-      console.warn('[Planning] ⚠️ Printer has currentColor but NO mountedColor/confirmedSpoolColor (IGNORED):', {
+    // Warning if using currentColor fallback
+    if (trustCurrentColor && p.currentColor && !p.mountedColor && !p.confirmedSpoolColor) {
+      console.warn('[Planning] ⚠️ Using currentColor as fallback (TRUST_CURRENT_COLOR_FOR_NIGHT enabled):', {
         printerId: p.id,
         printerName: p.name,
         currentColor: p.currentColor,
-        warning: 'currentColor is history only - NOT a physical spool!',
+        warning: 'currentColor is historical - may not match actual loaded spool!',
       });
     }
     
