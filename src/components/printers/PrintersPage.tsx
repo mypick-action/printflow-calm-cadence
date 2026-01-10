@@ -1160,31 +1160,20 @@ export const PrintersPage: React.FC = () => {
                 </Select>
               </div>
 
-              {/* Physical Plate Capacity (hardware limit) */}
+              {/* Physical Plate Capacity (FIXED hardware limit) */}
               <div className="space-y-2">
                 <Label>{language === 'he' ? 'קיבולת פלטות (חומרה)' : 'Plate Capacity (Hardware)'}</Label>
-                <Select 
-                  value={String(editingPrinter.physicalPlateCapacity || 5)} 
-                  onValueChange={(v) => setEditingPrinter({ ...editingPrinter, physicalPlateCapacity: parseInt(v) })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="z-[100] bg-background border shadow-lg">
-                    <SelectItem value="1">1 {language === 'he' ? 'פלטה' : 'plate'}</SelectItem>
-                    <SelectItem value="2">2 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
-                    <SelectItem value="3">3 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
-                    <SelectItem value="4">4 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
-                    <SelectItem value="5">5 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
-                    <SelectItem value="6">6 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
-                    <SelectItem value="8">8 {language === 'he' ? 'פלטות' : 'plates'}</SelectItem>
-                    <SelectItem value="999">{language === 'he' ? 'ללא הגבלה' : 'Unlimited'}</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border">
+                  <Package className="h-5 w-5 text-muted-foreground" />
+                  <span className="font-semibold">8 {language === 'he' ? 'פלטות' : 'plates'}</span>
+                  <Badge variant="secondary" className="mr-auto">
+                    {language === 'he' ? 'קבוע' : 'Fixed'}
+                  </Badge>
+                </div>
                 <p className="text-xs text-muted-foreground">
                   {language === 'he' 
-                    ? 'כמה פלטות המדפסת יכולה להכיל פיזית. המערכת תחשב כמה לטעון בכל לילה.'
-                    : 'Max plates the printer can hold. System calculates how many to load each night.'}
+                    ? 'קיבולת פיזית קבועה. כמות הפלטות ללילה נקבעת לפי מלאי הפלטות המפעלי (50).'
+                    : 'Fixed hardware capacity. Night plate count is determined by global factory inventory (50).'}
                 </p>
               </div>
 
