@@ -76,6 +76,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   const [printerActionsModalOpen, setPrinterActionsModalOpen] = useState(false);
   const [selectedPrinterForActions, setSelectedPrinterForActions] = useState<string | null>(null);
   // hasSyncedProjects state removed - migration no longer runs from Dashboard
+  
+  // Publish status tracking for race condition handling
+  const [publishStatus, setPublishStatus] = useState<{
+    status: 'idle' | 'syncing' | 'success' | 'failed' | 'race_condition';
+    error?: string;
+    orphanedCount?: number;
+  }>({ status: 'idle' });
 
   const openPrinterActionsModal = (printerId: string) => {
     setSelectedPrinterForActions(printerId);
@@ -130,6 +137,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     window.addEventListener('printflow:replan-complete', onReplanComplete);
     return () => window.removeEventListener('printflow:replan-complete', onReplanComplete);
   }, [refreshData]);
+
+  // Listen for publish status events (success/failure/race condition)
+  useEffect(() => {
+    const onPublishStatus = (e: CustomEvent) => {
+      const detail = e.detail;
+      if (detail.success) {
+        setPublishStatus({ status: 'success' });
+        // Clear success status after 5 seconds
+        setTimeout(() => setPublishStatus({ status: 'idle' }), 5000);
+      } else if (detail.error === 'orphaned_projects') {
+        // Race condition - projects not yet hydrated
+        setPublishStatus({ 
+          status: 'race_condition', 
+          orphanedCount: detail.orphanedProjectIds?.length || 0 
+        });
+      } else {
+        setPublishStatus({ status: 'failed', error: detail.error });
+      }
+    };
+    
+    window.addEventListener('printflow:publish-status', onPublishStatus as EventListener);
+    return () => window.removeEventListener('printflow:publish-status', onPublishStatus as EventListener);
+  }, []);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -417,8 +447,83 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
         />
       )}
 
-      {/* Pending Cloud Sync Warning Banner */}
-      {hasPendingCloudSync && (
+      {/* Publish Status Banners */}
+      
+      {/* Race Condition Banner - Projects not yet loaded from cloud */}
+      {publishStatus.status === 'race_condition' && (
+        <Card variant="glass" className="border-amber-500/30 bg-amber-500/5">
+          <CardContent className="flex items-center gap-3 py-3">
+            <RefreshCw className="w-5 h-5 text-amber-500 flex-shrink-0 animate-spin" />
+            <div className="flex-1">
+              <span className="font-medium text-amber-600">
+                {language === 'he' 
+                  ? 'ממתין לטעינת פרויקטים מהענן...' 
+                  : 'Waiting for projects to load from cloud...'}
+              </span>
+              <p className="text-sm text-muted-foreground">
+                {language === 'he'
+                  ? `${publishStatus.orphanedCount || 0} פרויקטים עדיין לא נטענו. נסה שוב בעוד רגע.`
+                  : `${publishStatus.orphanedCount || 0} projects still loading. Try again in a moment.`}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setPublishStatus({ status: 'syncing' });
+                setRecalculateModalOpen(true);
+              }}
+              className="border-amber-500/30 text-amber-600 hover:bg-amber-500/10"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              {language === 'he' ? 'נסה שוב' : 'Retry'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Publish Failed Banner */}
+      {publishStatus.status === 'failed' && (
+        <Card variant="glass" className="border-destructive/30 bg-destructive/5">
+          <CardContent className="flex items-center gap-3 py-3">
+            <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0" />
+            <div className="flex-1">
+              <span className="font-medium text-destructive">
+                {language === 'he' 
+                  ? 'פרסום לענן נכשל' 
+                  : 'Cloud publish failed'}
+              </span>
+              <p className="text-sm text-muted-foreground">
+                {publishStatus.error || (language === 'he' ? 'שגיאה לא ידועה' : 'Unknown error')}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setRecalculateModalOpen(true)}
+              className="border-destructive/30 text-destructive hover:bg-destructive/10"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              {language === 'he' ? 'נסה שוב' : 'Retry'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Publish Success Banner */}
+      {publishStatus.status === 'success' && (
+        <Card variant="glass" className="border-success/30 bg-success/5">
+          <CardContent className="flex items-center gap-2 py-2">
+            <CheckCircle2 className="w-4 h-4 text-success" />
+            <span className="text-sm text-success">
+              {language === 'he' ? 'פורסם לענן בהצלחה ✓' : 'Published to cloud ✓'}
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Pending Cloud Sync Warning Banner - only show if no specific status */}
+      {hasPendingCloudSync && publishStatus.status === 'idle' && (
         <Card variant="glass" className="border-warning/30 bg-warning/5">
           <CardContent className="flex items-center gap-3 py-3">
             <AlertCircle className="w-5 h-5 text-warning flex-shrink-0" />
@@ -432,6 +537,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
                 {language === 'he'
                   ? 'השינויים האחרונים נשמרו מקומית בלבד. משתמשים אחרים לא יראו את התוכנית הזו.'
                   : 'Recent changes saved locally only. Other users will not see this plan.'}
+              </p>
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                {language === 'he'
+                  ? '💡 הענן מכיל רק מחזורים מתוכננים (planned). מחזורים בביצוע/הושלמו נשארים מקומית.'
+                  : '💡 Cloud only syncs planned cycles. In-progress/completed cycles stay local.'}
               </p>
             </div>
             <Button
