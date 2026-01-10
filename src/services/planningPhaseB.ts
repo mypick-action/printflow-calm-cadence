@@ -90,12 +90,10 @@ export function phaseB_validateNightCycles(input: PhaseBInput): PhaseBResult {
     const printerCycles = cyclesByPrinter.get(slot.printerId) || [];
     if (printerCycles.length === 0) continue;
     
-    // Get night window for today
-    const nightWindow = getNightWindow(planningStart, settings);
-    
     // Separate day cycles from night cycles
+    // IMPORTANT: Get night window for EACH cycle's date, not planningStart
     const dayCycles: PlannedCycle[] = [];
-    const nightCycles: PlannedCycle[] = [];
+    const nightCyclesByDate = new Map<string, PlannedCycle[]>();
     
     for (const cycle of printerCycles) {
       if (!cycle.startTime) {
@@ -104,10 +102,18 @@ export function phaseB_validateNightCycles(input: PhaseBInput): PhaseBResult {
       }
       
       const startTime = new Date(cycle.startTime);
+      const cycleDate = new Date(startTime);
+      cycleDate.setHours(0, 0, 0, 0);
+      const dateKey = cycleDate.toISOString().split('T')[0];
+      
+      // Get night window for THIS cycle's date (not planningStart)
+      const nightWindow = getNightWindow(cycleDate, settings);
       
       // Check if cycle starts during night window
       if (nightWindow && isInNightWindow(startTime, nightWindow)) {
-        nightCycles.push(cycle);
+        const existing = nightCyclesByDate.get(dateKey) || [];
+        existing.push(cycle);
+        nightCyclesByDate.set(dateKey, existing);
       } else {
         dayCycles.push(cycle);
       }
@@ -116,8 +122,27 @@ export function phaseB_validateNightCycles(input: PhaseBInput): PhaseBResult {
     // Always keep day cycles
     validatedCycles.push(...dayCycles);
     
-    // Validate night cycles if any
-    if (nightCycles.length > 0 && nightWindow) {
+    // Validate night cycles for each date separately
+    for (const [dateKey, nightCycles] of nightCyclesByDate) {
+      if (nightCycles.length === 0) continue;
+      
+      // Get night window for this specific date
+      const cycleDate = new Date(dateKey);
+      const nightWindow = getNightWindow(cycleDate, settings);
+      
+      if (!nightWindow || nightWindow.mode === 'none') {
+        // No night window - skip all night cycles for this date
+        for (const cycle of nightCycles) {
+          skippedNights.push({
+            printerId: slot.printerId,
+            printerName: slot.printerName,
+            reason: 'no_night_mode',
+            color: cycle.requiredColor || '',
+          });
+        }
+        continue;
+      }
+      
       // Get color from first night cycle
       const nightColor = nightCycles[0].requiredColor || '';
       const inventory = colorInventory.get(nightColor) || null;
@@ -125,10 +150,9 @@ export function phaseB_validateNightCycles(input: PhaseBInput): PhaseBResult {
       // Apply night mode constraint for ONE_CYCLE_END_OF_DAY
       let cyclesToValidate = nightCycles;
       if (nightWindow.mode === 'one_cycle' && nightCycles.length > 1) {
-        // Only validate and keep the first cycle
         cyclesToValidate = [nightCycles[0]];
         warnings.push(
-          `Printer ${slot.printerName}: Limited to 1 night cycle (ONE_CYCLE_END_OF_DAY mode)`
+          `Printer ${slot.printerName} (${dateKey}): Limited to 1 night cycle (ONE_CYCLE_END_OF_DAY mode)`
         );
       }
       
@@ -140,13 +164,11 @@ export function phaseB_validateNightCycles(input: PhaseBInput): PhaseBResult {
         settings
       );
       
-      nightValidations.set(slot.printerId, validation);
+      nightValidations.set(`${slot.printerId}_${dateKey}`, validation);
       
       if (validation.canPlanNight) {
-        // Night cycles are valid - keep them
         validatedCycles.push(...cyclesToValidate);
         
-        // If we limited cycles, mark remaining as skipped
         if (cyclesToValidate.length < nightCycles.length) {
           for (let i = 1; i < nightCycles.length; i++) {
             skippedNights.push({
@@ -158,7 +180,6 @@ export function phaseB_validateNightCycles(input: PhaseBInput): PhaseBResult {
           }
         }
       } else {
-        // Night cycles failed validation - skip all
         for (const cycle of nightCycles) {
           skippedNights.push({
             printerId: slot.printerId,
@@ -169,19 +190,9 @@ export function phaseB_validateNightCycles(input: PhaseBInput): PhaseBResult {
         }
         
         warnings.push(
-          `Printer ${slot.printerName}: Night cycles skipped - ${validation.reason} ` +
+          `Printer ${slot.printerName} (${dateKey}): Night cycles skipped - ${validation.reason} ` +
           `(need ${validation.gramsRequired}g, have ${validation.gramsAvailable}g)`
         );
-      }
-    } else if (nightCycles.length > 0 && (!nightWindow || nightWindow.mode === 'none')) {
-      // No night window but we have night cycles - shouldn't happen, but skip them
-      for (const cycle of nightCycles) {
-        skippedNights.push({
-          printerId: slot.printerId,
-          printerName: slot.printerName,
-          reason: 'no_night_mode',
-          color: cycle.requiredColor || '',
-        });
       }
     }
   }

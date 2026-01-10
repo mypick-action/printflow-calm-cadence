@@ -106,12 +106,17 @@ export interface PublishPlanResult {
  */
 export async function publishPlanToCloud(input: PublishPlanInput): Promise<PublishPlanResult> {
   const { workspaceId, cycles, reason = 'manual_replan', scope = 'from_now' } = input;
+  const startTime = Date.now();
   
-  console.log('[PlanVersion] Publishing plan to cloud:', {
+  console.log('[PlanVersion] ========== PUBLISH START ==========');
+  console.log('[PlanVersion] Input:', {
     workspaceId,
-    cyclesCount: cycles.length,
+    totalCycles: cycles.length,
+    plannedCycles: cycles.filter(c => c.status === 'planned').length,
+    inProgressCycles: cycles.filter(c => c.status === 'in_progress').length,
     reason,
     scope,
+    timestamp: new Date().toISOString(),
   });
   
   // Get projects to map projectId → UUID
@@ -142,7 +147,14 @@ export async function publishPlanToCloud(input: PublishPlanInput): Promise<Publi
   }
   
   if (orphanedProjectIds.length > 0) {
-    console.warn('[PlanVersion] Detected orphaned projects - deferring publish:', orphanedProjectIds);
+    console.warn('[PlanVersion] ❌ PUBLISH FAILED - Orphaned projects:', orphanedProjectIds);
+    console.log('[PlanVersion] Duration:', Date.now() - startTime, 'ms');
+    
+    // Dispatch event for UI
+    window.dispatchEvent(new CustomEvent('printflow:publish-status', {
+      detail: { success: false, error: 'orphaned_projects', orphanedProjectIds }
+    }));
+    
     return {
       success: false,
       planVersion: null,
@@ -171,6 +183,8 @@ export async function publishPlanToCloud(input: PublishPlanInput): Promise<Publi
     };
   });
   
+  console.log('[PlanVersion] Calling edge function with', cloudCycles.length, 'cycles...');
+  
   // Call edge function (which uses atomic RPC)
   const { data, error } = await supabase.functions.invoke('publish-plan', {
     body: {
@@ -182,7 +196,17 @@ export async function publishPlanToCloud(input: PublishPlanInput): Promise<Publi
   });
   
   if (error) {
-    console.error('[PlanVersion] Edge function error:', error);
+    console.error('[PlanVersion] ❌ PUBLISH FAILED - Edge function error:', {
+      error: error.message,
+      name: error.name,
+      duration: Date.now() - startTime,
+    });
+    
+    // Dispatch event for UI
+    window.dispatchEvent(new CustomEvent('printflow:publish-status', {
+      detail: { success: false, error: error.message }
+    }));
+    
     return {
       success: false,
       planVersion: null,
@@ -203,8 +227,36 @@ export async function publishPlanToCloud(input: PublishPlanInput): Promise<Publi
   if (result.success && result.plan_version) {
     // Update local plan version to match cloud
     setLocalPlanVersion(result.plan_version);
-    console.log('[PlanVersion] ✓ Plan published successfully:', result.plan_version);
+    
+    console.log('[PlanVersion] ✅ PUBLISH SUCCESS:', {
+      planVersion: result.plan_version,
+      cyclesCreated: result.cycles_created,
+      cyclesDeleted: result.cycles_deleted,
+      duration: Date.now() - startTime,
+    });
+    
+    // Dispatch event for UI
+    window.dispatchEvent(new CustomEvent('printflow:publish-status', {
+      detail: { 
+        success: true, 
+        planVersion: result.plan_version,
+        cyclesCreated: result.cycles_created,
+        cyclesDeleted: result.cycles_deleted,
+      }
+    }));
+  } else {
+    console.error('[PlanVersion] ❌ PUBLISH FAILED - RPC error:', {
+      error: result.error,
+      duration: Date.now() - startTime,
+    });
+    
+    // Dispatch event for UI
+    window.dispatchEvent(new CustomEvent('printflow:publish-status', {
+      detail: { success: false, error: result.error || 'Unknown RPC error' }
+    }));
   }
+  
+  console.log('[PlanVersion] ========== PUBLISH END ==========');
   
   return {
     success: result.success,
