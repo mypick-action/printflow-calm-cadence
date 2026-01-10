@@ -27,7 +27,8 @@ import {
   Zap,
   Scale,
   CloudDownload,
-  Loader2
+  Package,
+  Loader2,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { 
@@ -53,6 +54,7 @@ export const SettingsPage: React.FC = () => {
     criticalDaysThreshold: 7,
   });
   const [schedulingStrategy, setSchedulingStrategy] = useState<SchedulingStrategy>('compress');
+  const [globalPlateInventory, setGlobalPlateInventory] = useState<number>(50);
   const [hasChanges, setHasChanges] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -65,6 +67,9 @@ export const SettingsPage: React.FC = () => {
     const settings = getFactorySettings();
     if (settings?.schedulingStrategy) {
       setSchedulingStrategy(settings.schedulingStrategy);
+    }
+    if (settings?.globalPlateInventory !== undefined) {
+      setGlobalPlateInventory(settings.globalPlateInventory);
     }
   }, []);
 
@@ -83,12 +88,13 @@ export const SettingsPage: React.FC = () => {
     
     savePriorityRules(rules);
     
-    // Save scheduling strategy
+    // Save scheduling strategy and global plate inventory
     const settings = getFactorySettings();
     if (settings) {
       saveFactorySettings({
         ...settings,
         schedulingStrategy,
+        globalPlateInventory,
       });
     }
     
@@ -262,6 +268,51 @@ export const SettingsPage: React.FC = () => {
               </Label>
             </div>
           </RadioGroup>
+        </CardContent>
+      </Card>
+
+      {/* Global Plate Inventory Card */}
+      <Card variant="elevated">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Package className="w-5 h-5 text-primary" />
+            {language === 'he' ? 'מלאי פלטות מפעלי' : 'Global Plate Inventory'}
+          </CardTitle>
+          <CardDescription>
+            {language === 'he' 
+              ? 'סה"כ פלטות זמינות במפעל (אילוץ על כל המדפסות יחד)'
+              : 'Total plates available across all printers (factory-wide constraint)'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
+            <div className="flex items-start gap-3">
+              <Package className="w-5 h-5 text-primary mt-0.5" />
+              <div className="space-y-2 flex-1">
+                <p className="text-sm text-muted-foreground">
+                  {language === 'he' 
+                    ? 'מספר הפלטות הכולל שאפשר לטעון לכל המדפסות יחד ללילה. זה אילוץ גלובלי - גם אם לכל מדפסת יש קיבולת 8, אם יש רק 50 פלטות במלאי, זה הגבול.'
+                    : 'Total plates that can be loaded across all printers for night. This is a global constraint - even if each printer can hold 8, if you only have 50 plates in inventory, that\'s the limit.'}
+                </p>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={globalPlateInventory}
+                    onChange={(e) => {
+                      setGlobalPlateInventory(parseInt(e.target.value) || 50);
+                      setHasChanges(true);
+                    }}
+                    className="w-24 text-center"
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    {language === 'he' ? 'פלטות במלאי' : 'plates in inventory'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
