@@ -44,18 +44,28 @@ export function getGramsForCycle(
   products: Product[],
   presets: PlatePreset[]
 ): GramsCalculationResult {
-  const { unitsPlanned, presetId, productId, projectId } = params;
+  const { unitsPlanned, presetId, productId } = params;
   
   // Ensure unitsPlanned is valid
   const units = Math.max(1, unitsPlanned || 1);
   
-  // Try preset first (most accurate)
+  // Try preset first (most accurate) - check if preset has its own grams_per_unit
   if (presetId) {
     const preset = presets.find(p => p.id === presetId);
     if (preset) {
-      // Find product to get gramsPerUnit from preset context
-      // Note: In the DB schema, plate_presets has grams_per_unit column
-      // But in local storage, we derive it from the product
+      // Check if preset has grams_per_unit defined (from cloud DB)
+      // Note: PlatePreset in local storage may have this from cloud sync
+      const presetGramsPerUnit = (preset as any).gramsPerUnit ?? (preset as any).grams_per_unit;
+      
+      if (presetGramsPerUnit && presetGramsPerUnit > 0) {
+        return {
+          gramsPlanned: presetGramsPerUnit * units,
+          source: 'preset',
+          gramsPerUnit: presetGramsPerUnit,
+        };
+      }
+      
+      // Fallback: Find product that owns this preset
       const product = products.find(p => 
         p.platePresets?.some(pp => pp.id === presetId)
       );
@@ -63,7 +73,7 @@ export function getGramsForCycle(
       if (product) {
         return {
           gramsPlanned: product.gramsPerUnit * units,
-          source: 'preset',
+          source: 'product',
           gramsPerUnit: product.gramsPerUnit,
         };
       }
