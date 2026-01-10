@@ -1229,32 +1229,83 @@ function scheduleProjectOnPrinters(
     // Even with FULL_AUTOMATION, an operator must physically load the plate
     // This prevents scheduling new cycles on Friday/Saturday or outside work hours
     if (!isOperatorPresent(slot.currentTime, settings)) {
-      console.log('[V2Schedule] ⏭️ Advancing to next day:', {
-        reason: 'no_operator_present',
-        projectId: project.project.id,
-        projectName: project.project.name,
+      // Advance to next workday when operator arrives
+      const nextStart = advanceToNextWorkdayStartRaw(slot.currentTime, settings);
+      
+      // ============= FOCUSED DEBUG LOG =============
+      // Check if advance actually moved us forward and if isOperatorPresent now returns true
+      const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const currentDayName = dayNames[slot.currentTime.getDay()];
+      const nextStartDayName = nextStart ? dayNames[nextStart.getDay()] : 'null';
+      const schedule = nextStart ? getDayScheduleForDate(nextStart, settings, []) : null;
+      const nextStartOperatorPresent = nextStart ? isOperatorPresent(nextStart, settings) : false;
+      
+      console.log('[V2Schedule] 🔍 NO_OPERATOR_PRESENT DEBUG:', {
+        // Current time - both formats to detect UTC/local issues
+        currentTime_ISO: slot.currentTime.toISOString(),
+        currentTime_Local: slot.currentTime.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+        currentDayOfWeek: currentDayName,
+        currentDayIndex: slot.currentTime.getDay(),
+        
+        // Next start - both formats
+        nextStart_ISO: nextStart?.toISOString() ?? 'null',
+        nextStart_Local: nextStart?.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }) ?? 'null',
+        nextStartDayOfWeek: nextStartDayName,
+        nextStartDayIndex: nextStart?.getDay() ?? 'null',
+        
+        // Schedule for nextStart day
+        scheduleForNextStart: schedule ? {
+          enabled: schedule.enabled,
+          startTime: schedule.startTime,
+          endTime: schedule.endTime,
+        } : 'no_schedule',
+        
+        // CRITICAL: Does isOperatorPresent return TRUE after advance?
+        isOperatorPresentAfterAdvance: nextStartOperatorPresent,
+        
+        // Did we actually advance?
+        didAdvance: nextStart ? nextStart.getTime() > slot.currentTime.getTime() : false,
+        advanceMs: nextStart ? nextStart.getTime() - slot.currentTime.getTime() : 0,
+        
+        // Context
         printerId: slot.printerId,
         printerName: slot.printerName,
-        currentTime: slot.currentTime.toISOString(),
-        dayOfWeek: slot.currentTime.toLocaleDateString('en-US', { weekday: 'long' }),
-        workDayStart: slot.workDayStart.toISOString(),
-        endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        projectId: project.project.id,
       });
+      
+      // ============= GUARD: Prevent infinite loop if advance doesn't move forward =============
+      if (!nextStart || nextStart.getTime() <= slot.currentTime.getTime()) {
+        console.error('[V2Schedule] ❌ LOOP GUARD TRIGGERED: advanceToNextWorkdayStart did not advance!', {
+          currentTime: slot.currentTime.toISOString(),
+          nextStart: nextStart?.toISOString() ?? 'null',
+          printerName: slot.printerName,
+        });
+        // Skip this slot entirely to prevent infinite loop
+        continue;
+      }
+      
+      // ============= GUARD: Prevent infinite loop if operator still not present =============
+      if (!nextStartOperatorPresent) {
+        console.error('[V2Schedule] ❌ LOOP GUARD TRIGGERED: Operator still not present after advance!', {
+          nextStart_ISO: nextStart.toISOString(),
+          nextStart_Local: nextStart.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+          scheduleForNextStart: schedule,
+          printerName: slot.printerName,
+        });
+        // Skip this slot to prevent infinite loop
+        continue;
+      }
+      
+      // Track for ADVANCE_GUARD wrapper (reduced logging)
+      advanceCallCount++;
+      if (advanceCallCount > ADVANCE_LOOP_THRESHOLD) {
+        console.warn('[ADVANCE_GUARD] ⚠️ HIGH ADVANCE COUNT:', advanceCallCount, 
+          '- Possible infinite loop! Last reason: no_operator_present');
+      }
       
       // Track reason for summary
       trackAdvanceReason?.('no_operator_present');
       
-      // Advance to next workday when operator arrives
-      const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings, {
-        reason: 'no_operator_present',
-        printerId: slot.printerId,
-        printerName: slot.printerName,
-        currentTime: slot.currentTime,
-        isNightSlot: slot.currentTime >= slot.endOfWorkHours,
-        projectId: project.project.id,
-        projectName: project.project.name,
-      });
-      if (!nextStart) continue;
       slot.currentTime = nextStart;
       updateSlotBoundsForDay(slot, nextStart, settings);
       // Release plates that operator can clear
