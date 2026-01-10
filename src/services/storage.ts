@@ -227,6 +227,8 @@ export interface PlannedCycle {
   pendingCloudSync?: boolean; // true = local change waiting to be synced to cloud
   lastSyncAttempt?: string; // ISO timestamp of last sync attempt (for retry logic)
   syncError?: string; // Last sync error message (for debugging)
+  // Business date fields
+  scheduledDate?: string; // YYYY-MM-DD business date (night cycles use next business day)
 }
 
 // Load recommendation for operators
