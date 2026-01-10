@@ -37,7 +37,17 @@ export interface PrinterTimeSlot {
   physicalPlateCapacity: number;
   platesInUse: PlateReleaseInfo[];  // Plates currently in use with release times
   cyclesScheduled?: any[];  // Track cycles for plate index calculation
+  
+  // ============= COLOR TRACKING (per official spec) =============
+  // CRITICAL: physicalLockedColor is the PHYSICAL color mounted on the printer.
+  // This is the source of truth for night color lock checks.
+  // It can ONLY change when operator is present (during work hours).
+  physicalLockedColor?: string;  // The actual mounted color (from printer.mountedColor or spool)
+  
+  // lastScheduledColor tracks what color was last PLANNED on this printer.
+  // This is for optimization/grouping during normal hours, NOT for night locks.
   lastScheduledColor?: string;
+  
   // NEW: Debug field - explains why endOfDayTime was set
   endOfDayTimeSource?: EndOfDayTimeSource;
   endOfDayTimeReason?: string;  // Additional human-readable reason
@@ -50,6 +60,9 @@ export interface PrinterTimeSlot {
   preLoadedPlatesRemaining?: number;  // Optional - defaults to 0
   // Track when plates were pre-loaded (for debugging)
   preLoadedAt?: Date;
+  
+  // Flag for autonomous day (weekends/holidays with no operator)
+  isAutonomousDay?: boolean;
 }
 
 // ============= HELPER: Parse time string =============
