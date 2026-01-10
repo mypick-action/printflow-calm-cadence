@@ -2,3 +2,6 @@ project_id = "aqwisvmeiktbfgdhlotn"
 
 [functions.bambu-events]
 verify_jwt = false
+
+[functions.publish-plan]
+verify_jwt = false
