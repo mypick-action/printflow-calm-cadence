@@ -171,9 +171,11 @@ export async function publishPlanToCloud(input: PublishPlanInput): Promise<Publi
     return {
       project_id: projectUuid,
       printer_id: c.printerId,
-      scheduled_date: c.startTime 
-        ? formatDateStringLocal(new Date(c.startTime)) 
-        : formatDateStringLocal(new Date()),
+      // Use pre-calculated business day if available (night cycles → next workday)
+      scheduled_date: c.scheduledDate 
+        || (c.startTime 
+          ? formatDateStringLocal(new Date(c.startTime)) 
+          : formatDateStringLocal(new Date())),
       start_time: c.startTime || null,
       end_time: c.endTime || null,
       units_planned: c.unitsPlanned,
