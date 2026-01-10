@@ -49,6 +49,7 @@ import { MaterialPurchasingPanel } from './MaterialPurchasingPanel';
 
 import { PlanningDebugPanel } from './PlanningDebugPanel';
 import { SyncDebugPanel } from './SyncDebugPanel';
+import { NightPreloadPanel } from './NightPreloadPanel';
 import { format } from 'date-fns';
 
 interface DashboardProps {
@@ -741,7 +742,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
         {format(new Date(todayPlan.lastCalculatedAt), 'HH:mm:ss')}
       </div>
 
-      {/* Debug Panel */}
+      {/* Night Preload Panel - shows what plates operator needs to load */}
+      <NightPreloadPanel />
+
+      {/* Debug Panels */}
       <PlanningDebugPanel />
       <SyncDebugPanel />
 

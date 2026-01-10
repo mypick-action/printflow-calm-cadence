@@ -1160,9 +1160,9 @@ export const PrintersPage: React.FC = () => {
                 </Select>
               </div>
 
-              {/* Physical Plate Capacity (for autonomous/overnight cycles) */}
+              {/* Physical Plate Capacity (hardware limit) */}
               <div className="space-y-2">
-                <Label>{language === 'he' ? 'מספר פלטות פיזיות' : 'Physical Plate Capacity'}</Label>
+                <Label>{language === 'he' ? 'קיבולת פלטות (חומרה)' : 'Plate Capacity (Hardware)'}</Label>
                 <Select 
                   value={String(editingPrinter.physicalPlateCapacity || 5)} 
                   onValueChange={(v) => setEditingPrinter({ ...editingPrinter, physicalPlateCapacity: parseInt(v) })}
@@ -1183,8 +1183,8 @@ export const PrintersPage: React.FC = () => {
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {language === 'he' 
-                    ? 'מגביל מחזורים רצופים "מוכנים" בלילה/סופ"ש'
-                    : 'Limits consecutive "ready" cycles during night/weekend'}
+                    ? 'כמה פלטות המדפסת יכולה להכיל פיזית. המערכת תחשב כמה לטעון בכל לילה.'
+                    : 'Max plates the printer can hold. System calculates how many to load each night.'}
                 </p>
               </div>
 

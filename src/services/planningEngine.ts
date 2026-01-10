@@ -2045,13 +2045,39 @@ const scheduleCyclesForDay = (
               slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted
               continue;
             } else {
-              // Work day transitioning to night - operator loads 5 plates at end of work hours
-              console.log('[EndOfDayLoad] 🌙 Work day ending - operator loads 5 plates:', {
+              // Work day transitioning to night - calculate plates to preload
+              // This is a PLANNING DECISION, not hardware! Based on:
+              // 1. Night window hours available
+              // 2. Average cycle duration (~3 hours)
+              // 3. Physical plate capacity as upper limit
+              
+              // Get night window to know how much time we have
+              const nightWindow = getNightWindow(slot.workDayStart, settings);
+              const nightHoursAvailable = nightWindow.totalHours;
+              const avgCycleHours = 3; // Typical cycle duration
+              
+              // Calculate how many cycles COULD fit in the night window
+              const cyclesThatFit = Math.floor(nightHoursAvailable / avgCycleHours);
+              
+              // Cap by physical capacity (can't preload more than printer can hold)
+              const physicalLimit = slot.physicalPlateCapacity;
+              
+              // The preload amount is the MINIMUM of:
+              // - Cycles that fit in night window
+              // - Physical plate capacity
+              const platesToPreload = Math.min(cyclesThatFit, physicalLimit);
+              
+              console.log('[EndOfDayLoad] 🌙 Work day ending - calculating plates to preload:', {
                 printer: slot.printerName,
                 currentTime: slot.currentTime.toISOString(),
                 endOfWorkHours: slot.endOfWorkHours.toISOString(),
+                nightHoursAvailable: nightHoursAvailable.toFixed(1),
+                avgCycleHours,
+                cyclesThatFit,
+                physicalLimit,
+                platesToPreload,
               });
-              slot.preLoadedPlatesRemaining = 5;
+              slot.preLoadedPlatesRemaining = platesToPreload;
               slot.preLoadedAt = new Date(slot.endOfWorkHours);
             }
           }
