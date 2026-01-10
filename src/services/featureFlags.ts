@@ -13,7 +13,8 @@ export type FeatureFlagName =
   | 'OVERNIGHT_OPEN_SPOOL_ALLOWED' // Allow using open spools for overnight cycles
   | 'PLANNER_V2_PROJECT_CENTRIC'   // Project-Centric planning algorithm with minimum printers
   | 'PLANNING_HYBRID_OBJECTIVE'    // Use HYBRID planning objective instead of MIN_PRINTERS
-  | 'DEADLINE_GUARD';              // Alert when new project impacts existing deadlines
+  | 'DEADLINE_GUARD'              // Alert when new project impacts existing deadlines
+  | 'TRUST_CURRENT_COLOR_FOR_NIGHT'; // Allow currentColor fallback for night printing (best effort)
 
 // Feature flag configuration
 interface FeatureFlagConfig {
@@ -57,6 +58,11 @@ const FLAG_CONFIGS: Record<FeatureFlagName, FeatureFlagConfig> = {
     name: 'DEADLINE_GUARD',
     description: 'התראה כשפרויקט חדש פוגע בדדליין של פרויקטים קיימים',
     defaultValue: true, // ON by default - safety feature
+  },
+  TRUST_CURRENT_COLOR_FOR_NIGHT: {
+    name: 'TRUST_CURRENT_COLOR_FOR_NIGHT',
+    description: 'אפשר fallback ל-currentColor להדפסות לילה (best effort)',
+    defaultValue: false, // OFF by default - requires explicit opt-in
   },
 };
 
