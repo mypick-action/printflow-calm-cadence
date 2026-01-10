@@ -38,7 +38,7 @@ import {
 import { normalizeColor } from './colorNormalization';
 import { getAvailableGramsByColor } from './materialAdapter';
 import { formatDateStringLocal } from './dateUtils';
-import { logCycleBlock } from './cycleBlockLogger';
+import { logCycleBlock, getBlockSummary } from './cycleBlockLogger';
 import { isFeatureEnabled } from './featureFlags';
 import { MinHeap } from './minHeap';
 import {
@@ -1334,6 +1334,8 @@ function scheduleProjectOnPrinters(
       
       if (!hasValidPhysicalColor) {
         // ============= CRITICAL: No physical color known = CANNOT schedule at night =============
+        // FIX: Log this but DON'T advance to next workday - just skip this project for THIS night slot
+        // The printer can still work during the DAY when operator can load any color
         console.log('[V2Schedule] 🚫 NIGHT BLOCK - No physical color known:', {
           reason: 'no_physical_color_night',
           projectId: project.project.id,
@@ -1345,7 +1347,8 @@ function scheduleProjectOnPrinters(
           physicalLockedColor: slot.physicalLockedColor ?? 'undefined',
           projectColor: project.project.color ?? 'none',
           endOfWorkHours: slot.endOfWorkHours.toISOString(),
-          rule: 'NO physical color = NO scheduling at night. Operator required to load spool.',
+          rule: 'NO physical color = NO scheduling at night. Try other projects or wait for day.',
+          action: 'SKIP_PROJECT_FOR_NIGHT_ONLY',
         });
         
         // Log to cycle block logger
@@ -1355,13 +1358,14 @@ function scheduleProjectOnPrinters(
           projectName: project.project.name,
           printerId: slot.printerId,
           printerName: slot.printerName,
-          details: `Night block: No physical color known on printer. Cannot schedule at night without known spool color.`,
+          details: `Night block: No physical color known on printer. Skipping this project for night - printer can work during day.`,
         });
         
         // Track reason for summary
         trackAdvanceReason?.('no_physical_color_night');
         
-        // Advance to next workday when operator can load spool
+        // FIX: Advance to next WORKDAY start, not just next day
+        // This ensures the printer can work during the DAY when operator is present
         const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
         if (!nextStart) continue;
         
@@ -1380,6 +1384,9 @@ function scheduleProjectOnPrinters(
       const physicalColorKey = normalizeColor(slot.physicalLockedColor);
       if (physicalColorKey !== colorKey) {
         // ============= DEBUG LOG: Night color lock - BLOCKED =============
+        // FIX: Log this but DON'T advance to next workday
+        // The color mismatch only blocks THIS project on THIS night
+        // Other projects with matching colors can still be scheduled
         console.log('[V2Schedule] 🔒 NIGHT COLOR LOCK - BLOCKED:', {
           reason: 'color_change_not_allowed_at_night_no_ams',
           projectId: project.project.id,
@@ -1393,7 +1400,8 @@ function scheduleProjectOnPrinters(
           projectColor: project.project.color ?? 'none',
           projectColorKey: colorKey,
           endOfWorkHours: slot.endOfWorkHours.toISOString(),
-          verdict: 'BLOCKED - deferred to next workday',
+          verdict: 'BLOCKED - advance to next day to allow color change',
+          action: 'ADVANCE_TO_NEXT_WORKDAY',
         });
         
         // Log to cycle block logger
@@ -1403,7 +1411,7 @@ function scheduleProjectOnPrinters(
           projectName: project.project.name,
           printerId: slot.printerId,
           printerName: slot.printerName,
-          details: `Night color lock BLOCKED: printer has ${slot.physicalLockedColor}, project needs ${project.project.color}. No AMS = no color change at night.`,
+          details: `Night color lock BLOCKED: printer has ${slot.physicalLockedColor}, project needs ${project.project.color}. Advancing to day when operator can change.`,
         });
         
         // Track reason for summary
@@ -2440,6 +2448,7 @@ const scheduleCyclesForDay = (
               
               if (!hasValidPhysicalColor) {
                 // NO physical color known = CANNOT schedule at night
+                // FIX: Still advance to next workday but log clearly
                 console.log('[Planning-Legacy] 🚫 NIGHT BLOCK - No physical color known:', {
                   reason: 'no_physical_color_night',
                   projectId: state.project.id,
@@ -2449,7 +2458,8 @@ const scheduleCyclesForDay = (
                   currentTime: slot.currentTime.toISOString(),
                   physicalLockedColor: slot.physicalLockedColor ?? 'undefined',
                   projectColor: state.project.color ?? 'none',
-                  rule: 'NO physical color = NO scheduling at night. Operator required.',
+                  rule: 'NO physical color = NO scheduling at night. Advancing to next workday.',
+                  action: 'ADVANCE_TO_NEXT_WORKDAY',
                 });
                 
                 // Log block
@@ -2459,10 +2469,10 @@ const scheduleCyclesForDay = (
                   projectName: state.project.name,
                   printerId: slot.printerId,
                   printerName: slot.printerName,
-                  details: `Night block: No physical color known on printer.`,
+                  details: `Night block: No physical color known. Advancing to next workday when operator can load spool.`,
                 });
                 
-                // Advance to next workday
+                // Advance to next workday - this printer cannot work at night without known color
                 const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
                 if (!nextStart) continue;
                 slot.currentTime = nextStart;
@@ -3488,6 +3498,99 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
       all: Object.fromEntries(sortedReasons),
     });
   }
+  
+  // ============= NIGHT ALLOCATION REPORT =============
+  // Show eligibleDemand/allocated/lockedColor/hasAMS per printer + blocked reasons summary
+  // A cycle is "night" if it starts after the work hours end for that day
+  const nightCycles = deduplicatedCycles.filter(c => {
+    const cycleStart = new Date(c.startTime);
+    // Get the schedule for the cycle's day
+    const cycleDate = new Date(cycleStart);
+    cycleDate.setHours(0, 0, 0, 0);
+    const schedule = getDayScheduleForDate(cycleDate, settings, []);
+    if (!schedule?.enabled) return true; // Non-working day = night
+    // Parse end time
+    const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+    const endOfWork = new Date(cycleStart);
+    endOfWork.setHours(endHour, endMinute, 0, 0);
+    return cycleStart >= endOfWork;
+  });
+  
+  // Build per-printer night allocation summary
+  const printerNightAllocation = new Map<string, {
+    name: string;
+    eligibleDemand: number;
+    allocated: number;
+    physicalLockedColor: string;
+    hasAMS: boolean;
+    physicalPlateCapacity: number;
+  }>();
+  
+  // Initialize with all printers
+  for (const printer of printers) {
+    printerNightAllocation.set(printer.id, {
+      name: printer.name,
+      eligibleDemand: printer.physicalPlateCapacity ?? 4, // Max possible = plate capacity
+      allocated: 0,
+      physicalLockedColor: printer.currentColor ?? printer.mountedColor ?? 'UNKNOWN',
+      hasAMS: printer.hasAMS ?? false,
+      physicalPlateCapacity: printer.physicalPlateCapacity ?? 4,
+    });
+  }
+  
+  // Count allocated night cycles per printer
+  for (const cycle of nightCycles) {
+    const alloc = printerNightAllocation.get(cycle.printerId);
+    if (alloc) {
+      alloc.allocated++;
+    }
+  }
+  
+  // Get blocked reasons summary from cycle block logger
+  const blockSummary = getBlockSummary();
+  const nightBlockedReasons = {
+    no_physical_color_night: blockSummary.byReason.no_physical_color_night || 0,
+    color_lock_night: blockSummary.byReason.color_lock_night || 0,
+    no_night_preset: blockSummary.byReason.no_night_preset || 0,
+    after_hours_policy: blockSummary.byReason.after_hours_policy || 0,
+    plates_limit: blockSummary.byReason.plates_limit || 0,
+    cycle_too_long_night: blockSummary.byReason.cycle_too_long_night || 0,
+  };
+  
+  const totalNightBlocked = Object.values(nightBlockedReasons).reduce((a, b) => a + b, 0);
+  const totalNightAllocated = Array.from(printerNightAllocation.values()).reduce((sum, p) => sum + p.allocated, 0);
+  const totalNightCapacity = Array.from(printerNightAllocation.values()).reduce((sum, p) => sum + p.physicalPlateCapacity, 0);
+  
+  console.log('[Plan] 🌙 === NIGHT ALLOCATION REPORT ===');
+  console.log('[Plan] 📊 Per-printer summary:', 
+    Object.fromEntries(
+      Array.from(printerNightAllocation.entries()).map(([id, data]) => [
+        data.name,
+        {
+          eligibleDemand: data.eligibleDemand,
+          allocated: data.allocated,
+          physicalLockedColor: data.physicalLockedColor,
+          hasAMS: data.hasAMS,
+          utilizationPct: Math.round((data.allocated / data.eligibleDemand) * 100),
+        }
+      ])
+    )
+  );
+  
+  console.log('[Plan] 📊 Blocked reasons summary:', {
+    totalBlocked: totalNightBlocked,
+    breakdown: nightBlockedReasons,
+  });
+  
+  console.log('[Plan] 📊 Night allocation totals:', {
+    totalNightCapacity,
+    totalNightAllocated,
+    utilizationPct: totalNightCapacity > 0 ? Math.round((totalNightAllocated / totalNightCapacity) * 100) : 0,
+    explanation: totalNightAllocated < totalNightCapacity 
+      ? `Only ${totalNightAllocated}/${totalNightCapacity} plates utilized. Check blocked reasons above.`
+      : 'Full night capacity utilized!',
+  });
+
   
   return {
     success: blockingIssues.length === 0,

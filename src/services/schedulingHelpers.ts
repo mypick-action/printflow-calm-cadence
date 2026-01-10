@@ -444,6 +444,11 @@ export function getNightWindow(
   // Get schedule for this day
   const schedule = getDayScheduleForDate(date, settings, []);
   
+  // Get day name for logging
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dayOfWeek = date.getDay();
+  const dayName = dayNames[dayOfWeek];
+  
   // Determine mode from afterHoursBehavior
   let mode: NightMode = 'none';
   if (settings.afterHoursBehavior === 'FULL_AUTOMATION') {
@@ -452,16 +457,33 @@ export function getNightWindow(
     mode = 'one_cycle';
   }
   
+  // ============= NIGHT WINDOW DEBUG LOG =============
+  // Log raw schedule data for debugging
+  console.log('[NightWindow] 📋 Raw schedule data:', {
+    date: date.toISOString().split('T')[0],
+    dayOfWeek: dayName,
+    schedule: schedule ? { enabled: schedule.enabled, startTime: schedule.startTime, endTime: schedule.endTime } : null,
+    rawWeeklySchedule: settings.weeklySchedule,
+    afterHoursBehavior: settings.afterHoursBehavior,
+    mode,
+  });
+  
   // If no schedule or not a working day, return minimal window
   if (!schedule?.enabled) {
     const nextWorkday = advanceToNextWorkdayStart(date, settings);
-    return {
+    const result = {
       start: date,
       end: nextWorkday ?? addDays(date, 1),
       totalHours: 0,
       isWeekendNight: true,
       mode,
     };
+    console.log('[NightWindow] 📋 Non-working day result:', {
+      nightStart: result.start.toISOString(),
+      nightEnd: result.end.toISOString(),
+      totalHours: result.totalHours,
+    });
+    return result;
   }
   
   // Calculate end of work hours
@@ -483,10 +505,22 @@ export function getNightWindow(
   const totalHours = (nightEnd.getTime() - adjustedEndOfWork.getTime()) / (1000 * 60 * 60);
   
   // Check if this is a weekend night (e.g., Thursday→Sunday in Israel, Friday→Monday elsewhere)
-  const dayOfWeek = date.getDay();
   // Weekend nights: Friday (5), Saturday (6) in most locales
   // For Israel: Thursday (4) night goes into Saturday
   const isWeekendNight = dayOfWeek === 4 || dayOfWeek === 5 || dayOfWeek === 6;
+  
+  // ============= NIGHT WINDOW CALCULATION LOG =============
+  console.log('[NightWindow] 📋 Calculated night window:', {
+    date: date.toISOString().split('T')[0],
+    dayName,
+    workSchedule: { start: schedule.startTime, end: schedule.endTime },
+    nightStart: adjustedEndOfWork.toISOString(),
+    nightEnd: nightEnd.toISOString(),
+    totalHours: Math.round(totalHours * 10) / 10,
+    isWeekendNight,
+    mode,
+    note: `Work ends at ${schedule.endTime}, night starts immediately after`,
+  });
   
   return {
     start: adjustedEndOfWork,
