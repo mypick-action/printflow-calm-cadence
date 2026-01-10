@@ -2186,14 +2186,27 @@ const scheduleCyclesForDay = (
           const cycleHours = activePreset.cycleHours;
           const cycleEndTime = addHours(slot.currentTime, cycleHours);
           
-          // ============= NIGHT SLOT OVERRIDE =============
-          // For night slots: validate against nightWindow.totalHours, not endOfDayTime
-          // No plate exhaustion check, no operator check (already handled by pre-loaded plates)
-          const isNightSlotForValidation = slot.currentTime >= slot.endOfWorkHours;
+          // ============= NIGHT MODE - SEPARATE LOGICAL BRANCH =============
+          // Night mode skips ALL preset/color/AMS checks.
+          // Only validates: (1) cycle fits in night window, (2) filament available (handled later)
+          // This is the autonomous operation model - printer works with whatever is loaded.
+          // Note: isNightSlot already declared above for preset selection
           
-          if (isNightSlotForValidation) {
-            // Get night window from the current slot time
+          if (isNightSlot) {
+            // ============= NIGHT BRANCH: Only validate window fit =============
+            // Get night window for the current slot time
             const nightWindow = getNightWindow(slot.currentTime, settings);
+            
+            // Check if night mode is enabled at all
+            if (nightWindow.mode === 'none') {
+              // Night mode disabled - advance to next workday
+              console.log('[Planning] 🌙 Night mode disabled, advancing to next day');
+              const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+              if (!nextStart) continue;
+              slot.currentTime = nextStart;
+              updateSlotBoundsForDay(slot, nextStart, settings);
+              continue;
+            }
             
             // Calculate remaining night hours from current time
             const remainingNightHours = Math.max(0, (nightWindow.end.getTime() - slot.currentTime.getTime()) / (1000 * 60 * 60));
@@ -2208,14 +2221,52 @@ const scheduleCyclesForDay = (
                 printerName: slot.printerName,
                 presetId: activePreset.id,
                 presetName: activePreset.name,
-                details: `מחזור ${cycleHours}h ארוך מחלון הלילה הנותר ${remainingNightHours.toFixed(1)}h (סה"כ ${nightWindow.totalHours.toFixed(1)}h)`,
+                details: `מחזור ${cycleHours}h ארוך מחלון הלילה הנותר ${remainingNightHours.toFixed(1)}h`,
                 scheduledDate: dateString,
                 cycleHours,
               });
+              
+              // Advance to next workday
+              const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+              if (!nextStart) continue;
+              slot.currentTime = nextStart;
+              updateSlotBoundsForDay(slot, nextStart, settings);
               continue;
             }
+            
+            // ============= NIGHT: ONE_CYCLE mode check =============
+            // If mode is 'one_cycle', only allow one night cycle per printer per night
+            if (nightWindow.mode === 'one_cycle') {
+              // Check if we already scheduled a night cycle for this printer tonight
+              const todayDateStr = formatDateString(slot.currentTime);
+              const existingNightCycle = slot.cyclesScheduled.find(c => 
+                formatDateString(c.startTime) === todayDateStr &&
+                new Date(c.startTime) >= slot.endOfWorkHours
+              );
+              
+              if (existingNightCycle) {
+                console.log('[Planning] 🌙 ONE_CYCLE mode: already scheduled night cycle, advancing');
+                const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+                if (!nextStart) continue;
+                slot.currentTime = nextStart;
+                updateSlotBoundsForDay(slot, nextStart, settings);
+                continue;
+              }
+            }
+            
+            // Night mode passed - continue to filament check (handled below)
+            // NO preset/color/AMS checks in night mode!
+            console.log('[Planning] 🌙 Night mode: cycle approved', {
+              project: state.project.name,
+              printer: slot.printerName,
+              cycleHours,
+              remainingNightHours: remainingNightHours.toFixed(1),
+              nightMode: nightWindow.mode,
+            });
+            
           } else {
-            // During work hours: validate against endOfDayTime as before
+            // ============= DAY BRANCH: Standard validation =============
+            // During work hours: validate against endOfDayTime
             if (cycleEndTime > slot.endOfDayTime) {
               console.log('[Planning] ⏩ Cycle too long for slot:', {
                 project: state.project.name,
@@ -2226,137 +2277,17 @@ const scheduleCyclesForDay = (
               });
               continue;
             }
-          }
-          
-          // ============= END OF DAY LOADING - ONLY AT NIGHT SLOT TRANSITION =============
-          // The End of Day Loading logic is handled EARLIER in the loop (lines 2022-2040)
-          // when we're already in night slot and need pre-loaded plates.
-          //
-          // IMPORTANT: A cycle that STARTS during work hours can END after work hours!
-          // The operator loads the plate during work hours, so it's fine.
-          // We do NOT skip cycles just because they end after 17:30.
-          //
-          // Example: 14:00 start → 17:30 end = OK (plate loaded at 14:00)
-          //          16:00 start → 19:30 end = OK (plate loaded at 16:00)
-          //
-          // The only restriction: if we're IN night slot (past 17:30), we need pre-loaded plates.
-          
-          // ============= 3-LEVEL NIGHT CONTROL CHECK =============
-          // Level 1: Factory setting (afterHoursBehavior)
-          // Level 2: Printer setting (canStartNewCyclesAfterHours)
-          // Level 3: Preset setting (allowedForNightCycle)
-          
-          // Check if this is a night slot (cycle STARTS after work hours)
-          const isNightSlotUpdated = slot.currentTime >= slot.endOfWorkHours;
-          
-          // NOTE: Pre-loaded plates initialization moved to earlier in the loop
-          // (before the exhaustion check at lines ~2025-2050)
-          
-          // Check if this is a night slot and if the cycle can start there
-          if (isNightSlotUpdated) {
-            // Level 1: Check factory allows automation
-            if (settings.afterHoursBehavior !== 'FULL_AUTOMATION') {
-              // Log block reason
-              logCycleBlock({
-                reason: 'after_hours_policy',
-                projectId: state.project.id,
-                projectName: state.project.name,
-                printerId: slot.printerId,
-                printerName: slot.printerName,
-                presetId: activePreset.id,
-                presetName: activePreset.name,
-                details: `Factory afterHoursBehavior is ${settings.afterHoursBehavior}, not FULL_AUTOMATION`,
-                scheduledDate: dateString,
-                cycleHours: cycleHours,
-              });
-              continue;
-            }
             
-            // Level 2: Check printer allows night starts
-            if (!printer?.canStartNewCyclesAfterHours) {
-              logCycleBlock({
-                reason: 'after_hours_policy',
-                projectId: state.project.id,
-                projectName: state.project.name,
-                printerId: slot.printerId,
-                printerName: slot.printerName,
-                presetId: activePreset.id,
-                presetName: activePreset.name,
-                details: `Printer "${slot.printerName}" has canStartNewCyclesAfterHours=false`,
-                scheduledDate: dateString,
-                cycleHours: cycleHours,
-              });
-              continue;
-            }
-            
-            // Level 3: Check preset allows night operation
-            if (!activePreset.allowedForNightCycle) {
-              logCycleBlock({
-                reason: 'no_night_preset',
-                projectId: state.project.id,
-                projectName: state.project.name,
-                printerId: slot.printerId,
-                printerName: slot.printerName,
-                presetId: activePreset.id,
-                presetName: activePreset.name,
-                details: `Preset "${activePreset.name}" has allowedForNightCycle=false`,
-                scheduledDate: dateString,
-                cycleHours: cycleHours,
-              });
-              continue;
-            }
-            
-            // ============= NON-AMS COLOR LOCK FOR NIGHT =============
-            // Non-AMS printers can only continue same color at night (no color change possible)
-            if (!slot.hasAMS && slot.lastScheduledColor) {
-              const slotColorKey = normalizeColor(slot.lastScheduledColor);
-              const projectColorKey = colorKey;
-              
-              if (slotColorKey !== projectColorKey) {
-                logCycleBlock({
-                  reason: 'color_lock_night',
-                  projectId: state.project.id,
-                  projectName: state.project.name,
-                  printerId: slot.printerId,
-                  printerName: slot.printerName,
-                  presetId: activePreset.id,
-                  presetName: activePreset.name,
-                  details: `Non-AMS printer locked to ${slot.lastScheduledColor} during night, project needs ${state.project.color}`,
-                  scheduledDate: dateString,
-                  cycleHours: cycleHours,
-                });
+            // ============= DAY: Cycle extends into night =============
+            // If cycle starts during work but ends after, check if night mode allows it
+            if (cycleEndTime > slot.endOfWorkHours) {
+              const nightWindow = getNightWindow(slot.currentTime, settings);
+              if (nightWindow.mode === 'none') {
+                // Night mode disabled - cannot extend into night
+                console.log('[Planning] 🌙 Cycle extends into night but night mode disabled');
                 continue;
               }
-            }
-          }
-          
-          // ============= SECONDARY NIGHT VALIDATION =============
-          // If cycle ends after work hours, apply additional validation
-          // to ensure the cycle meets autonomous operation requirements
-          if (!isNightSlot && cycleEndTime > slot.endOfWorkHours) {
-            // Cycle starts during work but ends after - check if it can run autonomously
-            if (settings.afterHoursBehavior !== 'FULL_AUTOMATION' || 
-                !printer?.canStartNewCyclesAfterHours ||
-                !activePreset.allowedForNightCycle) {
-              // Log block reason
-              const blockReason = !activePreset.allowedForNightCycle 
-                ? 'no_night_preset' 
-                : 'after_hours_policy';
-              logCycleBlock({
-                reason: blockReason,
-                projectId: state.project.id,
-                projectName: state.project.name,
-                printerId: slot.printerId,
-                printerName: slot.printerName,
-                presetId: activePreset.id,
-                presetName: activePreset.name,
-                details: blockReason === 'no_night_preset'
-                  ? `Preset "${activePreset.name}" not allowed for night cycle`
-                  : `After hours policy prevents start (behavior: ${settings.afterHoursBehavior}, printer night: ${printer?.canStartNewCyclesAfterHours})`,
-                scheduledDate: dateString,
-                cycleHours: cycleHours,
-              });
-              continue;
+              // If night mode is enabled (one_cycle or full), allow the cycle to extend
             }
           }
           
@@ -2540,7 +2471,7 @@ const scheduleCyclesForDay = (
             printer: slot.printerName,
             startTime: scheduledCycle.startTime.toISOString(),
             endTime: cycleEndTime.toISOString(),
-            isNightSlot: isNightSlotUpdated,
+            isNightSlot,
             preLoadedPlatesRemaining: slot.preLoadedPlatesRemaining,
             nextSlotTime: slot.currentTime.toISOString(),
           });
@@ -2554,7 +2485,7 @@ const scheduleCyclesForDay = (
           
           // ============= PRE-LOADED PLATE CONSUMPTION =============
           // If we're in night mode and using pre-loaded plates, decrement the count
-          const isNightCycle = slot.currentTime >= slot.endOfWorkHours || isNightSlotUpdated;
+          const isNightCycle = slot.currentTime >= slot.endOfWorkHours || isNightSlot;
           if (isNightCycle && slot.preLoadedPlatesRemaining > 0) {
             slot.preLoadedPlatesRemaining--;
             console.log('[EndOfDayLoad] 🔄 Consumed pre-loaded plate:', {
@@ -2575,7 +2506,7 @@ const scheduleCyclesForDay = (
             color: state.project.color,
             cycleEnd: cycleEndTime.toISOString(),
             plateReleaseTime: plateReleaseTime.toISOString(),
-            isNightSlot: isNightSlotUpdated,
+            isNightSlot,
             isWithinWorkHours: slot.currentTime >= slot.workDayStart && slot.currentTime < slot.endOfWorkHours,
           });
           
