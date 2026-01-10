@@ -62,33 +62,30 @@ export function getBusinessDay(
   const start = typeof startTime === 'string' ? new Date(startTime) : startTime;
   const calendarDate = formatDateStringLocal(start);
   
-  // Key check: Find the next workday start from this time
-  const nextWorkdayStart = advanceToNextWorkdayStart(start, settings);
+  // Get the schedule for the calendar day
+  const schedule = getDayScheduleForDate(start, settings, []);
   
-  if (!nextWorkdayStart) {
-    // Fallback: no next workday found, use calendar date
+  if (!schedule?.enabled) {
+    // Non-working day (weekend/holiday) - cycle belongs to NEXT business day
+    const nextWorkdayStart = advanceToNextWorkdayStart(start, settings);
+    if (nextWorkdayStart) {
+      return formatDateStringLocal(nextWorkdayStart);
+    }
     return calendarDate;
   }
   
-  // Check if operator is present at startTime
-  // If operator IS present → we're in work hours → use calendar date
-  if (isOperatorPresent(start, settings)) {
-    return calendarDate;
+  // Working day - check if we're AFTER work hours
+  const workEnd = createDateWithTime(start, schedule.endTime);
+  
+  // If cycle starts AFTER work hours end, it belongs to NEXT business day
+  if (start > workEnd) {
+    const nextWorkdayStart = advanceToNextWorkdayStart(start, settings);
+    if (nextWorkdayStart) {
+      return formatDateStringLocal(nextWorkdayStart);
+    }
   }
   
-  // Operator is NOT present. This means we're either:
-  // 1. After work hours (night window)
-  // 2. On a non-working day (weekend/holiday)
-  // 
-  // In both cases, if startTime < nextWorkdayStart, 
-  // the cycle belongs to that next workday.
-  
-  if (start < nextWorkdayStart) {
-    // We're in the "night window" leading to nextWorkdayStart
-    // This cycle belongs to that next business day
-    return formatDateStringLocal(nextWorkdayStart);
-  }
-  
-  // Shouldn't normally reach here, but fallback to calendar date
+  // Cycle is during work hours or before work hours on a working day
+  // → belongs to THIS calendar day
   return calendarDate;
 }
