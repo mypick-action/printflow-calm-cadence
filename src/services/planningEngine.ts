@@ -2145,7 +2145,7 @@ const scheduleCyclesForDay = (
           const colorKey = normalizeColor(state.project.color);
           const availableMaterial = workingMaterial.get(colorKey) || 0;
           
-          // Check if current time is in night slot
+          // Check if current time is in night slot (used for preset selection AND night branch)
           const isNightSlot = slot.currentTime >= slot.endOfWorkHours;
           
           // Get the printer object to check night capability
