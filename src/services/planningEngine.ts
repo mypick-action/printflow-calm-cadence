@@ -2413,7 +2413,7 @@ const scheduleCyclesForDay = (
           // Note: isNightSlot already declared above for preset selection
           
           if (isNightSlot) {
-            // ============= NIGHT BRANCH: Only validate window fit =============
+            // ============= NIGHT BRANCH: Validate night color lock FIRST =============
             // Get night window for the current slot time
             const nightWindow = getNightWindow(slot.currentTime, settings);
             
@@ -2426,6 +2426,88 @@ const scheduleCyclesForDay = (
               slot.currentTime = nextStart;
               updateSlotBoundsForDay(slot, nextStart, settings);
               continue;
+            }
+            
+            // ============= CRITICAL: NIGHT COLOR LOCK CHECK (Legacy Algorithm) =============
+            // PER OFFICIAL SPEC: At night without AMS, printer is locked to PHYSICAL color.
+            // This MUST be checked BEFORE any other night validation!
+            if (!slot.hasAMS) {
+              // Check if we have a VALID physical color
+              const hasValidPhysicalColor = 
+                slot.physicalLockedColor && 
+                slot.physicalLockedColor.trim() !== '' && 
+                slot.physicalLockedColor.toUpperCase() !== 'NONE';
+              
+              if (!hasValidPhysicalColor) {
+                // NO physical color known = CANNOT schedule at night
+                console.log('[Planning-Legacy] 🚫 NIGHT BLOCK - No physical color known:', {
+                  reason: 'no_physical_color_night',
+                  projectId: state.project.id,
+                  projectName: state.project.name,
+                  printerId: slot.printerId,
+                  printerName: slot.printerName,
+                  currentTime: slot.currentTime.toISOString(),
+                  physicalLockedColor: slot.physicalLockedColor ?? 'undefined',
+                  projectColor: state.project.color ?? 'none',
+                  rule: 'NO physical color = NO scheduling at night. Operator required.',
+                });
+                
+                // Log block
+                logCycleBlock({
+                  reason: 'no_physical_color_night',
+                  projectId: state.project.id,
+                  projectName: state.project.name,
+                  printerId: slot.printerId,
+                  printerName: slot.printerName,
+                  details: `Night block: No physical color known on printer.`,
+                });
+                
+                // Advance to next workday
+                const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+                if (!nextStart) continue;
+                slot.currentTime = nextStart;
+                updateSlotBoundsForDay(slot, nextStart, settings);
+                continue;
+              }
+              
+              // Physical color IS known - verify it matches project color
+              const physicalColorKey = normalizeColor(slot.physicalLockedColor);
+              if (physicalColorKey !== colorKey) {
+                console.log('[Planning-Legacy] 🔒 NIGHT COLOR LOCK - BLOCKED:', {
+                  reason: 'color_change_not_allowed_at_night_no_ams',
+                  projectId: state.project.id,
+                  projectName: state.project.name,
+                  printerId: slot.printerId,
+                  printerName: slot.printerName,
+                  physicalLockedColor: slot.physicalLockedColor,
+                  physicalColorKey,
+                  projectColor: state.project.color,
+                  projectColorKey: colorKey,
+                  verdict: 'BLOCKED - skip to next project for this printer',
+                });
+                
+                // Log block
+                logCycleBlock({
+                  reason: 'color_lock_night',
+                  projectId: state.project.id,
+                  projectName: state.project.name,
+                  printerId: slot.printerId,
+                  printerName: slot.printerName,
+                  details: `Night color lock BLOCKED: printer has ${slot.physicalLockedColor}, project needs ${state.project.color}.`,
+                });
+                
+                // Don't advance to next workday - try next project on this printer
+                continue;
+              }
+              
+              // Color MATCHES - PASS
+              console.log('[Planning-Legacy] ✅ NIGHT COLOR LOCK - PASS:', {
+                printerId: slot.printerId,
+                printerName: slot.printerName,
+                physicalLockedColor: slot.physicalLockedColor,
+                projectColor: state.project.color,
+                verdict: 'ALLOWED - colors match',
+              });
             }
             
             // Calculate remaining night hours from current time
@@ -2474,14 +2556,15 @@ const scheduleCyclesForDay = (
               }
             }
             
-            // Night mode passed - continue to filament check (handled below)
-            // NO preset/color/AMS checks in night mode!
+            // Night mode passed all checks including color lock
             console.log('[Planning] 🌙 Night mode: cycle approved', {
               project: state.project.name,
               printer: slot.printerName,
               cycleHours,
               remainingNightHours: remainingNightHours.toFixed(1),
               nightMode: nightWindow.mode,
+              hasAMS: slot.hasAMS,
+              physicalLockedColor: slot.physicalLockedColor ?? 'none',
             });
             
           } else {
@@ -2702,6 +2785,25 @@ const scheduleCyclesForDay = (
             cycleId: scheduledCycle.id,
           });
           slot.lastScheduledColor = state.project.color; // Track for non-AMS color lock
+          
+          // ============= CRITICAL: PHYSICAL COLOR UPDATE (per official spec) =============
+          // physicalLockedColor: ONLY updated when operator is present (during work hours)!
+          // This is the PHYSICAL constraint - color cannot change without operator.
+          // At night, the physical color stays locked to whatever was last set during work hours.
+          const isWithinWorkHoursForColorUpdate = 
+            scheduledCycle.startTime >= slot.workDayStart && 
+            scheduledCycle.startTime < slot.endOfWorkHours;
+          if (isWithinWorkHoursForColorUpdate) {
+            // Operator is present - they can change the spool, so update physical color
+            slot.physicalLockedColor = state.project.color;
+            console.log('[Planning-Legacy] 🔄 Updated physicalLockedColor during work hours:', {
+              printerId: slot.printerId,
+              printerName: slot.printerName,
+              newPhysicalColor: state.project.color,
+              cycleStartTime: scheduledCycle.startTime.toISOString(),
+            });
+          }
+          // If cycle starts at night, physical color stays locked to previous value
           
           // ============= PRE-LOADED PLATE CONSUMPTION =============
           // If we're in night mode and using pre-loaded plates, decrement the count
