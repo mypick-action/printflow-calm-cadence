@@ -138,6 +138,11 @@ export interface Printer {
   // NOTE: In v2, mountedSpoolId is REQUIRED for "ready" state
   mountedSpoolId?: string | null; // Required for ready - must reference inventory spool
   mountedColor?: string; // Derived from mounted spool, or legacy value (needs migration)
+  // Physical color confirmation - set ONLY on Start Print
+  // This is the most reliable source of physical color for night planning
+  // Unlike mountedColor which can be empty, this persists until explicitly changed
+  confirmedSpoolColor?: string;
+  confirmedSpoolAt?: string; // ISO timestamp of last confirmation
   // mountedEstimate field REMOVED in v2 - use spool.gramsRemainingEst instead
   // AMS slots state (for AMS printers)
   amsSlotStates?: AMSSlotState[];
