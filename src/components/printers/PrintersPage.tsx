@@ -38,7 +38,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Printer as PrinterIcon, Settings2, CircleDot, Box, Layers, Plus, AlertTriangle, Power, PowerOff, RefreshCw, Package, ArrowRight } from 'lucide-react';
+import { Printer as PrinterIcon, Settings2, CircleDot, Box, Layers, Plus, AlertTriangle, Power, PowerOff, RefreshCw, Package, ArrowRight, Palette } from 'lucide-react';
+import { BulkSetColorModal } from './BulkSetColorModal';
 import { toast } from '@/hooks/use-toast';
 
 import { format } from 'date-fns';
@@ -128,6 +129,9 @@ export const PrintersPage: React.FC = () => {
   const [loadSpoolMode, setLoadSpoolMode] = useState<'color' | 'spool'>('color');
   const [selectedColor, setSelectedColor] = useState('');
   const [selectedSpoolId, setSelectedSpoolId] = useState('');
+  
+  // Bulk set color modal
+  const [bulkColorModalOpen, setBulkColorModalOpen] = useState(false);
   const [loadSlotIndex, setLoadSlotIndex] = useState<number | null>(null); // null = main spool, number = AMS slot
 
   useEffect(() => {
@@ -512,6 +516,38 @@ export const PrintersPage: React.FC = () => {
     });
   };
 
+  // Bulk set mounted color for multiple printers
+  const handleBulkSetColor = async (printerIds: string[], color: string) => {
+    if (!workspaceId) return;
+    
+    let updated = 0;
+    for (const printerId of printerIds) {
+      // Update local storage
+      updatePrinter(printerId, {
+        mountedColor: color,
+        currentColor: color,
+      });
+      
+      // Also update cloud
+      await updateCloudPrinter(printerId, {});
+      updated++;
+    }
+    
+    // Sync from cloud
+    await hydrateLocalFromCloud(workspaceId, { force: false, source: 'PrintersPage-bulkSetColor' });
+    
+    // Notify and refresh
+    notifyInventoryChanged();
+    refreshData();
+    
+    toast({
+      title: language === 'he' ? 'צבעים עודכנו' : 'Colors updated',
+      description: language === 'he' 
+        ? `${updated} מדפסות עודכנו ל-${color}`
+        : `${updated} printers set to ${color}`,
+    });
+  };
+
   // Get available spools for loading (not already on a printer)
   const getAvailableSpools = () => {
     return spools.filter(s => 
@@ -661,10 +697,16 @@ export const PrintersPage: React.FC = () => {
           </div>
         </div>
         
-        <Button onClick={handleOpenAddDialog} className="gap-2">
-          <Plus className="w-4 h-4" />
-          {language === 'he' ? 'הוסף מדפסת' : 'Add Printer'}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setBulkColorModalOpen(true)} className="gap-2">
+            <Palette className="w-4 h-4" />
+            {language === 'he' ? 'הגדר צבעים' : 'Set Colors'}
+          </Button>
+          <Button onClick={handleOpenAddDialog} className="gap-2">
+            <Plus className="w-4 h-4" />
+            {language === 'he' ? 'הוסף מדפסת' : 'Add Printer'}
+          </Button>
+        </div>
       </div>
 
 
@@ -1341,6 +1383,16 @@ export const PrintersPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Set Color Modal */}
+      <BulkSetColorModal
+        open={bulkColorModalOpen}
+        onOpenChange={setBulkColorModalOpen}
+        printers={printers}
+        availableColors={availableColors}
+        language={language}
+        onApply={handleBulkSetColor}
+      />
     </div>
   );
 };
