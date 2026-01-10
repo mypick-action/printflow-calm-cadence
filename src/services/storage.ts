@@ -2202,6 +2202,8 @@ export const loadSpoolOnPrinter = (
   }
   
   // Update printer state
+  // IMPORTANT: mountedColor is the PHYSICAL source of truth for night color locks.
+  // When the operator loads a spool via Dashboard, this becomes the physicalLockedColor.
   updatePrinter(printerId, {
     mountedColor: color,
     loadedGramsEstimate: gramsEstimate,
@@ -2209,7 +2211,8 @@ export const loadSpoolOnPrinter = (
     currentColor: color,
   });
   
-  console.log(`[loadSpoolOnPrinter] Loaded ${color} on printer ${printerId} from ${source}, estimate: ${gramsEstimate}g`);
+  console.log(`[loadSpoolOnPrinter] 🔒 Loaded ${color} on printer ${printerId} from ${source}, estimate: ${gramsEstimate}g`);
+  console.log(`[loadSpoolOnPrinter] ✅ PHYSICAL COLOR LOCK: mountedColor is now "${color}" - this is the source of truth for night planning`);
   return true;
 };
 

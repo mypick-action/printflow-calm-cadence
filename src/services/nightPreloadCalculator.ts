@@ -362,12 +362,12 @@ export function isNightPreloadTime(settings: FactorySettings): boolean {
 }
 
 // ============= TWO-PASS ALLOCATION SYSTEM =============
-// This is called at the START of planning, before any cycles are created.
-// It calculates how many plates each printer CAN use tonight based on:
-// 1. Night window duration (how many ~3h cycles fit)
-// 2. Color lock constraints (for non-AMS printers)
-// 3. Global plate inventory limit (50)
-// 4. Hardware capacity per printer (8)
+// This calculates night plate allocations based on REAL DEMAND from eligible cycles.
+// A cycle is night-eligible if it passes ALL checks:
+// 1. Fits within night window (time)
+// 2. For non-AMS: project color matches physicalLockedColor
+// 3. Has sufficient material available
+// 4. Preset allows night cycle
 
 export interface NightAllocationInput {
   printerId: string;
@@ -375,6 +375,17 @@ export interface NightAllocationInput {
   hasAMS: boolean;
   physicalLockedColor?: string;  // The color locked on the printer (for non-AMS)
   canStartNewCyclesAfterHours: boolean;
+}
+
+export interface NightEligibleCycle {
+  projectId: string;
+  projectName: string;
+  printerId: string;
+  color: string;
+  cycleHours: number;
+  gramsNeeded: number;
+  isEligible: boolean;
+  ineligibilityReason?: string;
 }
 
 export interface NightAllocationResult {
@@ -385,25 +396,281 @@ export interface NightAllocationResult {
   details: Array<{
     printerId: string;
     printerName: string;
-    maxPossible: number;  // Based on time window
+    eligibleDemand: number;  // Cycles that passed all eligibility checks
     allocated: number;
     physicalLockedColor?: string;
   }>;
+  // Track which cycles were validated for logging
+  validatedCycles: NightEligibleCycle[];
+}
+
+// ============= GLOBAL ALLOCATION SNAPSHOT =============
+// This is calculated ONCE per day and used everywhere for consistency
+let nightAllocationSnapshot: {
+  date: string;
+  result: NightAllocationResult;
+} | null = null;
+
+/**
+ * Get or create the night allocation snapshot for a given date.
+ * This ensures consistency between NightPreloadPanel and planningEngine.
+ */
+export function getNightAllocationSnapshot(
+  forDate: Date,
+  printerInputs: NightAllocationInput[],
+  projectDemands: Array<{
+    projectId: string;
+    projectName: string;
+    printerId: string;
+    color: string;
+    cycleHours: number;
+    gramsNeeded: number;
+    presetAllowsNight: boolean;
+  }>,
+  materialAvailable: Map<string, number>, // colorKey -> grams available
+  settings: FactorySettings,
+  forceRecalculate: boolean = false
+): NightAllocationResult {
+  const dateKey = forDate.toISOString().split('T')[0];
+  
+  // Return cached if same date and not forcing recalculation
+  if (nightAllocationSnapshot && 
+      nightAllocationSnapshot.date === dateKey && 
+      !forceRecalculate) {
+    console.log('[NightPreload] 📋 Using cached allocation snapshot for', dateKey);
+    return nightAllocationSnapshot.result;
+  }
+  
+  // Calculate new allocation
+  const result = calculateNightAllocationFromDemand(
+    forDate,
+    printerInputs,
+    projectDemands,
+    materialAvailable,
+    settings
+  );
+  
+  // Cache for consistency
+  nightAllocationSnapshot = {
+    date: dateKey,
+    result,
+  };
+  
+  console.log('[NightPreload] 📊 Created new allocation snapshot for', dateKey);
+  return result;
 }
 
 /**
- * Pre-calculate night plate allocations at the START of planning.
- * This avoids chicken-and-egg: we estimate demand BEFORE cycles exist.
- * 
- * For each printer:
- * - If canStartNewCyclesAfterHours is false → 0 plates
- * - Otherwise, estimate cycles that fit in night window (~3h each)
- * - Cap at hardware limit (8 per printer)
- * - Distribute using round-robin to respect global limit (50)
- * 
- * @param forDate The date for which to calculate
- * @param printerInputs Array of printer info with color locks
- * @param settings Factory settings with global inventory
+ * Clear the allocation snapshot (call at start of new day or replan).
+ */
+export function clearNightAllocationSnapshot(): void {
+  nightAllocationSnapshot = null;
+  console.log('[NightPreload] 🗑️ Cleared allocation snapshot');
+}
+
+/**
+ * Calculate night plate allocations based on REAL DEMAND from eligible cycles.
+ * This is the core function that validates each cycle against night rules.
+ */
+export function calculateNightAllocationFromDemand(
+  forDate: Date,
+  printerInputs: NightAllocationInput[],
+  projectDemands: Array<{
+    projectId: string;
+    projectName: string;
+    printerId: string;
+    color: string;
+    cycleHours: number;
+    gramsNeeded: number;
+    presetAllowsNight: boolean;
+  }>,
+  materialAvailable: Map<string, number>, // colorKey -> grams available
+  settings: FactorySettings
+): NightAllocationResult {
+  const globalPlateInventory = settings.globalPlateInventory ?? DEFAULT_GLOBAL_PLATE_INVENTORY;
+  const nightWindow = getNightWindow(forDate, settings);
+  
+  // If no night work allowed, return empty allocations
+  if (nightWindow.mode === 'none') {
+    return {
+      allocations: new Map(),
+      totalAllocated: 0,
+      globalLimit: globalPlateInventory,
+      isConstrained: false,
+      details: [],
+      validatedCycles: [],
+    };
+  }
+  
+  // Build printer lookup for color lock validation
+  const printerMap = new Map<string, NightAllocationInput>();
+  for (const input of printerInputs) {
+    printerMap.set(input.printerId, input);
+  }
+  
+  // Track material consumption during validation
+  const materialConsumed = new Map<string, number>();
+  
+  // Validate each potential cycle for night eligibility
+  const validatedCycles: NightEligibleCycle[] = [];
+  
+  for (const demand of projectDemands) {
+    const printer = printerMap.get(demand.printerId);
+    let isEligible = true;
+    let ineligibilityReason: string | undefined;
+    
+    // Check 1: Printer can run at night
+    if (!printer?.canStartNewCyclesAfterHours) {
+      isEligible = false;
+      ineligibilityReason = 'printer_cannot_run_at_night';
+    }
+    
+    // Check 2: For non-AMS, color must match physicalLockedColor
+    if (isEligible && printer && !printer.hasAMS && printer.physicalLockedColor) {
+      const lockedColorKey = normalizeColor(printer.physicalLockedColor);
+      const projectColorKey = normalizeColor(demand.color);
+      
+      if (lockedColorKey !== projectColorKey) {
+        isEligible = false;
+        ineligibilityReason = `color_lock_night: printer has ${printer.physicalLockedColor}, project needs ${demand.color}`;
+        
+        // ============= LOG: Color lock validation (per requirement #3) =============
+        console.log('[NightPreload] 🔒 NIGHT COLOR LOCK VALIDATION:', {
+          printerId: demand.printerId,
+          printerName: printer.printerName,
+          hasAMS: printer.hasAMS,
+          physicalLockedColor: printer.physicalLockedColor,
+          projectColor: demand.color,
+          lockedColorKey,
+          projectColorKey,
+          result: 'BLOCKED - color mismatch',
+        });
+      } else {
+        // ============= LOG: Color lock passed (per requirement #3) =============
+        console.log('[NightPreload] ✅ Night color lock PASSED:', {
+          printerId: demand.printerId,
+          printerName: printer.printerName,
+          physicalLockedColor: printer.physicalLockedColor,
+          projectColor: demand.color,
+          result: 'ALLOWED - color matches',
+        });
+      }
+    }
+    
+    // Check 3: Preset allows night cycle
+    if (isEligible && !demand.presetAllowsNight) {
+      isEligible = false;
+      ineligibilityReason = 'preset_not_allowed_for_night';
+    }
+    
+    // Check 4: Cycle fits in night window (time check)
+    if (isEligible && demand.cycleHours > nightWindow.totalHours) {
+      isEligible = false;
+      ineligibilityReason = `cycle_too_long: ${demand.cycleHours}h > ${nightWindow.totalHours}h night window`;
+    }
+    
+    // Check 5: Material available
+    if (isEligible) {
+      const colorKey = normalizeColor(demand.color);
+      const available = materialAvailable.get(colorKey) ?? 0;
+      const alreadyConsumed = materialConsumed.get(colorKey) ?? 0;
+      const remaining = available - alreadyConsumed;
+      
+      if (remaining < demand.gramsNeeded) {
+        isEligible = false;
+        ineligibilityReason = `material_insufficient: need ${demand.gramsNeeded}g, have ${remaining}g`;
+      } else {
+        // Reserve material for this cycle
+        materialConsumed.set(colorKey, alreadyConsumed + demand.gramsNeeded);
+      }
+    }
+    
+    validatedCycles.push({
+      projectId: demand.projectId,
+      projectName: demand.projectName,
+      printerId: demand.printerId,
+      color: demand.color,
+      cycleHours: demand.cycleHours,
+      gramsNeeded: demand.gramsNeeded,
+      isEligible,
+      ineligibilityReason,
+    });
+  }
+  
+  // Count eligible cycles per printer (this is the REAL demand)
+  const eligibleCountByPrinter = new Map<string, number>();
+  for (const cycle of validatedCycles) {
+    if (cycle.isEligible) {
+      const current = eligibleCountByPrinter.get(cycle.printerId) ?? 0;
+      eligibleCountByPrinter.set(cycle.printerId, current + 1);
+    }
+  }
+  
+  // Build demand and capacity maps for round-robin allocation
+  const demands = new Map<string, number>();
+  const capacities = new Map<string, number>();
+  
+  for (const input of printerInputs) {
+    const eligibleDemand = eligibleCountByPrinter.get(input.printerId) ?? 0;
+    
+    if (eligibleDemand > 0) {
+      demands.set(input.printerId, eligibleDemand);
+      capacities.set(input.printerId, FIXED_PLATE_CAPACITY_PER_PRINTER);
+    }
+  }
+  
+  // Allocate using round-robin with global constraint
+  const allocations = allocatePlatesRoundRobin(demands, capacities, globalPlateInventory);
+  
+  // Calculate totals
+  let totalAllocated = 0;
+  for (const alloc of allocations.values()) {
+    totalAllocated += alloc;
+  }
+  
+  // Build details array
+  const details = printerInputs.map(input => ({
+    printerId: input.printerId,
+    printerName: input.printerName,
+    eligibleDemand: eligibleCountByPrinter.get(input.printerId) ?? 0,
+    allocated: allocations.get(input.printerId) ?? 0,
+    physicalLockedColor: input.physicalLockedColor,
+  }));
+  
+  console.log('[NightPreload] 📊 Night allocation from REAL DEMAND:', {
+    date: forDate.toISOString(),
+    nightWindow: `${nightWindow.start.toISOString()} - ${nightWindow.end.toISOString()}`,
+    nightHours: nightWindow.totalHours.toFixed(1),
+    globalPlateInventory,
+    totalAllocated,
+    isConstrained: totalAllocated >= globalPlateInventory,
+    printers: details.map(d => ({
+      name: d.printerName,
+      eligibleDemand: d.eligibleDemand,
+      allocated: d.allocated,
+      lockedColor: d.physicalLockedColor ?? 'none',
+    })),
+    eligibleCycles: validatedCycles.filter(c => c.isEligible).length,
+    blockedCycles: validatedCycles.filter(c => !c.isEligible).length,
+    blockReasons: validatedCycles
+      .filter(c => !c.isEligible)
+      .map(c => ({ project: c.projectName, reason: c.ineligibilityReason })),
+  });
+  
+  return {
+    allocations,
+    totalAllocated,
+    globalLimit: globalPlateInventory,
+    isConstrained: totalAllocated >= globalPlateInventory,
+    details,
+    validatedCycles,
+  };
+}
+
+/**
+ * Legacy pre-calculate function that estimates demand from time only.
+ * DEPRECATED - Use calculateNightAllocationFromDemand for accurate allocation.
+ * Kept for backward compatibility during transition.
  */
 export function preCalculateNightAllocations(
   forDate: Date,
@@ -421,81 +688,48 @@ export function preCalculateNightAllocations(
       globalLimit: globalPlateInventory,
       isConstrained: false,
       details: [],
+      validatedCycles: [],
     };
   }
   
-  // Estimate how many cycles fit in the night window
-  // Assume average cycle is ~3 hours
+  // Estimate how many cycles fit in the night window (legacy time-based)
   const AVG_CYCLE_HOURS = 3;
   const maxCyclesFromTime = Math.floor(nightWindow.totalHours / AVG_CYCLE_HOURS);
   
-  // Build demand map: each eligible printer's max possible cycles
+  // Build demand map
   const demands = new Map<string, number>();
   const capacities = new Map<string, number>();
-  const printerDetails = new Map<string, { name: string; maxPossible: number; lockedColor?: string }>();
   
   for (const input of printerInputs) {
-    // Check if printer can run at night
-    if (!input.canStartNewCyclesAfterHours) {
-      printerDetails.set(input.printerId, { 
-        name: input.printerName, 
-        maxPossible: 0,
-        lockedColor: input.physicalLockedColor,
-      });
-      continue;
-    }
+    if (!input.canStartNewCyclesAfterHours) continue;
     
-    // Calculate max possible plates for this printer
-    // Limited by: time window AND hardware capacity
     const maxPossible = Math.min(maxCyclesFromTime, FIXED_PLATE_CAPACITY_PER_PRINTER);
     
     if (maxPossible > 0) {
       demands.set(input.printerId, maxPossible);
       capacities.set(input.printerId, FIXED_PLATE_CAPACITY_PER_PRINTER);
     }
-    
-    printerDetails.set(input.printerId, { 
-      name: input.printerName, 
-      maxPossible,
-      lockedColor: input.physicalLockedColor,
-    });
   }
   
-  // Allocate using round-robin with global constraint
   const allocations = allocatePlatesRoundRobin(demands, capacities, globalPlateInventory);
   
-  // Calculate totals
   let totalAllocated = 0;
   for (const alloc of allocations.values()) {
     totalAllocated += alloc;
   }
   
-  // Build details array
-  const details = printerInputs.map(input => {
-    const detail = printerDetails.get(input.printerId);
-    return {
-      printerId: input.printerId,
-      printerName: input.printerName,
-      maxPossible: detail?.maxPossible ?? 0,
-      allocated: allocations.get(input.printerId) ?? 0,
-      physicalLockedColor: input.physicalLockedColor,
-    };
-  });
+  const details = printerInputs.map(input => ({
+    printerId: input.printerId,
+    printerName: input.printerName,
+    eligibleDemand: demands.get(input.printerId) ?? 0,
+    allocated: allocations.get(input.printerId) ?? 0,
+    physicalLockedColor: input.physicalLockedColor,
+  }));
   
-  console.log('[NightPreload] 📊 Pre-calculated night allocations:', {
+  console.log('[NightPreload] ⚠️ Using TIME-BASED estimation (legacy):', {
     date: forDate.toISOString(),
-    nightWindow: `${nightWindow.start.toISOString()} - ${nightWindow.end.toISOString()}`,
-    nightHours: nightWindow.totalHours.toFixed(1),
     maxCyclesFromTime,
-    globalPlateInventory,
     totalAllocated,
-    isConstrained: totalAllocated >= globalPlateInventory,
-    printers: details.map(d => ({
-      name: d.printerName,
-      maxPossible: d.maxPossible,
-      allocated: d.allocated,
-      lockedColor: d.physicalLockedColor ?? 'none',
-    })),
   });
   
   return {
@@ -504,6 +738,7 @@ export function preCalculateNightAllocations(
     globalLimit: globalPlateInventory,
     isConstrained: totalAllocated >= globalPlateInventory,
     details,
+    validatedCycles: [],
   };
 }
 

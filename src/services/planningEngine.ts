@@ -61,7 +61,14 @@ import {
   clearDecisionLog,
   PrinterScoreDetails,
 } from './planningDecisionLog';
-import { preCalculateNightAllocations, NightAllocationResult } from './nightPreloadCalculator';
+import { 
+  preCalculateNightAllocations, 
+  calculateNightAllocationFromDemand,
+  getNightAllocationSnapshot,
+  clearNightAllocationSnapshot,
+  NightAllocationResult,
+  NightAllocationInput,
+} from './nightPreloadCalculator';
 
 // ============= TYPES =============
 
