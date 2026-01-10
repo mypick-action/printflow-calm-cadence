@@ -16,6 +16,7 @@ import {
 } from '@/services/featureFlags';
 import { getBlockSummary, clearBlockLog, formatBlockSummary } from '@/services/cycleBlockLogger';
 import { AlgorithmStatusPanel } from '@/components/dashboard/AlgorithmStatusPanel';
+import { PrinterColorDebugPanel } from '@/components/dashboard/PrinterColorDebugPanel';
 import {
   Tooltip,
   TooltipContent,
@@ -96,6 +97,9 @@ export const FeatureFlagsPanel: React.FC = () => {
       <CardContent className="space-y-4">
         {/* Algorithm Status Panel */}
         <AlgorithmStatusPanel className="mb-4" />
+        
+        {/* Printer Color Debug Panel */}
+        <PrinterColorDebugPanel className="mb-4" />
         
         {/* Feature Flags List */}
         <div className="space-y-3">

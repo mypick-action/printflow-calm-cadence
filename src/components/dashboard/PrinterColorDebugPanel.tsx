@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Palette, CheckCircle2, XCircle, Clock } from 'lucide-react';
-import { getPrinters } from '@/services/storage';
+import { getPrinters, Printer } from '@/services/storage';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 interface PrinterColorDebugPanelProps {
@@ -23,10 +23,9 @@ export const PrinterColorDebugPanel: React.FC<PrinterColorDebugPanelProps> = ({ 
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {printers.map(printer => {
-          const hasPhysical = printer.mountedColor || (printer as any).confirmedSpoolColor;
-          const physicalColor = printer.mountedColor ?? (printer as any).confirmedSpoolColor ?? 'N/A';
-          const confirmedAt = (printer as any).confirmedSpoolAt;
+        {printers.map((printer: Printer) => {
+          const hasPhysical = printer.mountedColor || printer.confirmedSpoolColor;
+          const confirmedAt = printer.confirmedSpoolAt;
           
           return (
             <div 
@@ -69,13 +68,13 @@ export const PrinterColorDebugPanel: React.FC<PrinterColorDebugPanelProps> = ({ 
                 <div>
                   <span className="opacity-60">confirmed:</span>
                   <div className="flex items-center gap-1">
-                    {(printer as any).confirmedSpoolColor ? (
+                    {printer.confirmedSpoolColor ? (
                       <>
                         <span 
                           className="w-3 h-3 rounded-full border"
-                          style={{ backgroundColor: (printer as any).confirmedSpoolColor }}
+                          style={{ backgroundColor: printer.confirmedSpoolColor }}
                         />
-                        <span>{(printer as any).confirmedSpoolColor}</span>
+                        <span>{printer.confirmedSpoolColor}</span>
                       </>
                     ) : (
                       <span className="text-muted-foreground/50">—</span>
