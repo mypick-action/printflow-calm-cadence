@@ -1244,94 +1244,84 @@ function scheduleProjectOnPrinters(
       continue;
     }
     
+    // ============= CRITICAL: Check if operator is present to load new plate =============
+    // FIXED: When FULL_AUTOMATION is enabled and printer allows night, DON'T advance!
+    // Let Night Scheduling logic handle night cycles.
+    const isFullAutomation = settings.afterHoursBehavior === 'FULL_AUTOMATION';
+    const printerAllowsNightLoop = slot.canStartNewCyclesAfterHours !== false;
+    
     if (!isOperatorPresent(slot.currentTime, settings)) {
-      // Advance to next workday when operator arrives
-      const nextStart = advanceToNextWorkdayStartRaw(slot.currentTime, settings);
-      
-      // ============= FOCUSED DEBUG LOG =============
-      // Check if advance actually moved us forward and if isOperatorPresent now returns true
-      const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-      const currentDayName = dayNames[slot.currentTime.getDay()];
-      const nextStartDayName = nextStart ? dayNames[nextStart.getDay()] : 'null';
-      const schedule = nextStart ? getDayScheduleForDate(nextStart, settings, []) : null;
-      const nextStartOperatorPresent = nextStart ? isOperatorPresent(nextStart, settings) : false;
-      
-      console.log('[V2Schedule] 🔍 NO_OPERATOR_PRESENT DEBUG:', {
-        // Current time - both formats to detect UTC/local issues
-        currentTime_ISO: slot.currentTime.toISOString(),
-        currentTime_Local: slot.currentTime.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
-        currentDayOfWeek: currentDayName,
-        currentDayIndex: slot.currentTime.getDay(),
-        
-        // Next start - both formats
-        nextStart_ISO: nextStart?.toISOString() ?? 'null',
-        nextStart_Local: nextStart?.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }) ?? 'null',
-        nextStartDayOfWeek: nextStartDayName,
-        nextStartDayIndex: nextStart?.getDay() ?? 'null',
-        
-        // Schedule for nextStart day
-        scheduleForNextStart: schedule ? {
-          enabled: schedule.enabled,
-          startTime: schedule.startTime,
-          endTime: schedule.endTime,
-        } : 'no_schedule',
-        
-        // CRITICAL: Does isOperatorPresent return TRUE after advance?
-        isOperatorPresentAfterAdvance: nextStartOperatorPresent,
-        
-        // Did we actually advance?
-        didAdvance: nextStart ? nextStart.getTime() > slot.currentTime.getTime() : false,
-        advanceMs: nextStart ? nextStart.getTime() - slot.currentTime.getTime() : 0,
-        
-        // Context
-        printerId: slot.printerId,
-        printerName: slot.printerName,
-        projectId: project.project.id,
-      });
-      
-      // ============= GUARD: Prevent infinite loop if advance doesn't move forward =============
-      if (!nextStart || nextStart.getTime() <= slot.currentTime.getTime()) {
-        console.error('[V2Schedule] ❌ LOOP GUARD TRIGGERED: advanceToNextWorkdayStart did not advance!', {
+      // CRITICAL: If FULL_AUTOMATION + printer allows night, DON'T advance - proceed to Night Color Lock
+      if (isFullAutomation && printerAllowsNightLoop) {
+        // Continue to Night Color Lock check below - don't advance or skip!
+        console.log('[V2Schedule] 🌙 Operator not present but FULL_AUTOMATION enabled:', {
+          printerId: slot.printerId,
+          printerName: slot.printerName,
           currentTime: slot.currentTime.toISOString(),
-          nextStart: nextStart?.toISOString() ?? 'null',
-          printerName: slot.printerName,
+          action: 'PROCEED_TO_NIGHT_SCHEDULING',
         });
-        // Skip this slot entirely to prevent infinite loop
+        // Fall through to Night Color Lock check (don't continue or advance)
+      } else {
+        // Regular behavior: Advance to next workday when operator arrives
+        const nextStart = advanceToNextWorkdayStartRaw(slot.currentTime, settings);
+        
+        // ============= FOCUSED DEBUG LOG =============
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const currentDayName = dayNames[slot.currentTime.getDay()];
+        const nextStartDayName = nextStart ? dayNames[nextStart.getDay()] : 'null';
+        const schedule = nextStart ? getDayScheduleForDate(nextStart, settings, []) : null;
+        const nextStartOperatorPresent = nextStart ? isOperatorPresent(nextStart, settings) : false;
+        
+        console.log('[V2Schedule] 🔍 NO_OPERATOR_PRESENT - Advancing (no FULL_AUTOMATION or printer disallows night):', {
+          currentTime_ISO: slot.currentTime.toISOString(),
+          currentTime_Local: slot.currentTime.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+          currentDayOfWeek: currentDayName,
+          nextStart_ISO: nextStart?.toISOString() ?? 'null',
+          nextStart_Local: nextStart?.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }) ?? 'null',
+          nextStartDayOfWeek: nextStartDayName,
+          isOperatorPresentAfterAdvance: nextStartOperatorPresent,
+          printerId: slot.printerId,
+          printerName: slot.printerName,
+          isFullAutomation,
+          printerAllowsNight: printerAllowsNightLoop,
+        });
+        
+        // GUARD: Prevent infinite loop if advance doesn't move forward
+        if (!nextStart || nextStart.getTime() <= slot.currentTime.getTime()) {
+          console.error('[V2Schedule] ❌ LOOP GUARD: advanceToNextWorkdayStart did not advance!', {
+            currentTime: slot.currentTime.toISOString(),
+            nextStart: nextStart?.toISOString() ?? 'null',
+            printerName: slot.printerName,
+          });
+          continue;
+        }
+        
+        // GUARD: Prevent infinite loop if operator still not present
+        if (!nextStartOperatorPresent) {
+          console.error('[V2Schedule] ❌ LOOP GUARD: Operator still not present after advance!', {
+            nextStart_ISO: nextStart.toISOString(),
+            printerName: slot.printerName,
+          });
+          continue;
+        }
+        
+        advanceCallCount++;
+        if (advanceCallCount > ADVANCE_LOOP_THRESHOLD) {
+          console.warn('[ADVANCE_GUARD] ⚠️ HIGH ADVANCE COUNT:', advanceCallCount);
+        }
+        
+        trackAdvanceReason?.('no_operator_present');
+        
+        slot.currentTime = nextStart;
+        updateSlotBoundsForDay(slot, nextStart, settings);
+        if (slot.platesInUse) {
+          slot.platesInUse = slot.platesInUse.filter(p => 
+            getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+          );
+        }
+        heap.push(slot.currentTime.getTime(), slot);
         continue;
       }
-      
-      // ============= GUARD: Prevent infinite loop if operator still not present =============
-      if (!nextStartOperatorPresent) {
-        console.error('[V2Schedule] ❌ LOOP GUARD TRIGGERED: Operator still not present after advance!', {
-          nextStart_ISO: nextStart.toISOString(),
-          nextStart_Local: nextStart.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
-          scheduleForNextStart: schedule,
-          printerName: slot.printerName,
-        });
-        // Skip this slot to prevent infinite loop
-        continue;
-      }
-      
-      // Track for ADVANCE_GUARD wrapper (reduced logging)
-      advanceCallCount++;
-      if (advanceCallCount > ADVANCE_LOOP_THRESHOLD) {
-        console.warn('[ADVANCE_GUARD] ⚠️ HIGH ADVANCE COUNT:', advanceCallCount, 
-          '- Possible infinite loop! Last reason: no_operator_present');
-      }
-      
-      // Track reason for summary
-      trackAdvanceReason?.('no_operator_present');
-      
-      slot.currentTime = nextStart;
-      updateSlotBoundsForDay(slot, nextStart, settings);
-      // Release plates that operator can clear
-      if (slot.platesInUse) {
-        slot.platesInUse = slot.platesInUse.filter(p => 
-          getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
-        );
-      }
-      heap.push(slot.currentTime.getTime(), slot);
-      continue;
     }
     
     // ============= PLATE CONSTRAINT CHECK (V2) =============
@@ -1531,6 +1521,19 @@ function scheduleProjectOnPrinters(
     // PER OFFICIAL SPEC: At night without AMS, printer is locked to PHYSICAL color.
     // CRITICAL FIX: Uses nightIneligibleUntil to prevent infinite loops
     const isNightSlot = isNightTime(slot.currentTime, slot.endOfWorkHours);
+    
+    // DIAGNOSTIC LOG: Prove we're entering Night Color Lock check
+    if (isNightSlot) {
+      console.log('[V2Schedule] 🌙 ENTERING NIGHT COLOR LOCK CHECK:', {
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime: slot.currentTime.toISOString(),
+        physicalLockedColor: slot.physicalLockedColor ?? 'undefined',
+        hasAMS: slot.hasAMS,
+        projectColor: project.project.color ?? 'none',
+        afterHoursBehavior: settings.afterHoursBehavior,
+      });
+    }
     
     if (isNightSlot && !slot.hasAMS) {
       // CONDITION 1: nightIneligibleUntil - if printer is marked ineligible for night, skip until end of night
@@ -2191,28 +2194,49 @@ const scheduleCyclesForDay = (
     
     // ============= CRITICAL FIX: Pre-advance to workday at initialization =============
     // If startTime falls on a non-working day/time, jump to next workday START.
-    // This prevents the project loop from repeatedly advancing the same slot.
+    // BUT: If FULL_AUTOMATION is enabled and printer allows night, DON'T advance!
+    // This allows Night Scheduling logic to run for night cycles.
     let advancedToWorkday = false;
+    const isFullAutomation = settings.afterHoursBehavior === 'FULL_AUTOMATION';
+    const printerAllowsNight = p.canStartNewCyclesAfterHours !== false;
+    
     if (!isOperatorPresent(startTime, settings)) {
-      const nextWorkday = advanceToNextWorkdayStartRaw(startTime, settings);
-      if (nextWorkday && nextWorkday.getTime() > startTime.getTime()) {
-        console.log('[Planning] ⏩ Slot pre-advanced to next workday at init:', {
+      // CRITICAL: If FULL_AUTOMATION + printer allows night, stay in night slot!
+      if (isFullAutomation && printerAllowsNight) {
+        console.log('[Planning] 🌙 Keeping slot in night window (FULL_AUTOMATION):', {
           printerId: p.id,
           printerName: p.name,
-          originalStart_ISO: startTime.toISOString(),
-          originalStart_Local: startTime.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
-          advancedTo_ISO: nextWorkday.toISOString(),
-          advancedTo_Local: nextWorkday.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+          startTime_ISO: startTime.toISOString(),
+          startTime_Local: startTime.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+          isFullAutomation,
+          printerAllowsNight,
+          action: 'STAY_IN_NIGHT_SLOT',
         });
-        startTime = nextWorkday;
-        advancedToWorkday = true;
+        // Don't advance - let Night Scheduling handle this
+        advancedToWorkday = false;
       } else {
-        console.warn('[Planning] ⚠️ Could not advance slot to workday at init:', {
-          printerId: p.id,
-          printerName: p.name,
-          startTime: startTime.toISOString(),
-          nextWorkday: nextWorkday?.toISOString() ?? 'null',
-        });
+        // Regular behavior: advance to next workday
+        const nextWorkday = advanceToNextWorkdayStartRaw(startTime, settings);
+        if (nextWorkday && nextWorkday.getTime() > startTime.getTime()) {
+          console.log('[Planning] ⏩ Slot pre-advanced to next workday at init:', {
+            printerId: p.id,
+            printerName: p.name,
+            originalStart_ISO: startTime.toISOString(),
+            originalStart_Local: startTime.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+            advancedTo_ISO: nextWorkday.toISOString(),
+            advancedTo_Local: nextWorkday.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+            reason: isFullAutomation ? 'printer_disallows_night' : 'no_full_automation',
+          });
+          startTime = nextWorkday;
+          advancedToWorkday = true;
+        } else {
+          console.warn('[Planning] ⚠️ Could not advance slot to workday at init:', {
+            printerId: p.id,
+            printerName: p.name,
+            startTime: startTime.toISOString(),
+            nextWorkday: nextWorkday?.toISOString() ?? 'null',
+          });
+        }
       }
     }
     
