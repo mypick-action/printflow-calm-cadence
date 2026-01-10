@@ -152,6 +152,19 @@ export const StartPrintModal: React.FC<StartPrintModalProps> = ({
       }
     }
 
+    // CRITICAL FIX: Always update mountedColor + currentColor to the cycle's color
+    // This ensures physicalLockedColor is correctly set for night planning
+    const { updatePrinter } = await import('@/services/storage');
+    updatePrinter(printerId, {
+      mountedColor: cycle.color,
+      currentColor: cycle.color,
+    });
+    console.log('[StartPrintModal] 🔒 Updated printer mountedColor + currentColor:', {
+      printerId,
+      newMountedColor: cycle.color,
+      newCurrentColor: cycle.color,
+    });
+
     // Start the printer job (mountState = 'in_use')
     startPrinterJob(printerId);
 

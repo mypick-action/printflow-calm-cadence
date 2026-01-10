@@ -503,6 +503,7 @@ export const PlanningDebugPanel: React.FC = () => {
                               deadline_passed: { he: 'דדליין עבר', en: 'Deadline passed', tooltip: 'תאריך היעד של הפרויקט כבר עבר' },
                               project_complete: { he: 'פרויקט הושלם', en: 'Project done', tooltip: 'הפרויקט כבר הושלם' },
                               color_lock_night: { he: 'נעילת צבע לילה', en: 'Color lock night', tooltip: 'מדפסת ללא AMS לא יכולה לשנות צבע בלילה' },
+                              no_physical_color_night: { he: 'אין צבע פיזי', en: 'No physical color', tooltip: 'אין צבע פיזי ידוע על המדפסת - לא ניתן לתכנן בלילה ללא AMS' },
                               cycle_too_long_night: { he: 'מחזור ארוך ללילה', en: 'Too long for night', tooltip: 'משך המחזור ארוך מחלון הלילה הזמין' },
                             };
                             const label = reasonLabels[reason];
