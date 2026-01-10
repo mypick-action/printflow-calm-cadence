@@ -522,23 +522,32 @@ export const PrintersPage: React.FC = () => {
     
     let updated = 0;
     for (const printerId of printerIds) {
-      // Update local storage
+      // Update local storage with mounted color
       updatePrinter(printerId, {
         mountedColor: color,
         currentColor: color,
       });
-      
-      // Also update cloud
-      await updateCloudPrinter(printerId, {});
       updated++;
     }
     
-    // Sync from cloud
-    await hydrateLocalFromCloud(workspaceId, { force: false, source: 'PrintersPage-bulkSetColor' });
+    // NOTE: mountedColor/currentColor are runtime-only fields, not stored in cloud DB.
+    // They are preserved during hydration via preserveRuntimePrinterFields().
+    // No cloud update needed here - the local state IS the source of truth for loaded colors.
     
-    // Notify and refresh
+    // Debug: Log the updated printers to verify colors are set
+    const updatedPrinters = getPrinters();
+    console.log('[BulkSetColor] Updated printers sample:', updatedPrinters.slice(0, 3).map(p => ({
+      id: p.id,
+      name: p.name,
+      mountedColor: p.mountedColor,
+      currentColor: p.currentColor,
+    })));
+    
+    // Notify and refresh (no hydration - we just set local state which is preserved)
     notifyInventoryChanged();
     refreshData();
+    
+    markCapacityChanged(language === 'he' ? 'צבעים הוגדרו למדפסות' : 'Printer colors set');
     
     toast({
       title: language === 'he' ? 'צבעים עודכנו' : 'Colors updated',
