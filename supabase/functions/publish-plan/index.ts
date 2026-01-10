@@ -1,6 +1,6 @@
-// Publish Plan Edge Function
-// Atomically replaces planned_cycles with new plan and updates plan version
-// This prevents race conditions where cloud is empty during sync
+// Publish Plan Edge Function - V2
+// Uses Postgres RPC function for TRUE atomic transaction
+// No intermediate state where cloud is empty/partial
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.2'
 
@@ -26,7 +26,6 @@ interface PublishPlanRequest {
   cycles: CycleInput[]
   reason?: string
   scope?: string
-  keep_cycle_ids?: string[] // IDs of cycles to preserve (completed, in_progress, locked)
 }
 
 interface PublishPlanResponse {
@@ -72,7 +71,7 @@ Deno.serve(async (req) => {
 
     // Parse request body
     const body: PublishPlanRequest = await req.json()
-    const { workspace_id, cycles, reason = 'manual_replan', scope = 'from_now', keep_cycle_ids = [] } = body
+    const { workspace_id, cycles, reason = 'manual_replan', scope = 'from_now' } = body
 
     if (!workspace_id) {
       return new Response(
@@ -81,157 +80,55 @@ Deno.serve(async (req) => {
       )
     }
 
-    console.log(`[publish-plan] Starting atomic publish for workspace ${workspace_id}`)
-    console.log(`[publish-plan] Cycles to create: ${cycles.length}, Cycles to keep: ${keep_cycle_ids.length}`)
+    console.log(`[publish-plan] Starting ATOMIC publish for workspace ${workspace_id}`)
+    console.log(`[publish-plan] Cycles to create: ${cycles.length}`)
 
-    // Generate new plan version UUID
-    const planVersion = crypto.randomUUID()
-    console.log(`[publish-plan] New plan_version: ${planVersion}`)
+    // Call the atomic Postgres function
+    // This runs DELETE + INSERT + UPDATE in a single transaction
+    const { data: rpcResult, error: rpcError } = await supabase.rpc('publish_plan', {
+      p_workspace_id: workspace_id,
+      p_user_id: user.id,
+      p_cycles: cycles, // JSONB array
+      p_reason: reason,
+      p_scope: scope,
+    })
 
-    // STEP 1: Delete old planned/scheduled cycles (except those in keep_cycle_ids)
-    // Only delete cycles with status 'planned' or 'scheduled' - preserve completed/failed/in_progress
-    let deletedCount = 0
-    
-    // Build delete query
-    let deleteQuery = supabase
-      .from('planned_cycles')
-      .delete()
-      .eq('workspace_id', workspace_id)
-      .in('status', ['planned', 'scheduled'])
-    
-    // If we have cycles to keep, exclude them from deletion
-    if (keep_cycle_ids.length > 0) {
-      // Delete cycles NOT in keep_cycle_ids
-      // We need to do this differently - delete those with status planned/scheduled
-      // that are NOT in the keep list
-      const { data: deletedData, error: deleteError } = await supabase
-        .from('planned_cycles')
-        .delete()
-        .eq('workspace_id', workspace_id)
-        .in('status', ['planned', 'scheduled'])
-        .not('id', 'in', `(${keep_cycle_ids.join(',')})`)
-        .select('id')
-      
-      if (deleteError) {
-        console.error('[publish-plan] Delete error:', deleteError)
-        throw new Error(`Failed to delete old cycles: ${deleteError.message}`)
-      }
-      deletedCount = deletedData?.length || 0
-    } else {
-      // No cycles to keep - delete all planned/scheduled
-      const { data: deletedData, error: deleteError } = await supabase
-        .from('planned_cycles')
-        .delete()
-        .eq('workspace_id', workspace_id)
-        .in('status', ['planned', 'scheduled'])
-        .select('id')
-      
-      if (deleteError) {
-        console.error('[publish-plan] Delete error:', deleteError)
-        throw new Error(`Failed to delete old cycles: ${deleteError.message}`)
-      }
-      deletedCount = deletedData?.length || 0
-    }
-    
-    console.log(`[publish-plan] Deleted ${deletedCount} old cycles`)
-
-    // STEP 2: Insert new cycles with plan_version
-    let createdCount = 0
-    
-    if (cycles.length > 0) {
-      const cyclesToInsert = cycles.map(c => ({
-        workspace_id,
-        project_id: c.project_id,
-        printer_id: c.printer_id,
-        scheduled_date: c.scheduled_date,
-        start_time: c.start_time,
-        end_time: c.end_time,
-        units_planned: c.units_planned,
-        status: c.status === 'planned' ? 'scheduled' : c.status, // Cloud uses 'scheduled' not 'planned'
-        preset_id: c.preset_id,
-        legacy_id: c.legacy_id,
-        plan_version: planVersion,
-        cycle_index: 0,
-      }))
-      
-      const { data: insertedData, error: insertError } = await supabase
-        .from('planned_cycles')
-        .insert(cyclesToInsert)
-        .select('id')
-      
-      if (insertError) {
-        console.error('[publish-plan] Insert error:', insertError)
-        throw new Error(`Failed to insert cycles: ${insertError.message}`)
-      }
-      
-      createdCount = insertedData?.length || 0
-      console.log(`[publish-plan] Created ${createdCount} new cycles`)
+    if (rpcError) {
+      console.error('[publish-plan] RPC error:', rpcError)
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: rpcError.message,
+          plan_version: null,
+          cycles_created: 0,
+          cycles_deleted: 0,
+        }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
 
-    // STEP 3: Update existing kept cycles to have the new plan_version
-    if (keep_cycle_ids.length > 0) {
-      const { error: updateKeptError } = await supabase
-        .from('planned_cycles')
-        .update({ plan_version: planVersion })
-        .eq('workspace_id', workspace_id)
-        .in('id', keep_cycle_ids)
-      
-      if (updateKeptError) {
-        console.warn('[publish-plan] Warning: Failed to update kept cycles plan_version:', updateKeptError)
-        // Non-fatal - continue
-      } else {
-        console.log(`[publish-plan] Updated ${keep_cycle_ids.length} kept cycles with new plan_version`)
-      }
+    // RPC returns JSONB with success, plan_version, cycles_created, cycles_deleted
+    const result = rpcResult as {
+      success: boolean
+      plan_version: string | null
+      cycles_created: number
+      cycles_deleted: number
+      error?: string
     }
 
-    // STEP 4: Update factory_settings with new active_plan_version
-    const { error: settingsError } = await supabase
-      .from('factory_settings')
-      .update({
-        active_plan_version: planVersion,
-        active_plan_created_at: new Date().toISOString(),
-        active_plan_created_by: user.id,
-      })
-      .eq('workspace_id', workspace_id)
-    
-    if (settingsError) {
-      console.error('[publish-plan] Settings update error:', settingsError)
-      throw new Error(`Failed to update plan version: ${settingsError.message}`)
-    }
-    
-    console.log(`[publish-plan] Updated factory_settings with active_plan_version`)
-
-    // STEP 5: Record in plan_history for audit trail
-    const { error: historyError } = await supabase
-      .from('plan_history')
-      .insert({
-        workspace_id,
-        plan_version: planVersion,
-        created_by: user.id,
-        cycle_count: createdCount + keep_cycle_ids.length,
-        reason,
-        scope,
-      })
-    
-    if (historyError) {
-      // Non-fatal - just log warning
-      console.warn('[publish-plan] Warning: Failed to insert plan_history:', historyError)
-    } else {
-      console.log(`[publish-plan] Recorded in plan_history`)
-    }
+    console.log(`[publish-plan] ✓ Atomic publish complete:`, result)
 
     const response: PublishPlanResponse = {
-      success: true,
-      plan_version: planVersion,
-      cycles_created: createdCount,
-      cycles_deleted: deletedCount,
+      success: result.success,
+      plan_version: result.plan_version,
+      cycles_created: result.cycles_created,
+      cycles_deleted: result.cycles_deleted,
+      error: result.error,
     }
-
-    console.log(`[publish-plan] ✓ Publish complete:`, response)
 
     return new Response(
       JSON.stringify(response),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: result.success ? 200 : 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
 
   } catch (error) {

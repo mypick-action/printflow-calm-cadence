@@ -765,6 +765,16 @@ export type Database = {
         Returns: boolean
       }
       get_user_workspace_id: { Args: never; Returns: string }
+      publish_plan: {
+        Args: {
+          p_cycles: Json
+          p_reason?: string
+          p_scope?: string
+          p_user_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       try_acquire_day_change_lock: {
         Args: { p_today_date: string; p_workspace_id: string }
         Returns: string
