@@ -61,6 +61,7 @@ import {
   clearDecisionLog,
   PrinterScoreDetails,
 } from './planningDecisionLog';
+import { getPreloadForPrinter } from './nightPreloadCalculator';
 
 // ============= TYPES =============
 
@@ -2174,37 +2175,40 @@ const scheduleCyclesForDay = (
               slot.currentTime = new Date(slot.endOfDayTime); // Mark exhausted
               continue;
             } else {
-              // Work day transitioning to night - calculate plates to preload
-              // This is a PLANNING DECISION, not hardware! Based on:
-              // 1. Night window hours available
-              // 2. Average cycle duration (~3 hours)
-              // 3. Physical plate capacity as upper limit
+              // Work day transitioning to night - get allocated plates from night preload calculator
+              // This respects BOTH per-printer capacity AND global plate inventory constraint!
+              // The calculator uses round-robin allocation to distribute plates fairly.
               
-              // Get night window to know how much time we have
+              // Get night window for reference logging
               const nightWindow = getNightWindow(slot.workDayStart, settings);
-              const nightHoursAvailable = nightWindow.totalHours;
-              const avgCycleHours = 3; // Typical cycle duration
               
-              // Calculate how many cycles COULD fit in the night window
-              const cyclesThatFit = Math.floor(nightHoursAvailable / avgCycleHours);
+              // Get allocated plates for this printer (respects global limit)
+              // Note: We pass undefined for cycles since we're calculating demand during planning
+              // The calculator will use planned cycles so far
+              const allocatedPlates = getPreloadForPrinter(
+                slot.printerId,
+                slot.workDayStart,
+                undefined, // Will use getPlannedCycles() internally
+                settings
+              );
               
-              // Cap by physical capacity (can't preload more than printer can hold)
+              // Fallback: if no allocation yet (first pass), use physical capacity
+              // This will be refined as cycles are scheduled
               const physicalLimit = slot.physicalPlateCapacity;
+              const platesToPreload = allocatedPlates > 0 ? allocatedPlates : Math.min(
+                Math.floor(nightWindow.totalHours / 3), // Cycles that fit
+                physicalLimit
+              );
               
-              // The preload amount is the MINIMUM of:
-              // - Cycles that fit in night window
-              // - Physical plate capacity
-              const platesToPreload = Math.min(cyclesThatFit, physicalLimit);
-              
-              console.log('[EndOfDayLoad] 🌙 Work day ending - calculating plates to preload:', {
+              console.log('[EndOfDayLoad] 🌙 Work day ending - using allocated plates (respects global inventory):', {
                 printer: slot.printerName,
                 currentTime: slot.currentTime.toISOString(),
                 endOfWorkHours: slot.endOfWorkHours.toISOString(),
-                nightHoursAvailable: nightHoursAvailable.toFixed(1),
-                avgCycleHours,
-                cyclesThatFit,
+                nightHoursAvailable: nightWindow.totalHours.toFixed(1),
+                allocatedPlates,
                 physicalLimit,
                 platesToPreload,
+                note: 'Allocation respects globalPlateInventory constraint',
               });
               slot.preLoadedPlatesRemaining = platesToPreload;
               slot.preLoadedAt = new Date(slot.endOfWorkHours);

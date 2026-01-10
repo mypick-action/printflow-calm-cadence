@@ -316,6 +316,9 @@ export interface FactorySettings {
   planningObjective?: PlanningObjective;        // Default: MIN_PRINTERS
   maxPrintersDuringWorkHours?: number;          // Default: 5
   minImprovementThreshold?: number;             // Default: 0.05 (5%)
+  // GLOBAL PLATE INVENTORY: Total plates available across all printers (default: 50)
+  // This is a factory-wide constraint, NOT per-printer capacity
+  globalPlateInventory?: number;
 }
 
 export interface TemporaryScheduleOverride {
