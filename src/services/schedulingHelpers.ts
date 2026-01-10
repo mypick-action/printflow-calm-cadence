@@ -63,6 +63,12 @@ export interface PrinterTimeSlot {
   
   // Flag for autonomous day (weekends/holidays with no operator)
   isAutonomousDay?: boolean;
+  
+  // CONDITION 1 FIX: Prevent infinite loop in night scheduling
+  // When a printer is marked ineligible for tonight (e.g., no physical color),
+  // set this to the end of the night window. The scheduler will skip this printer
+  // until this time is reached, preventing repeated failed attempts.
+  nightIneligibleUntil?: Date;
 }
 
 // ============= HELPER: Parse time string =============
@@ -329,6 +335,25 @@ export function isNightTime(
   endOfWorkHours: Date
 ): boolean {
   return time >= endOfWorkHours;
+}
+
+// ============= HELPER: Get end of current night window =============
+/**
+ * Given a time in the night window, returns the end of that night.
+ * This is the next workday start time.
+ * Used to set nightIneligibleUntil for printers that can't work at night.
+ */
+export function getEndOfNightWindow(
+  currentTime: Date,
+  settings: FactorySettings
+): Date {
+  // The end of the night window is the start of the next workday
+  const nextWorkday = advanceToNextWorkdayStart(currentTime, settings);
+  if (nextWorkday) {
+    return nextWorkday;
+  }
+  // Fallback: add 12 hours (shouldn't happen with valid settings)
+  return new Date(currentTime.getTime() + 12 * 60 * 60 * 1000);
 }
 
 // ============= HELPER: Calculate hours between two times =============

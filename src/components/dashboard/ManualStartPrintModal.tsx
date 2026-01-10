@@ -253,19 +253,24 @@ export const ManualStartPrintModal: React.FC<ManualStartPrintModalProps> = ({
       }
     }
 
-    // CRITICAL FIX: Update the printer's mounted color + currentColor
-    // This ensures physicalLockedColor is correctly set for night planning
+    // CRITICAL FIX: Update the printer's mounted color + currentColor + confirmedSpoolColor
+    // confirmedSpoolColor is the MOST RELIABLE source for night planning
     const printer = getPrinters().find(p => p.id === selectedPrinterId);
     if (printer) {
+      const now = new Date().toISOString();
       updatePrinter(selectedPrinterId, {
         mountedColor: selectedProject.color,
         currentColor: selectedProject.color,
         currentMaterial: 'PLA',
+        confirmedSpoolColor: selectedProject.color,
+        confirmedSpoolAt: now,
       });
-      console.log('[ManualStartPrintModal] 🔒 Updated printer mountedColor + currentColor:', {
+      console.log('[ManualStartPrintModal] 🔒 Updated printer colors (including confirmedSpoolColor):', {
         printerId: selectedPrinterId,
         newMountedColor: selectedProject.color,
         newCurrentColor: selectedProject.color,
+        confirmedSpoolColor: selectedProject.color,
+        confirmedSpoolAt: now,
       });
     }
 

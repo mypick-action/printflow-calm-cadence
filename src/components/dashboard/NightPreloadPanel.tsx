@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Lock,
+  Weight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -121,6 +122,15 @@ export const NightPreloadPanel: React.FC<NightPreloadPanelProps> = ({
               <div className="flex items-center gap-1">
                 <Clock className="w-3 h-3" />
                 <span>{formatHours(plan.totalNightHours)}</span>
+              </div>
+              {/* CONDITION 3: Display grams needed (N/A if null) */}
+              <div className="flex items-center gap-1">
+                <Weight className="w-3 h-3" />
+                <span>
+                  {plan.totalGramsNeeded !== null 
+                    ? `${plan.totalGramsNeeded}g` 
+                    : 'N/A'}
+                </span>
               </div>
             </div>
 
