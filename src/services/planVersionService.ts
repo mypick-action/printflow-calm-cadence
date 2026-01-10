@@ -78,7 +78,6 @@ export interface PublishPlanInput {
   cycles: PlannedCycle[];
   reason?: string;
   scope?: string;
-  keepCycleIds?: string[]; // IDs of cycles to preserve (completed, in_progress, locked)
 }
 
 export interface PublishPlanResult {
@@ -90,25 +89,27 @@ export interface PublishPlanResult {
 }
 
 /**
- * Atomically publish a new plan to cloud.
- * This replaces the old delete-then-insert pattern with a single atomic operation.
+ * Atomically publish a new plan to cloud via Postgres RPC.
  * 
- * The edge function:
- * 1. Generates a new plan_version UUID
- * 2. Deletes old planned/scheduled cycles (except kept ones)
- * 3. Inserts new cycles with the plan_version
+ * IMPORTANT: This only publishes cycles with status='planned'.
+ * in_progress/completed/failed are EXECUTION OVERLAYS - they stay in cloud
+ * and are NOT affected by new plan_version.
+ * 
+ * The RPC function runs in a SINGLE TRANSACTION:
+ * 1. Generates new plan_version UUID
+ * 2. Deletes old planned/scheduled cycles (NOT in_progress/completed)
+ * 3. Inserts new cycles with plan_version
  * 4. Updates factory_settings.active_plan_version
  * 5. Records in plan_history
  * 
- * All in a single request - no window where cloud is empty!
+ * NO INTERMEDIATE STATE - atomic or nothing!
  */
 export async function publishPlanToCloud(input: PublishPlanInput): Promise<PublishPlanResult> {
-  const { workspaceId, cycles, reason = 'manual_replan', scope = 'from_now', keepCycleIds = [] } = input;
+  const { workspaceId, cycles, reason = 'manual_replan', scope = 'from_now' } = input;
   
   console.log('[PlanVersion] Publishing plan to cloud:', {
     workspaceId,
     cyclesCount: cycles.length,
-    keepCount: keepCycleIds.length,
     reason,
     scope,
   });
@@ -126,16 +127,12 @@ export async function publishPlanToCloud(input: PublishPlanInput): Promise<Publi
     }
   }
   
-  // Filter syncable cycles and map to cloud format
-  const syncableCycles = cycles.filter(c => 
-    c.status === 'planned' || 
-    c.status === 'in_progress' || 
-    (c.locked && c.source === 'manual')
-  );
+  // ONLY sync cycles with status='planned' - in_progress/completed are execution overlays
+  const plannedCycles = cycles.filter(c => c.status === 'planned');
   
   // Check for orphaned projects
   const orphanedProjectIds: string[] = [];
-  for (const cycle of syncableCycles) {
+  for (const cycle of plannedCycles) {
     const projectUuid = (cycle as any).projectUuid || projectIdToUuid.get(cycle.projectId) || cycle.projectId;
     if (!projectUuid || projectUuid.length < 36) {
       if (!orphanedProjectIds.includes(cycle.projectId)) {
@@ -155,8 +152,8 @@ export async function publishPlanToCloud(input: PublishPlanInput): Promise<Publi
     };
   }
   
-  // Map cycles to cloud format
-  const cloudCycles = syncableCycles.map(c => {
+  // Map cycles to cloud format (ONLY planned cycles)
+  const cloudCycles = plannedCycles.map(c => {
     const projectUuid = (c as any).projectUuid || projectIdToUuid.get(c.projectId) || c.projectId;
     
     return {
@@ -168,20 +165,19 @@ export async function publishPlanToCloud(input: PublishPlanInput): Promise<Publi
       start_time: c.startTime || null,
       end_time: c.endTime || null,
       units_planned: c.unitsPlanned,
-      status: c.status === 'planned' ? 'scheduled' : c.status,
+      status: 'scheduled', // Always 'scheduled' for planned cycles
       preset_id: c.presetId || null,
       legacy_id: c.id,
     };
   });
   
-  // Call edge function
+  // Call edge function (which uses atomic RPC)
   const { data, error } = await supabase.functions.invoke('publish-plan', {
     body: {
       workspace_id: workspaceId,
       cycles: cloudCycles,
       reason,
       scope,
-      keep_cycle_ids: keepCycleIds,
     },
   });
   
@@ -232,6 +228,11 @@ export interface PlanUpdateResult {
  * Check if there's a new plan version and load it if needed.
  * This is the VERSION-BASED hydration - only fetches if version changed.
  * 
+ * IMPORTANT: Also fetches execution overlays (in_progress/completed/failed)
+ * which are NOT part of the plan but should be preserved in local state.
+ * 
+ * After loading, dispatches event for UI to trigger gramsPlanned recalculation.
+ * 
  * Returns:
  * - updated: true if a new plan was loaded
  * - version: the new plan version (if updated)
@@ -256,12 +257,14 @@ export async function checkForPlanUpdate(workspaceId: string): Promise<PlanUpdat
   
   console.log('[PlanVersion] New plan detected, loading cycles...');
   
-  // Fetch all cycles with the new plan_version
+  // Fetch ALL cycles for this workspace:
+  // 1. Cycles with the new plan_version (the new plan)
+  // 2. Cycles with status in_progress/completed/failed (execution overlays)
   const { data: cloudCycles, error } = await supabase
     .from('planned_cycles')
     .select('*')
     .eq('workspace_id', workspaceId)
-    .eq('plan_version', cloudVersion);
+    .or(`plan_version.eq.${cloudVersion},status.in.(in_progress,completed,failed)`);
   
   if (error) {
     console.error('[PlanVersion] Error fetching cycles:', error);
@@ -271,32 +274,52 @@ export async function checkForPlanUpdate(workspaceId: string): Promise<PlanUpdat
   // Get project mapping for legacy_id conversion
   const { data: cloudProjects } = await supabase
     .from('projects')
-    .select('id, legacy_id')
+    .select('id, legacy_id, product_id')
     .eq('workspace_id', workspaceId);
   
   const projectUuidToLegacyId = new Map<string, string>();
+  const projectUuidToProductId = new Map<string, string>();
   for (const p of cloudProjects || []) {
     const localId = p.legacy_id || p.id;
     projectUuidToLegacyId.set(p.id, localId);
+    if (p.product_id) {
+      projectUuidToProductId.set(p.id, p.product_id);
+    }
   }
   
-  // Map cloud cycles to localStorage format
+  // Get products and presets for gramsPlanned calculation
+  const productsRaw = localStorage.getItem(KEYS.PRODUCTS);
+  const products = productsRaw ? JSON.parse(productsRaw) : [];
+  
+  // Helper to calculate gramsPlanned
+  const calculateGramsPlanned = (projectId: string, unitsPlanned: number): number => {
+    const project = cloudProjects?.find(p => p.id === projectId || p.legacy_id === projectId);
+    if (!project?.product_id) return 0;
+    
+    const product = products.find((p: any) => p.id === project.product_id);
+    if (!product?.gramsPerUnit) return 0;
+    
+    return product.gramsPerUnit * unitsPlanned;
+  };
+  
+  // Map cloud cycles to localStorage format with gramsPlanned calculation
   const mappedCycles: PlannedCycle[] = (cloudCycles || []).map((c: any) => {
     const projectLegacyId = projectUuidToLegacyId.get(c.project_id) || c.project_id;
+    const gramsPlanned = calculateGramsPlanned(c.project_id, c.units_planned ?? 1);
     
     return {
       id: c.legacy_id || c.id,
       projectId: projectLegacyId,
       printerId: c.printer_id,
       unitsPlanned: c.units_planned ?? 1,
-      gramsPlanned: 0, // Will be recalculated
-      plateType: 'full',
+      gramsPlanned, // Calculated from product
+      plateType: 'full' as const,
       startTime: c.start_time ?? '',
       endTime: c.end_time ?? '',
-      shift: 'day',
+      shift: 'day' as const,
       status: (c.status === 'scheduled' ? 'planned' : c.status) as PlannedCycle['status'],
-      readinessState: 'ready' as const,
-      source: 'auto',
+      readinessState: 'ready' as const, // Will be recalculated by dashboard
+      source: 'auto' as const,
       locked: false,
       projectUuid: c.project_id,
       cycleUuid: c.id,
@@ -304,22 +327,45 @@ export async function checkForPlanUpdate(workspaceId: string): Promise<PlanUpdat
     };
   });
   
+  // Deduplicate - prefer cycles with higher status (in_progress > planned)
+  const cycleMap = new Map<string, PlannedCycle>();
+  const statusPriority: Record<string, number> = {
+    'completed': 4,
+    'failed': 3,
+    'in_progress': 2,
+    'planned': 1,
+    'cancelled': 0,
+  };
+  
+  for (const cycle of mappedCycles) {
+    const existing = cycleMap.get(cycle.id);
+    if (!existing || (statusPriority[cycle.status] || 0) > (statusPriority[existing.status] || 0)) {
+      cycleMap.set(cycle.id, cycle);
+    }
+  }
+  
+  const finalCycles = Array.from(cycleMap.values());
+  
   // Replace local cycles completely
-  localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(mappedCycles));
+  localStorage.setItem(KEYS.PLANNED_CYCLES, JSON.stringify(finalCycles));
   
   // Update local version
   setLocalPlanVersion(cloudVersion);
   
-  console.log('[PlanVersion] ✓ Loaded', mappedCycles.length, 'cycles with version', cloudVersion);
+  console.log('[PlanVersion] ✓ Loaded', finalCycles.length, 'cycles with version', cloudVersion);
   
-  // Dispatch event for UI refresh
+  // Dispatch event for UI refresh and readiness recalculation
   window.dispatchEvent(new CustomEvent('printflow:plan-updated', {
-    detail: { version: cloudVersion, cyclesCount: mappedCycles.length }
+    detail: { 
+      version: cloudVersion, 
+      cyclesCount: finalCycles.length,
+      needsReadinessRecalc: true, // Signal to recalculate readinessState
+    }
   }));
   
   return {
     updated: true,
     version: cloudVersion,
-    cyclesLoaded: mappedCycles.length,
+    cyclesLoaded: finalCycles.length,
   };
 }

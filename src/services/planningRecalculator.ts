@@ -178,15 +178,10 @@ export const recalculatePlan = async (
     success: planResult.success,
   });
 
-  // Log before saving for debugging
-  console.log(`[planningRecalculator] Saving ${newCycles.length} cycles to origin: ${window.location.origin}`);
-
-  // Save the updated cycles to localStorage FIRST (always succeeds)
-  setItem(KEYS.PLANNED_CYCLES, newCycles);
-  console.log(`[planningRecalculator] ✓ Saved ${newCycles.length} cycles to localStorage`);
-
-  // V2: ATOMIC CLOUD SYNC using publish-plan edge function
-  // This prevents the race condition where cloud is empty during sync
+  // V2: CLOUD-FIRST - Publish to cloud BEFORE saving locally
+  // Only save to localStorage AFTER cloud confirms success
+  // This ensures cloud is always the source of truth
+  
   let cloudSyncSuccess = false;
   let cloudSyncError: string | undefined;
   let planVersion: string | undefined;
@@ -207,43 +202,63 @@ export const recalculatePlan = async (
   
   if (workspaceId) {
     try {
-      // Get IDs of cycles to keep (completed, failed, in_progress)
-      const keepCycleIds = cyclesToKeep
-        .filter(c => c.cycleUuid) // Only those with cloud UUIDs
-        .map(c => c.cycleUuid as string);
+      // CLOUD-FIRST: Use atomic publish RPC
+      // Only send cycles with status 'planned' - in_progress/completed are execution overlays
+      const plannedOnlyCycles = newCycles.filter(c => c.status === 'planned');
       
-      // Use atomic publish instead of delete-then-insert
       const publishResult = await publishPlanToCloud({
         workspaceId,
-        cycles: newCycles,
+        cycles: plannedOnlyCycles,
         reason,
         scope,
-        keepCycleIds,
       });
       
       cloudSyncSuccess = publishResult.success;
       cloudSyncError = publishResult.error;
       planVersion = publishResult.planVersion || undefined;
       
-      if (cloudSyncSuccess) {
-        console.log(`[planningRecalculator] ✓ Plan published: version=${planVersion}, created=${publishResult.cyclesCreated}`);
-        // Dispatch success event
+      if (cloudSyncSuccess && planVersion) {
+        // ✓ Cloud confirmed - NOW save to localStorage
+        console.log(`[planningRecalculator] ✓ Cloud confirmed: version=${planVersion}`);
+        
+        // Save cycles to localStorage (includes kept cycles + new cycles)
+        setItem(KEYS.PLANNED_CYCLES, newCycles);
+        console.log(`[planningRecalculator] ✓ Saved ${newCycles.length} cycles to localStorage`);
+        
+        // Update local plan version to match cloud
+        setLocalPlanVersion(planVersion);
+        
+        // Dispatch success events
         window.dispatchEvent(new CustomEvent('sync-cycles-complete', {
           detail: { synced: publishResult.cyclesCreated, version: planVersion }
         }));
-        // Also dispatch replan-complete for UI refresh
         window.dispatchEvent(new CustomEvent('printflow:replan-complete', {
           detail: { version: planVersion }
         }));
       } else {
-        console.error('[planningRecalculator] ✗ Plan publish failed:', cloudSyncError);
+        console.error('[planningRecalculator] ✗ Cloud publish failed:', cloudSyncError);
+        // Cloud failed - save locally as fallback but mark as pending sync
+        const pendingCycles = newCycles.map(c => ({
+          ...c,
+          pendingCloudSync: true,
+        }));
+        setItem(KEYS.PLANNED_CYCLES, pendingCycles);
+        console.log(`[planningRecalculator] ⚠ Saved ${pendingCycles.length} cycles locally (pending sync)`);
       }
     } catch (err) {
       console.error('[planningRecalculator] ✗ Cloud sync exception:', err);
       cloudSyncError = err instanceof Error ? err.message : 'Unknown sync error';
+      // Save locally as fallback
+      const pendingCycles = newCycles.map(c => ({
+        ...c,
+        pendingCloudSync: true,
+      }));
+      setItem(KEYS.PLANNED_CYCLES, pendingCycles);
     }
   } else {
-    console.log('[planningRecalculator] No workspace, skipping cloud sync');
+    // No workspace - save locally only
+    console.log('[planningRecalculator] No workspace, saving locally only');
+    setItem(KEYS.PLANNED_CYCLES, newCycles);
   }
 
   // Update planning meta
