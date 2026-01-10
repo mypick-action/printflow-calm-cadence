@@ -64,6 +64,11 @@ export interface PrinterTimeSlot {
   // Flag for autonomous day (weekends/holidays with no operator)
   isAutonomousDay?: boolean;
   
+  // ============= LOOP PREVENTION FLAG =============
+  // Set to true when slot has already been advanced to a workday during initialization.
+  // Prevents the project loop from re-advancing the same slot repeatedly.
+  advancedToWorkday?: boolean;
+  
   // CONDITION 1 FIX: Prevent infinite loop in night scheduling
   // When a printer is marked ineligible for tonight (e.g., no physical color),
   // set this to the end of the night window. The scheduler will skip this printer

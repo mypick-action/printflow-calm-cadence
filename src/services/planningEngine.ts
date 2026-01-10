@@ -1228,6 +1228,22 @@ function scheduleProjectOnPrinters(
     // ============= CRITICAL: Check if operator is present to load new plate =============
     // Even with FULL_AUTOMATION, an operator must physically load the plate
     // This prevents scheduling new cycles on Friday/Saturday or outside work hours
+    
+    // ============= GUARD: Skip if slot was already advanced at init =============
+    // If we already pre-advanced this slot to a workday during initialization,
+    // isOperatorPresent SHOULD be true. If not, there's a bug - log and continue.
+    if (slot.advancedToWorkday && !isOperatorPresent(slot.currentTime, settings)) {
+      console.error('[V2Schedule] ⚠️ BUG: Slot was pre-advanced but operator still not present!', {
+        printerId: slot.printerId,
+        printerName: slot.printerName,
+        currentTime_ISO: slot.currentTime.toISOString(),
+        currentTime_Local: slot.currentTime.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+        advancedToWorkday: slot.advancedToWorkday,
+      });
+      // Don't re-advance - this would cause infinite loop. Skip this iteration.
+      continue;
+    }
+    
     if (!isOperatorPresent(slot.currentTime, settings)) {
       // Advance to next workday when operator arrives
       const nextStart = advanceToNextWorkdayStartRaw(slot.currentTime, settings);
@@ -2019,6 +2035,10 @@ interface PrinterTimeSlot {
   preLoadedAt?: Date;  // Track when plates were pre-loaded (for debugging)
   // ============= AUTONOMOUS DAY FLAG =============
   isAutonomousDay: boolean;  // True for non-working days (Fri/Sat) - no operator to load plates
+  // ============= LOOP PREVENTION FLAG =============
+  // Set to true when slot has already been advanced to a workday during initialization.
+  // Prevents the project loop from re-advancing the same slot repeatedly.
+  advancedToWorkday?: boolean;
   // ============= NIGHT INELIGIBILITY (CONDITION 1 FIX) =============
   // CRITICAL: Prevents infinite loop in night scheduling!
   // When a printer fails a hard night requirement (e.g., no physical color),
@@ -2165,9 +2185,36 @@ const scheduleCyclesForDay = (
       : null;
     
     // Use the later of: effectiveStart OR when printer becomes free
-    const startTime = startFromBusy && startFromBusy.getTime() > effectiveStart.getTime()
+    let startTime = startFromBusy && startFromBusy.getTime() > effectiveStart.getTime()
       ? startFromBusy
       : effectiveStart;
+    
+    // ============= CRITICAL FIX: Pre-advance to workday at initialization =============
+    // If startTime falls on a non-working day/time, jump to next workday START.
+    // This prevents the project loop from repeatedly advancing the same slot.
+    let advancedToWorkday = false;
+    if (!isOperatorPresent(startTime, settings)) {
+      const nextWorkday = advanceToNextWorkdayStartRaw(startTime, settings);
+      if (nextWorkday && nextWorkday.getTime() > startTime.getTime()) {
+        console.log('[Planning] ⏩ Slot pre-advanced to next workday at init:', {
+          printerId: p.id,
+          printerName: p.name,
+          originalStart_ISO: startTime.toISOString(),
+          originalStart_Local: startTime.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+          advancedTo_ISO: nextWorkday.toISOString(),
+          advancedTo_Local: nextWorkday.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }),
+        });
+        startTime = nextWorkday;
+        advancedToWorkday = true;
+      } else {
+        console.warn('[Planning] ⚠️ Could not advance slot to workday at init:', {
+          printerId: p.id,
+          printerName: p.name,
+          startTime: startTime.toISOString(),
+          nextWorkday: nextWorkday?.toISOString() ?? 'null',
+        });
+      }
+    }
     
     // ============= PLATE CONSTRAINT INITIALIZATION =============
     // FIXED HARDWARE CAPACITY: All printers have 8 plate capacity
@@ -2266,6 +2313,9 @@ const scheduleCyclesForDay = (
       preLoadedAt: undefined,
       // Autonomous day flag - no operator available to load plates
       isAutonomousDay,
+      // ============= LOOP PREVENTION FLAG =============
+      // Set to true when slot was pre-advanced to workday during initialization
+      advancedToWorkday,
     };
   });
   
