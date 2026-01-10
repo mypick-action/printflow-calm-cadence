@@ -103,6 +103,9 @@ export type Database = {
       }
       factory_settings: {
         Row: {
+          active_plan_created_at: string | null
+          active_plan_created_by: string | null
+          active_plan_version: string | null
           after_hours_behavior: string
           created_at: string
           factory_name: string
@@ -115,6 +118,9 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          active_plan_created_at?: string | null
+          active_plan_created_by?: string | null
+          active_plan_version?: string | null
           after_hours_behavior?: string
           created_at?: string
           factory_name?: string
@@ -127,6 +133,9 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          active_plan_created_at?: string | null
+          active_plan_created_by?: string | null
+          active_plan_version?: string | null
           after_hours_behavior?: string
           created_at?: string
           factory_name?: string
@@ -201,6 +210,47 @@ export type Database = {
           },
         ]
       }
+      plan_history: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          cycle_count: number | null
+          id: string
+          plan_version: string
+          reason: string | null
+          scope: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          cycle_count?: number | null
+          id?: string
+          plan_version: string
+          reason?: string | null
+          scope?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          cycle_count?: number | null
+          id?: string
+          plan_version?: string
+          reason?: string | null
+          scope?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plan_history_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       planned_cycles: {
         Row: {
           created_at: string
@@ -208,6 +258,7 @@ export type Database = {
           end_time: string | null
           id: string
           legacy_id: string | null
+          plan_version: string | null
           preset_id: string | null
           printer_id: string
           project_id: string
@@ -224,6 +275,7 @@ export type Database = {
           end_time?: string | null
           id?: string
           legacy_id?: string | null
+          plan_version?: string | null
           preset_id?: string | null
           printer_id: string
           project_id: string
@@ -240,6 +292,7 @@ export type Database = {
           end_time?: string | null
           id?: string
           legacy_id?: string | null
+          plan_version?: string | null
           preset_id?: string | null
           printer_id?: string
           project_id?: string
