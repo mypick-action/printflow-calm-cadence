@@ -74,7 +74,7 @@ const createMockInventory = (color: string, closedCount: number, openGrams: numb
 
 describe('phaseB_validateNightCycles', () => {
   describe('night window per cycle date', () => {
-    it('should get correct night window for Saturday cycle (not Friday)', () => {
+    it('should get correct night window for Saturday cycle (not Friday) - Saturday disabled should skip', () => {
       // This tests that a Saturday night cycle uses Saturday's night window, not planningStart's
       const settings = createMockSettings('FULL_AUTOMATION');
       const slots = [createMockSlot('printer-1', 'Printer 1')];
@@ -104,9 +104,14 @@ describe('phaseB_validateNightCycles', () => {
       
       const result = phaseB_validateNightCycles(input);
       
-      // Saturday is disabled, so Saturday night cycles should be skipped
-      // because getNightWindow for Saturday will return mode='none' (no work = no night window)
-      expect(result.skippedNights.length).toBeGreaterThanOrEqual(0);
+      // Saturday is disabled in settings, so Saturday night cycle should be SKIPPED
+      // because getNightWindow for Saturday returns mode='none' (no workday = no night window)
+      expect(result.skippedNights.length).toBe(1);
+      expect(result.skippedNights[0].reason).toBe('no_night_mode');
+      expect(result.skippedNights[0].printerId).toBe('printer-1');
+      
+      // The cycle should NOT be in validated cycles
+      expect(result.cycles.some(c => c.id === saturdayNightCycle.id)).toBe(false);
     });
     
     it('should validate Thursday night cycles with Thursday night window', () => {
