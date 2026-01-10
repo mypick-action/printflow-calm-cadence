@@ -498,13 +498,16 @@ export function getNightWindow(
     mode,
   });
   
-  // If no schedule or not a working day, return minimal window
+  // If no schedule or not a working day, the entire day is a "night window"
   if (!schedule?.enabled) {
     const nextWorkday = advanceToNextWorkdayStart(date, settings);
+    const nightEnd = nextWorkday ?? addDays(date, 1);
+    // FIX: Calculate actual totalHours instead of hardcoding 0
+    const totalHours = Math.max(0, (nightEnd.getTime() - date.getTime()) / (1000 * 60 * 60));
     const result = {
       start: date,
-      end: nextWorkday ?? addDays(date, 1),
-      totalHours: 0,
+      end: nightEnd,
+      totalHours,
       isWeekendNight: true,
       mode,
     };
@@ -512,6 +515,7 @@ export function getNightWindow(
       nightStart: result.start.toISOString(),
       nightEnd: result.end.toISOString(),
       totalHours: result.totalHours,
+      note: 'Full day available for night cycles',
     });
     return result;
   }
