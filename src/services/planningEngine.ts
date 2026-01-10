@@ -3029,6 +3029,8 @@ export const generatePlan = (options: PlanningOptions = {}): PlanningResult => {
           // Plate constraint fields
           plateIndex: cycle.plateIndex,
           plateReleaseTime: cycle.plateReleaseTime?.toISOString(),
+          // Business day field for correct weekly view display
+          scheduledDate: cycle.scheduledDate,
         });
       }
     }
