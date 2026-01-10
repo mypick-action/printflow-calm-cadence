@@ -28,7 +28,7 @@ import {
   ChevronDown,
   Pencil,
 } from 'lucide-react';
-import { getPlanningMeta, updatePlannedCycle, getProducts, getProjects, updatePrinter, getPrinter, cleanupStaleCycles } from '@/services/storage';
+import { getPlanningMeta, updatePlannedCycle, getProducts, getProjects, updatePrinter, getPrinter, cleanupStaleCycles, getPlannedCycles } from '@/services/storage';
 import { StartPrintModal } from './StartPrintModal';
 import { ManualStartPrintModal } from './ManualStartPrintModal';
 import { PrinterActionsModal } from './PrinterActionsModal';
@@ -64,6 +64,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
   // loadedSpoolsModalOpen state removed - no longer needed
   const [planningMeta, setPlanningMeta] = useState(getPlanningMeta());
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [hasPendingCloudSync, setHasPendingCloudSync] = useState(false);
   const [todayPlan, setTodayPlan] = useState<TodayPlanResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [startPrintModalOpen, setStartPrintModalOpen] = useState(false);
@@ -101,6 +102,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
     setTodayPlan(plan);
     setPlanningMeta(getPlanningMeta());
     setBannerDismissed(false);
+    
+    // Check for pending cloud sync
+    const cycles = getPlannedCycles();
+    const hasPending = cycles.some(c => c.pendingCloudSync === true);
+    setHasPendingCloudSync(hasPending);
+    
     setIsLoading(false);
     
     // NOTE: LoadedSpoolsModal removed from planning flow
@@ -408,6 +415,36 @@ export const Dashboard: React.FC<DashboardProps> = ({ onReportIssue, onEndCycle 
           onRecalculate={() => setRecalculateModalOpen(true)}
           onDismiss={() => setBannerDismissed(true)}
         />
+      )}
+
+      {/* Pending Cloud Sync Warning Banner */}
+      {hasPendingCloudSync && (
+        <Card variant="glass" className="border-warning/30 bg-warning/5">
+          <CardContent className="flex items-center gap-3 py-3">
+            <AlertCircle className="w-5 h-5 text-warning flex-shrink-0" />
+            <div className="flex-1">
+              <span className="font-medium text-warning">
+                {language === 'he' 
+                  ? 'התוכנית לא פורסמה לענן' 
+                  : 'Plan not published to cloud'}
+              </span>
+              <p className="text-sm text-muted-foreground">
+                {language === 'he'
+                  ? 'השינויים האחרונים נשמרו מקומית בלבד. משתמשים אחרים לא יראו את התוכנית הזו.'
+                  : 'Recent changes saved locally only. Other users will not see this plan.'}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setRecalculateModalOpen(true)}
+              className="border-warning/30 text-warning hover:bg-warning/10"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              {language === 'he' ? 'נסה שוב' : 'Retry'}
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
       {/* Recalculate Modal */}
