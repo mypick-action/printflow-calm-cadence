@@ -1309,9 +1309,59 @@ function scheduleProjectOnPrinters(
       continue;
     }
     
+    // ============= NIGHT COLOR LOCK CHECK (Non-AMS printers) =============
+    // At night without AMS, printer is locked to whatever color was last scheduled
+    const isNightSlot = isNightTime(slot.currentTime, slot.endOfWorkHours);
+    if (isNightSlot && !slot.hasAMS && slot.lastScheduledColor) {
+      const slotColorKey = normalizeColor(slot.lastScheduledColor);
+      if (slotColorKey !== colorKey) {
+        // ============= DEBUG LOG: Night color lock without AMS =============
+        console.log('[V2Schedule] ⏭️ Advancing to next day:', {
+          reason: 'color_change_not_allowed_at_night_no_ams',
+          projectId: project.project.id,
+          projectName: project.project.name,
+          printerId: slot.printerId,
+          printerName: slot.printerName,
+          currentTime: slot.currentTime.toISOString(),
+          hasAMS: slot.hasAMS,
+          lastScheduledColor: slot.lastScheduledColor,
+          projectColor: project.project.color ?? 'none',
+          slotColorKey,
+          projectColorKey: colorKey,
+          endOfWorkHours: slot.endOfWorkHours.toISOString(),
+        });
+        
+        // Log to cycle block logger
+        logCycleBlock({
+          reason: 'color_lock_night',
+          projectId: project.project.id,
+          projectName: project.project.name,
+          printerId: slot.printerId,
+          printerName: slot.printerName,
+          details: `Night color lock: printer has ${slot.lastScheduledColor}, project needs ${project.project.color}`,
+        });
+        
+        // Track reason for summary
+        trackAdvanceReason?.('color_change_not_allowed_at_night_no_ams');
+        
+        // Advance to next workday when operator can change spool
+        const nextStart = advanceToNextWorkdayStart(slot.currentTime, settings);
+        if (!nextStart) continue;
+        
+        slot.currentTime = nextStart;
+        updateSlotBoundsForDay(slot, nextStart, settings);
+        if (slot.platesInUse) {
+          slot.platesInUse = slot.platesInUse.filter(p => 
+            getNextOperatorTime(p.releaseTime, settings) > slot.currentTime
+          );
+        }
+        heap.push(slot.currentTime.getTime(), slot);
+        continue;
+      }
+    }
+    
     // ============= SECONDARY NIGHT VALIDATION (V2) =============
     // If cycle starts during work hours but ends after - validate autonomous operation
-    const isNightSlot = isNightTime(slot.currentTime, slot.endOfWorkHours);
     if (!isNightSlot && cycleEndTime > slot.endOfWorkHours) {
       // Cycle extends into night - check if allowed
       const canRunAutonomous = 
@@ -1844,6 +1894,24 @@ const scheduleCyclesForDay = (
       isAutonomousDay,
     };
   });
+  
+  // ============= MANDATORY DEBUG LOG: Printer state at planning start =============
+  // Log every printer's AMS and color state to debug night color lock issues
+  console.log('[Planning] 🖨️ === PRINTER STATE AT PLANNING START ===');
+  for (const slot of printerSlots) {
+    const printer = printers.find(p => p.id === slot.printerId);
+    console.log('[Planning] 🖨️ Printer:', {
+      printerId: slot.printerId,
+      printerName: slot.printerName,
+      hasAMS: slot.hasAMS,
+      hasAMS_fromPrinter: printer?.hasAMS ?? 'undefined',
+      lastScheduledColor: slot.lastScheduledColor ?? 'none',
+      currentLoadedColor: printer?.mountedColor ?? printer?.currentColor ?? 'none',
+      canStartNewCyclesAfterHours: slot.canStartNewCyclesAfterHours,
+      physicalPlateCapacity: slot.physicalPlateCapacity,
+    });
+  }
+  console.log('[Planning] 🖨️ === END PRINTER STATE ===');
   
   dbgStart('SlotsStartTimes', printerSlots.map(s => ({
     printer: s.printerName,
