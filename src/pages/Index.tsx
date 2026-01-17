@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext';
+import { usePrinters } from '@/components/hooks/usePrinters';
+
 import { OnboardingContainer } from '@/components/onboarding/OnboardingContainer';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Dashboard } from '@/components/dashboard/Dashboard';
@@ -16,14 +18,25 @@ import { PlanningPage } from '@/components/planning/PlanningPage';
 import { ReportIssueFlow } from '@/components/report-issue/ReportIssueFlow';
 import { WeeklyPlanningPage } from '@/components/weekly/WeeklyPlanningPage';
 import { OperationalDashboard } from '@/components/weekly/OperationalDashboard';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Construction, Loader2, Upload, AlertCircle } from 'lucide-react';
-import { getPrinters, getProjects } from '@/services/cloudStorage';
-import { hydrateLocalFromCloud, migrateAllLocalDataToCloud, FullMigrationReport, shouldProtectLocalCycles } from '@/services/cloudBridge';
+
+import { getProjects } from '@/services/cloudStorage';
+import {
+  hydrateLocalFromCloud,
+  migrateAllLocalDataToCloud,
+  FullMigrationReport,
+  shouldProtectLocalCycles,
+} from '@/services/cloudBridge';
 import { checkAndHandleDayChange } from '@/services/dayChangeDetector';
 import { KEYS, cleanupOrphanedCycles } from '@/services/storage';
-import { syncCycleOperation, CycleOperationPayload, OperationType } from '@/services/cycleOperationSync';
+import {
+  syncCycleOperation,
+  CycleOperationPayload,
+  OperationType,
+} from '@/services/cycleOperationSync';
 import { toast } from 'sonner';
 import { isFactorySettingsConfigured } from '@/components/services/base44FactorySettings';
 
@@ -37,344 +50,189 @@ const PrintFlowApp: React.FC = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading, workspaceId } = useAuth();
   const { language } = useLanguage();
-  
+  const { printers } = usePrinters();
+
   const [checkingData, setCheckingData] = useState(true);
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [printerNames, setPrinterNames] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
-  const [endCyclePrinterId, setEndCyclePrinterId] = useState<string | undefined>(undefined);
+  const [endCyclePrinterId, setEndCyclePrinterId] = useState<string | undefined>();
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
-  
-  // Migration prompt state
+
   const [showMigrationPrompt, setShowMigrationPrompt] = useState(false);
   const [localDataSummary, setLocalDataSummary] = useState<LocalDataSummary | null>(null);
   const [migrating, setMigrating] = useState(false);
 
-  // Listen for sync-cycles-skipped events and show toast
+  /* 🔑 מקור אמת יחיד לשמות מדפסות */
   useEffect(() => {
-    const handleSyncSkipped = (e: CustomEvent<{ skipped: number; projects: string[] }>) => {
-      const { skipped, projects } = e.detail;
-      toast.error(
-        language === 'he'
-          ? `${skipped} מחזורים לא סונכרנו - פרויקטים לא קיימים: ${projects.slice(0, 3).join(', ')}${projects.length > 3 ? '...' : ''}`
-          : `${skipped} cycles not synced - orphaned projects: ${projects.slice(0, 3).join(', ')}${projects.length > 3 ? '...' : ''}`
-      );
-    };
-    
-    window.addEventListener('sync-cycles-skipped', handleSyncSkipped as EventListener);
-    return () => window.removeEventListener('sync-cycles-skipped', handleSyncSkipped as EventListener);
-  }, [language]);
+    setPrinterNames(printers.map(p => p.name));
+  }, [printers]);
 
-  // Listen for cycle-sync-result events and show appropriate toast
-  useEffect(() => {
-    const handleCycleSyncResult = (e: CustomEvent<{
-      type: OperationType;
-      cycleId: string;
-      success: boolean;
-      localSaved: boolean;
-      cloudSynced: boolean;
-      error?: string;
-      canRetry?: boolean;
-      payload?: CycleOperationPayload;
-    }>) => {
-      const { type, localSaved, cloudSynced, error, canRetry, payload } = e.detail;
-      
-      if (cloudSynced) {
-        // Success - show quiet toast (optional)
-        // toast.success(language === 'he' ? 'סונכרן לענן' : 'Synced to cloud');
-        return;
-      }
-      
-      // Cloud sync failed but local saved
-      if (localSaved && !cloudSynced) {
-        const retryAction = canRetry && payload ? {
-          label: language === 'he' ? 'נסה שוב' : 'Retry',
-          onClick: async () => {
-            const result = await syncCycleOperation(type, payload);
-            if (result.cloudSynced) {
-              toast.success(language === 'he' ? 'סונכרן לענן' : 'Synced to cloud');
-            }
-          },
-        } : undefined;
-        
-        toast.warning(
-          language === 'he' ? 'נשמר מקומית - לא סונכרן לענן' : 'Saved locally - not synced to cloud',
-          {
-            description: error,
-            duration: 8000,
-            action: retryAction,
-          }
-        );
-      }
-    };
-    
-    window.addEventListener('cycle-sync-result', handleCycleSyncResult as EventListener);
-    return () => window.removeEventListener('cycle-sync-result', handleCycleSyncResult as EventListener);
-  }, [language]);
-
-  // Redirect to auth if not logged in
+  /* Redirect to auth */
   useEffect(() => {
     if (!authLoading && !user) {
       navigate('/auth');
     }
   }, [user, authLoading, navigate]);
 
-  // Check if onboarding is complete (has printers + factory_settings in cloud)
+  /* Onboarding + hydration */
   useEffect(() => {
     const checkOnboarding = async () => {
       if (!workspaceId) {
         setCheckingData(false);
         return;
       }
-      
+
       try {
         const isComplete = await isFactorySettingsConfigured();
         setOnboardingDone(isComplete);
-        
-        // If onboarding complete, check migration and hydration
-        if (isComplete) {
-          // A. Check if Cloud has data
-          const cloudProjects = await getProjects(workspaceId);
-          const cloudHasData = cloudProjects.length > 0;
-          
-          // B. Check if localStorage has data
-          const localProjectsRaw = localStorage.getItem(KEYS.PROJECTS);
-          const localCyclesRaw = localStorage.getItem(KEYS.PLANNED_CYCLES);
-          const localProductsRaw = localStorage.getItem(KEYS.PRODUCTS);
-          
-          const localProjects = localProjectsRaw ? JSON.parse(localProjectsRaw) : [];
-          const localCycles = localCyclesRaw ? JSON.parse(localCyclesRaw) : [];
-          const localProducts = localProductsRaw ? JSON.parse(localProductsRaw) : [];
-          const localHasData = localProjects.length > 0 || localProducts.length > 0;
-          
-          console.log('[Index] Data check:', { cloudHasData, localHasData, cloudProjects: cloudProjects.length, localProjects: localProjects.length });
-          
-          // C. Migration decision logic
-          if (cloudHasData) {
-            // Cloud has data → hydrate from Cloud (no force, allow throttling)
-            console.log('[Index] Cloud has data → hydrating from cloud');
-            await hydrateLocalFromCloud(workspaceId, { 
-              force: false, 
-              includeProjects: true, 
-              includePlannedCycles: true, 
-              includeProducts: true, 
-              includeInventory: true,
-              source: 'Index-cloudHasData',
-            });
-            
-            // Cleanup any orphaned cycles after hydration - BUT NOT IF cycles were just generated
-            if (!shouldProtectLocalCycles()) {
-              const cleanupResult = cleanupOrphanedCycles();
-              if (cleanupResult.removed > 0) {
-                console.log(`[Index] Cleaned up ${cleanupResult.removed} orphaned cycles`);
-              }
-            } else {
-              console.log('[Index] Skipping orphan cleanup - cycles recently generated');
-            }
-            
-            // Run day-change detection after hydration
-            await runDayChangeDetection(workspaceId);
-            
-          } else if (localHasData) {
-            // Cloud empty + Local has data → Show migration prompt
-            console.log('[Index] Cloud empty + local has data → showing migration prompt');
-            setLocalDataSummary({
-              projects: localProjects.length,
-              cycles: localCycles.length,
-              products: localProducts.length,
-            });
-            setShowMigrationPrompt(true);
-            setCheckingData(false);
-            return; // Don't continue - wait for user decision
-            
-          } else {
-            // Both empty → just hydrate (will get empty data)
-            console.log('[Index] Both empty → hydrating from cloud');
-            await hydrateLocalFromCloud(workspaceId, { 
-              force: false, 
-              includeProjects: true, 
-              includePlannedCycles: true, 
-              includeProducts: true, 
-              includeInventory: true,
-              source: 'Index-bothEmpty',
-            });
-          }
-          
-          const printers = await getPrinters(workspaceId);
-          setPrinterNames(printers.map(p => p.name));
+
+        if (!isComplete) {
+          setCheckingData(false);
+          return;
         }
-      } catch (error) {
-        console.error('Error checking onboarding status:', error);
+
+        const cloudProjects = await getProjects(workspaceId);
+        const cloudHasData = cloudProjects.length > 0;
+
+        const localProjects = JSON.parse(localStorage.getItem(KEYS.PROJECTS) || '[]');
+        const localProducts = JSON.parse(localStorage.getItem(KEYS.PRODUCTS) || '[]');
+        const localCycles = JSON.parse(localStorage.getItem(KEYS.PLANNED_CYCLES) || '[]');
+
+        const localHasData =
+          localProjects.length > 0 ||
+          localProducts.length > 0 ||
+          localCycles.length > 0;
+
+        if (cloudHasData) {
+          await hydrateLocalFromCloud(workspaceId, {
+            force: false,
+            includeProjects: true,
+            includePlannedCycles: true,
+            includeProducts: true,
+            includeInventory: true,
+            source: 'Index-cloudHasData',
+          });
+
+          if (!shouldProtectLocalCycles()) {
+            cleanupOrphanedCycles();
+          }
+
+          await runDayChangeDetection(workspaceId);
+        } else if (localHasData) {
+          setLocalDataSummary({
+            projects: localProjects.length,
+            products: localProducts.length,
+            cycles: localCycles.length,
+          });
+          setShowMigrationPrompt(true);
+          setCheckingData(false);
+          return;
+        }
+      } catch (err) {
+        console.error('[Index] onboarding check failed', err);
       }
-      
+
       setCheckingData(false);
     };
-    
+
     if (!authLoading && user && workspaceId) {
       checkOnboarding();
     }
   }, [user, workspaceId, authLoading]);
-  
-  // Day-change detection helper
+
   const runDayChangeDetection = async (wsId: string) => {
     try {
       const result = await checkAndHandleDayChange(wsId);
-      
-      if (result.isNewDay) {
-        if (result.triggeredReplan && result.replanSuccess) {
-          toast.info(language === 'he' ? 'התכנון עודכן ליום חדש' : 'Planning updated for new day');
-        } else if (result.wasLocked) {
-          // Another device handled it - refresh data
-          console.log('[Index] Day change handled by another device, refreshing data');
-          await hydrateLocalFromCloud(wsId, { 
-            force: false, 
-            includeProjects: true, 
-            includePlannedCycles: true, 
-            includeProducts: true, 
-            includeInventory: true,
-            source: 'Index-dayChange',
-          });
-        }
+      if (result.isNewDay && result.triggeredReplan) {
+        toast.info(language === 'he' ? 'התכנון עודכן ליום חדש' : 'Planning updated');
       }
-    } catch (error) {
-      console.error('[Index] Day change detection error:', error);
+    } catch (err) {
+      console.error(err);
     }
   };
-  
-  // Handle migration from prompt
+
   const handleMigration = async () => {
     if (!workspaceId) return;
-    
     setMigrating(true);
+
     try {
-      const report: FullMigrationReport = await migrateAllLocalDataToCloud(workspaceId);
-      
-      console.log('[Index] Migration report:', report);
+      const report: FullMigrationReport =
+        await migrateAllLocalDataToCloud(workspaceId);
+
       toast.success(
-        language === 'he' 
-          ? `הועברו ${report.totalMigrated} פריטים לענן` 
-          : `Migrated ${report.totalMigrated} items to cloud`
+        language === 'he'
+          ? `הועברו ${report.totalMigrated} פריטים לענן`
+          : `Migrated ${report.totalMigrated} items`
       );
-      
-      // Hydrate from cloud after migration
-      await hydrateLocalFromCloud(workspaceId, { 
-        force: false, 
-        includeProjects: true, 
-        includePlannedCycles: true, 
-        includeProducts: true, 
+
+      await hydrateLocalFromCloud(workspaceId, {
+        force: false,
+        includeProjects: true,
+        includePlannedCycles: true,
+        includeProducts: true,
         includeInventory: true,
         source: 'Index-afterMigration',
       });
-      
-      // Run day-change detection
+
       await runDayChangeDetection(workspaceId);
-      
-      const printers = await getPrinters(workspaceId);
-      setPrinterNames(printers.map(p => p.name));
-      
       setShowMigrationPrompt(false);
-    } catch (error) {
-      console.error('[Index] Migration error:', error);
-      toast.error(language === 'he' ? 'שגיאה בהעברת הנתונים' : 'Error migrating data');
+    } catch (err) {
+      toast.error(language === 'he' ? 'שגיאה בהעברה' : 'Migration failed');
     } finally {
       setMigrating(false);
     }
   };
-  
-  // Handle "Start Fresh" - skip migration
-  const handleStartFresh = async () => {
-    if (!workspaceId) return;
-    
-    // Clear local data to start fresh
+
+  const handleStartFresh = () => {
     localStorage.removeItem(KEYS.PROJECTS);
     localStorage.removeItem(KEYS.PLANNED_CYCLES);
     localStorage.removeItem(KEYS.PRODUCTS);
     localStorage.removeItem(KEYS.COLOR_INVENTORY);
     localStorage.removeItem(KEYS.SPOOLS);
-    
-    const printers = await getPrinters(workspaceId);
-    setPrinterNames(printers.map(p => p.name));
-    
-    setShowMigrationPrompt(false);
-    toast.info(language === 'he' ? 'התחלת מחדש - הנתונים המקומיים נמחקו' : 'Starting fresh - local data cleared');
-  };
-  
-    
-  
 
-  // Show loading while checking auth
+    setShowMigrationPrompt(false);
+    toast.info(language === 'he' ? 'התחלה מחדש' : 'Starting fresh');
+  };
+
   if (authLoading || checkingData) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <p className="text-muted-foreground">{language === 'he' ? 'טוען...' : 'Loading...'}</p>
-        </div>
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="animate-spin" />
       </div>
     );
   }
 
-  // If not logged in, will redirect (handled by useEffect)
-  if (!user) {
-    return null;
-  }
-  
-  // Show onboarding if not complete
-  if (!onboardingDone) {
-  return <OnboardingContainer onFinished={() => setOnboardingDone(true)} />;
-}
+  if (!user) return null;
 
-  
-  // Show migration prompt if local data found but cloud is empty
+  if (!onboardingDone) {
+    return <OnboardingContainer onFinished={() => setOnboardingDone(true)} />;
+  }
+
   if (showMigrationPrompt && localDataSummary) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4" dir={language === 'he' ? 'rtl' : 'ltr'}>
+      <div className="min-h-screen flex items-center justify-center">
         <Card className="max-w-md w-full">
           <CardHeader>
-            <CardTitle className="flex items-center gap-3">
-              <AlertCircle className="w-6 h-6 text-warning" />
-              {language === 'he' ? 'נמצאו נתונים מקומיים' : 'Local Data Found'}
+            <CardTitle>
+              {language === 'he' ? 'נמצאו נתונים מקומיים' : 'Local data found'}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-foreground">
-              {language === 'he' 
-                ? `נמצאו ${localDataSummary.projects} פרויקטים, ${localDataSummary.products} מוצרים ו-${localDataSummary.cycles} מחזורים במכשיר זה.`
-                : `Found ${localDataSummary.projects} projects, ${localDataSummary.products} products and ${localDataSummary.cycles} cycles on this device.`
-              }
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {language === 'he'
-                ? 'לייבא לענן? (פעולה חד־פעמית)'
-                : 'Import to cloud? (One-time operation)'
-              }
-            </p>
-            <div className="flex gap-3 pt-2">
-              <Button 
-                onClick={handleMigration}
-                disabled={migrating}
-                className="flex-1"
-              >
-                {migrating && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-                <Upload className="w-4 h-4 mr-2" />
-                {language === 'he' ? 'כן, לייבא' : 'Yes, Import'}
-              </Button>
-              <Button 
-                variant="outline"
-                onClick={handleStartFresh}
-                disabled={migrating}
-                className="flex-1"
-              >
-                {language === 'he' ? 'התחל מחדש' : 'Start Fresh'}
-              </Button>
-            </div>
+            <Button onClick={handleMigration} disabled={migrating}>
+              <Upload className="w-4 h-4 mr-2" />
+              Import
+            </Button>
+            <Button variant="outline" onClick={handleStartFresh}>
+              Start fresh
+            </Button>
           </CardContent>
         </Card>
       </div>
     );
   }
-  
+
   const handleEndCycle = (printerId: string) => {
     setEndCyclePrinterId(printerId);
     setCurrentPage('endCycleLog');
@@ -384,11 +242,11 @@ const PrintFlowApp: React.FC = () => {
     switch (currentPage) {
       case 'dashboard':
         return (
-          <Dashboard 
+          <Dashboard
             key={dashboardRefreshKey}
-            printerNames={printerNames} 
-            onReportIssue={() => setReportIssueOpen(true)}
+            printerNames={printerNames}
             onEndCycle={handleEndCycle}
+            onReportIssue={() => setReportIssueOpen(true)}
           />
         );
       case 'projects':
@@ -401,24 +259,22 @@ const PrintFlowApp: React.FC = () => {
         return <InventoryPage />;
       case 'endCycleLog':
         return (
-          <EndCycleLog 
+          <EndCycleLog
             preSelectedPrinterId={endCyclePrinterId}
             onComplete={() => {
               setEndCyclePrinterId(undefined);
-              setDashboardRefreshKey(prev => prev + 1);
+              setDashboardRefreshKey(k => k + 1);
               setCurrentPage('dashboard');
             }}
           />
         );
-      case 'quoteCheck':
-        return <QuoteCheckPage />;
       case 'planning':
         return <PlanningPage onEndCycle={handleEndCycle} />;
       case 'weekly':
         return <WeeklyPlanningPage onNavigateToProject={() => setCurrentPage('projects')} />;
       case 'operationalDashboard':
         return (
-          <OperationalDashboard 
+          <OperationalDashboard
             onNavigateToProject={() => setCurrentPage('projects')}
             onNavigateToWeekly={() => setCurrentPage('weekly')}
           />
@@ -426,43 +282,25 @@ const PrintFlowApp: React.FC = () => {
       case 'settings':
         return <SettingsPage />;
       default:
-        return (
-          <Card variant="elevated">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-3">
-                <Construction className="w-6 h-6 text-warning" />
-                {language === 'he' ? 'בקרוב...' : 'Coming soon...'}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground">
-                {language === 'he' 
-                  ? 'עמוד זה נמצא בפיתוח. בקרוב יהיה זמין!'
-                  : 'This page is under development. Coming soon!'}
-              </p>
-            </CardContent>
-          </Card>
-        );
+        return <div>Coming soon</div>;
     }
   };
-  
+
   return (
     <AppLayout currentPage={currentPage} onNavigate={setCurrentPage}>
       {renderPage()}
-      <ReportIssueFlow 
-        isOpen={reportIssueOpen} 
-        onClose={() => setReportIssueOpen(false)} 
+      <ReportIssueFlow
+        isOpen={reportIssueOpen}
+        onClose={() => setReportIssueOpen(false)}
       />
     </AppLayout>
   );
 };
 
-const Index: React.FC = () => {
-  return (
-    <LanguageProvider>
-      <PrintFlowApp />
-    </LanguageProvider>
-  );
-};
+const Index: React.FC = () => (
+  <LanguageProvider>
+    <PrintFlowApp />
+  </LanguageProvider>
+);
 
 export default Index;
