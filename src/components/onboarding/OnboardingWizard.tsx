@@ -34,12 +34,15 @@ export interface OnboardingData {
 }
 
 interface OnboardingWizardProps {
-  onComplete: (data: OnboardingData) => void;
+  onComplete: (data: OnboardingData) => Promise<boolean>;
+  isLoading?: boolean;
 }
 
-export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete }) => {
+
+export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, isLoading = false }) => {
   const { t, direction } = useLanguage();
   const [currentStep, setCurrentStep] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [data, setData] = useState<OnboardingData>({
     printerCount: 1,
     printerNames: ['מדפסת 1'],
@@ -70,9 +73,17 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete }
     }
   };
   
-  const handleComplete = () => {
-    onComplete(data);
-  };
+const handleComplete = async () => {
+  setIsSubmitting(true);
+  try {
+    await onComplete(data);
+  } catch (err) {
+    console.error('[onboarding] Complete error:', err);
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+
   
   const renderStep = () => {
     switch (currentStep) {
@@ -157,7 +168,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete }
             {/* Navigation buttons */}
             <div className="flex justify-between mt-8 pt-6 border-t border-border">
               {currentStep > 0 ? (
-                <Button variant="ghost" onClick={handleBack}>
+                <Button variant="ghost" onClick={handleBack} disabled={isLoading || isSubmitting}>
                   {t('common.back')}
                 </Button>
               ) : (
@@ -165,11 +176,11 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete }
               )}
               
               {currentStep < totalSteps ? (
-                <Button onClick={handleNext}>
+                <Button onClick={handleNext} disabled={isLoading || isSubmitting}>
                   {t('common.next')}
                 </Button>
               ) : (
-                <Button size="lg" onClick={handleComplete}>
+                <Button size="lg" onClick={handleComplete} disabled={isLoading || isSubmitting}>
                   {t('onboarding.summary.start')}
                 </Button>
               )}
