@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext';
-import { OnboardingWizard, OnboardingData } from '@/components/onboarding/OnboardingWizard';
+import { OnboardingContainer } from '@/components/onboarding/OnboardingContainer';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Dashboard } from '@/components/dashboard/Dashboard';
 import { ProjectsPage } from '@/components/projects/ProjectsPage';
@@ -18,13 +18,14 @@ import { WeeklyPlanningPage } from '@/components/weekly/WeeklyPlanningPage';
 import { OperationalDashboard } from '@/components/weekly/OperationalDashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Construction, Loader2, Upload, AlertCircle, RefreshCw } from 'lucide-react';
-import { isOnboardingCompleteCloud, saveOnboardingToCloud, getPrinters, getProjects } from '@/services/cloudStorage';
+import { Construction, Loader2, Upload, AlertCircle } from 'lucide-react';
+import { getPrinters, getProjects } from '@/services/cloudStorage';
 import { hydrateLocalFromCloud, migrateAllLocalDataToCloud, FullMigrationReport, shouldProtectLocalCycles } from '@/services/cloudBridge';
 import { checkAndHandleDayChange } from '@/services/dayChangeDetector';
 import { KEYS, cleanupOrphanedCycles } from '@/services/storage';
 import { syncCycleOperation, CycleOperationPayload, OperationType } from '@/services/cycleOperationSync';
 import { toast } from 'sonner';
+import { isFactorySettingsConfigured } from '@/components/services/base44FactorySettings';
 
 interface LocalDataSummary {
   projects: number;
@@ -128,7 +129,7 @@ const PrintFlowApp: React.FC = () => {
       }
       
       try {
-        const isComplete = await isOnboardingCompleteCloud(workspaceId);
+        const isComplete = await isFactorySettingsConfigured();
         setOnboardingDone(isComplete);
         
         // If onboarding complete, check migration and hydration
@@ -299,40 +300,8 @@ const PrintFlowApp: React.FC = () => {
     toast.info(language === 'he' ? 'התחלת מחדש - הנתונים המקומיים נמחקו' : 'Starting fresh - local data cleared');
   };
   
-  const handleOnboardingComplete = async (data: OnboardingData) => {
-    if (!workspaceId) {
-      toast.error(language === 'he' ? 'שגיאה: לא נמצא workspace' : 'Error: No workspace found');
-      return;
-    }
     
-    // Convert WeeklySchedule to plain object for cloud storage
-    const weeklyScheduleObj = JSON.parse(JSON.stringify(data.weeklySchedule));
-    
-    // Save to cloud with workspaceId
-    const success = await saveOnboardingToCloud(workspaceId, {
-      weeklySchedule: weeklyScheduleObj,
-      afterHoursBehavior: data.afterHoursBehavior,
-      transitionMinutes: 10,
-      printers: data.printerNames.map((name, index) => ({
-        name,
-        hasAMS: data.printerAMSConfigs[index]?.hasAMS || false,
-        amsSlots: data.printerAMSConfigs[index]?.amsSlots,
-        amsBackupMode: data.printerAMSConfigs[index]?.amsModes?.backupSameColor,
-        amsMultiColor: data.printerAMSConfigs[index]?.amsModes?.multiColor,
-      })),
-    });
-    
-    if (success) {
-      // Hydrate localStorage from cloud so engines can work
-      await hydrateLocalFromCloud(workspaceId, { force: false, includeProjects: true, includePlannedCycles: true, includeProducts: true, includeInventory: true, source: 'Index-onboarding' });
-      
-      toast.success(language === 'he' ? 'ההגדרות נשמרו בהצלחה!' : 'Settings saved successfully!');
-      setPrinterNames(data.printerNames);
-      setOnboardingDone(true);
-    } else {
-      toast.error(language === 'he' ? 'שגיאה בשמירת ההגדרות' : 'Error saving settings');
-    }
-  };
+  
 
   // Show loading while checking auth
   if (authLoading || checkingData) {
@@ -353,8 +322,9 @@ const PrintFlowApp: React.FC = () => {
   
   // Show onboarding if not complete
   if (!onboardingDone) {
-    return <OnboardingWizard onComplete={handleOnboardingComplete} />;
-  }
+  return <OnboardingContainer onFinished={() => setOnboardingDone(true)} />;
+}
+
   
   // Show migration prompt if local data found but cloud is empty
   if (showMigrationPrompt && localDataSummary) {
